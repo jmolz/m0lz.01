@@ -18,23 +18,39 @@ export function initResearchPost(
   mode: Mode,
   contentType: ContentType,
 ): InitResearchResult {
-  const info = db
-    .prepare(`
-      INSERT OR IGNORE INTO posts (slug, topic, content_type, phase, mode)
-      VALUES (?, ?, ?, 'research', ?)
-    `)
-    .run(slug, topic, contentType, mode);
+  const existing = db.prepare('SELECT * FROM posts WHERE slug = ?').get(slug) as PostRow | undefined;
+  if (existing) {
+    if (existing.phase !== 'research') {
+      throw new Error(
+        `Post '${slug}' already exists in phase '${existing.phase}'. ` +
+        `Only posts in the 'research' phase can be re-initialized.`,
+      );
+    }
+    return { created: false, post: existing };
+  }
+
+  db.prepare(`
+    INSERT INTO posts (slug, topic, content_type, phase, mode)
+    VALUES (?, ?, ?, 'research', ?)
+  `).run(slug, topic, contentType, mode);
 
   const post = db.prepare('SELECT * FROM posts WHERE slug = ?').get(slug) as PostRow | undefined;
   if (!post) {
     throw new Error(`initResearchPost failed to load post after insert: ${slug}`);
   }
 
-  return { created: info.changes > 0, post };
+  return { created: true, post };
 }
 
 export function getResearchPost(db: Database.Database, slug: string): PostRow | undefined {
-  return db.prepare('SELECT * FROM posts WHERE slug = ?').get(slug) as PostRow | undefined;
+  const post = db.prepare('SELECT * FROM posts WHERE slug = ?').get(slug) as PostRow | undefined;
+  if (post && post.phase !== 'research') {
+    throw new Error(
+      `Post '${slug}' is in phase '${post.phase}', not 'research'. ` +
+      `Research commands only operate on posts in the research phase.`,
+    );
+  }
+  return post;
 }
 
 export function advancePhase(db: Database.Database, slug: string, newPhase: Phase): void {

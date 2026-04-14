@@ -19,9 +19,15 @@ export function addSource(
   url: string,
   options: AddSourceOptions = {},
 ): AddSourceResult {
-  const post = db.prepare('SELECT slug FROM posts WHERE slug = ?').get(slug);
+  const post = db.prepare('SELECT slug, phase FROM posts WHERE slug = ?').get(slug) as { slug: string; phase: string } | undefined;
   if (!post) {
     throw new Error(`Post not found: ${slug}. Run 'blog research init ${slug}' first.`);
+  }
+  if (post.phase !== 'research') {
+    throw new Error(
+      `Post '${slug}' is in phase '${post.phase}', not 'research'. ` +
+      `Cannot add sources to a post outside the research phase.`,
+    );
   }
 
   const info = db

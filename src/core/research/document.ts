@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
-import { resolve, dirname, join } from 'node:path';
+import { join, dirname, resolve, relative, isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import yaml from 'js-yaml';
@@ -36,14 +36,37 @@ function getTemplatePath(): string {
   return resolve(dirname(here), '../../../templates/research/template.md');
 }
 
-function renderTemplate(doc: ResearchDocument): string {
+const SAFE_SLUG_RE = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
+
+export function validateSlug(slug: string): void {
+  if (!SAFE_SLUG_RE.test(slug)) {
+    throw new Error(
+      `Invalid slug: '${slug}'. Slugs must be lowercase alphanumeric with hyphens, ` +
+      `no leading/trailing hyphens, and no path separators.`,
+    );
+  }
+}
+
+function renderFrontmatter(doc: ResearchDocument): string {
+  const fm = yaml.dump(
+    {
+      slug: doc.slug,
+      topic: doc.topic,
+      mode: doc.mode,
+      content_type: doc.content_type,
+      created_at: doc.created_at,
+    },
+    { lineWidth: -1, quotingType: '"', forceQuotes: false },
+  );
+  return `---\n${fm}---`;
+}
+
+function renderBody(doc: ResearchDocument): string {
   const template = readFileSync(getTemplatePath(), 'utf-8');
-  return template
-    .replace(/\{\{slug\}\}/g, doc.slug)
+  const bodyMatch = template.match(/^---[\s\S]*?^---\s*\n([\s\S]*)$/m);
+  const body = bodyMatch ? bodyMatch[1] : template;
+  return body
     .replace(/\{\{topic\}\}/g, doc.topic)
-    .replace(/\{\{mode\}\}/g, doc.mode)
-    .replace(/\{\{content_type\}\}/g, doc.content_type)
-    .replace(/\{\{created_at\}\}/g, doc.created_at)
     .replace(/\{\{thesis\}\}/g, doc.thesis)
     .replace(/\{\{findings\}\}/g, doc.findings)
     .replace(/\{\{sources_list\}\}/g, doc.sources_list)
@@ -51,6 +74,10 @@ function renderTemplate(doc: ResearchDocument): string {
     .replace(/\{\{open_questions\}\}/g, doc.open_questions)
     .replace(/\{\{benchmark_targets\}\}/g, doc.benchmark_targets)
     .replace(/\{\{repo_scope\}\}/g, doc.repo_scope);
+}
+
+function renderTemplate(doc: ResearchDocument): string {
+  return `${renderFrontmatter(doc)}\n${renderBody(doc)}`;
 }
 
 export function documentPath(researchDir: string, slug: string): string {
@@ -62,7 +89,12 @@ export function writeResearchDocument(
   doc: ResearchDocument,
   options: { force?: boolean } = {},
 ): string {
+  validateSlug(doc.slug);
   const target = documentPath(researchDir, doc.slug);
+  const rel = relative(resolve(researchDir), resolve(target));
+  if (isAbsolute(rel) || rel.startsWith('..')) {
+    throw new Error(`Document path escapes research directory: ${resolve(target)}`);
+  }
   if (existsSync(target) && !options.force) {
     throw new Error(`Research document already exists: ${target}. Pass force=true to overwrite.`);
   }
