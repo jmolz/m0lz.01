@@ -1,0 +1,75 @@
+# m0lz.01 — Blog Agent Configuration
+# Copy to .blogrc.yaml and update values for your setup
+
+site:
+  repo_path: "../m0lz.00"          # Path to the m0lz.00 site repo (relative to this file)
+  base_url: "https://m0lz.dev"    # Canonical base URL for all content
+  content_dir: "content/posts"     # Posts directory within the site repo
+
+author:
+  name: "Jacob Molz"
+  github: "jmolz"
+  devto: "jmolz"                   # Dev.to username for cross-posting
+  medium: "@jmolz"                 # Medium username
+  substack: "jmolz"               # Substack subdomain
+  linkedin: "jacobmolz"           # LinkedIn profile slug
+
+ai:
+  primary: "claude-code"           # Uses Claude Code subscription for research, drafting, structural review
+  reviewers:                       # Three-reviewer evaluation panel
+    structural: "claude-code"      # Content quality, schema, MDX, sources
+    adversarial: "codex-cli"       # GPT-5.4 high — thesis challenge, bias, argument gaps
+    methodology: "codex-cli"       # GPT-5.4 xhigh — benchmark validity, statistics, reproducibility
+  codex:
+    adversarial_effort: "high"     # Reasoning effort for adversarial review
+    methodology_effort: "xhigh"    # Reasoning effort for methodology review
+
+content_types:                     # Pipeline behavior per content type
+  project-launch:
+    benchmark: "optional"          # Existing project may already have benchmarks
+    companion_repo: "existing"     # Link to existing repo, don't scaffold new one
+    social_prefix: "Show HN:"     # HN submission prefix
+  technical-deep-dive:
+    benchmark: "required"          # Must have original test data
+    companion_repo: "new"          # Scaffold test suite as companion repo
+    social_prefix: ""              # Standard HN title
+  analysis-opinion:
+    benchmark: "skip"              # No test data needed
+    companion_repo: "optional"     # Only if code examples warrant it
+    social_prefix: ""              # Standard HN title
+
+benchmark:
+  capture_environment: true        # Auto-capture hardware/OS/versions
+  methodology_template: true       # Generate METHODOLOGY.md from template
+  preserve_raw_data: true          # Never discard results, even contradictory
+  multiple_runs: 3                 # Number of benchmark runs for statistical validity
+
+publish:
+  devto: true
+  medium: true                     # Fallback to paste-ready on failure
+  substack: true                   # Fallback to paste-ready on failure
+  github_repos: true
+  social_drafts: true
+  research_pages: true             # Auto-generate research pages for m0lz.00
+
+social:
+  platforms:
+    - linkedin
+    - hackernews
+  timing_recommendations: true     # Include best posting times in output
+
+evaluation:
+  require_pass: true
+  min_sources: 3
+  max_reading_level: 12
+  three_reviewer_panel: true       # Run all three reviewers in parallel
+  consensus_must_fix: true         # All-3-agree issues block publish
+  majority_should_fix: true        # 2-of-3 issues block publish
+  single_advisory: true            # 1-of-3 issues are advisory only
+  verify_benchmark_claims: true    # Check prose claims against results.json
+  methodology_completeness: true   # Verify METHODOLOGY.md is reproducible
+
+updates:
+  preserve_original_data: true     # Keep original benchmark data alongside updates
+  update_notice: true              # Append update notice with date and summary
+  update_crosspost: true           # Attempt to update Dev.to cross-posts

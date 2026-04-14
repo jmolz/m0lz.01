@@ -1,0 +1,33 @@
+{
+  "name": "m0lz-01",
+  "version": "0.1.0",
+  "description": "Idea-to-distribution pipeline for technical content",
+  "type": "module",
+  "bin": {
+    "blog": "./dist/cli/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.0.0",
+    "commander": "^13.0.0",
+    "dotenv": "^16.0.0",
+    "js-yaml": "^4.1.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.0.0",
+    "@types/js-yaml": "^4.0.0",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "license": "MIT"
+}
