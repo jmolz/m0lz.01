@@ -9,6 +9,7 @@ import { registerMetrics } from './metrics.js';
 import { registerIdeas } from './ideas.js';
 import { registerResearch } from './research.js';
 import { registerBenchmark } from './benchmark.js';
+import { registerDraft } from './draft.js';
 
 const program = new Command();
 
@@ -23,5 +24,6 @@ registerMetrics(program);
 registerIdeas(program);
 registerResearch(program);
 registerBenchmark(program);
+registerDraft(program);
 
 program.parse();

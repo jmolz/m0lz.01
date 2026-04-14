@@ -199,6 +199,27 @@ try {
 
 Never let a phase-boundary error propagate uncaught — it will crash the CLI with a raw stack trace.
 
+## Informational commands are best-effort for optional config
+
+Handlers whose job is to **display** state (`runStatus`, `runDraftShow`, etc.) must treat peripheral config as best-effort. A malformed `.blogrc.yaml` should degrade the output, not abort the command:
+
+```typescript
+// Good — show prints what it can, warns about what it can't
+let existingTags: string[] = [];
+let githubUser = 'unknown';
+if (existsSync(configPath)) {
+  try {
+    const config = loadConfig(configPath);
+    existingTags = readExistingTags(config.site.repo_path, config.site.content_dir);
+    githubUser = config.author.github;
+  } catch (e) {
+    console.error(`Warning: failed to read config (${(e as Error).message}). Tags unavailable.`);
+  }
+}
+```
+
+Handlers that **mutate** state (`runDraftInit`, `runBenchmarkInit`, `runResearchFinalize`) must still hard-fail on missing or invalid config — the contract depends on it. Only informational handlers get the best-effort treatment.
+
 ## Non-interactive
 
 CLI commands **must** be non-interactive — Commander options/arguments only, no `readline` prompts. Interactive collaboration happens in Claude Code skills, not the CLI. This keeps the CLI scriptable (cron, CI, pipelines).

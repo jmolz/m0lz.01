@@ -122,11 +122,11 @@ npx vitest run \
 
 | Test File | Feature | What It Validates |
 | --------- | ------- | ----------------- |
-| `tests/draft-frontmatter.test.ts` (23 tests) | PostFrontmatter schema | `generateFrontmatter` produces canonical URL, companion_repo when has_benchmarks, project from project_id, published=false, placeholder title/description; `validateFrontmatter` passes valid, fails missing/placeholder title/description/date/tags/published, rejects invalid date format, empty tags, non-boolean published; `serializeFrontmatter`/`parseFrontmatter` round-trip with optional fields omitted; `parseFrontmatter` extracts from MDX, throws on missing delimiters and invalid YAML, does not coerce string "false" to true |
+| `tests/draft-frontmatter.test.ts` (24 tests) | PostFrontmatter schema | `generateFrontmatter` produces canonical URL, companion_repo when has_benchmarks, project from project_id, published=false, placeholder title/description; `validateFrontmatter` passes valid, fails missing/placeholder title/description/date/tags/published, rejects invalid date format, empty tags, non-boolean published; `serializeFrontmatter`/`parseFrontmatter` round-trip with optional fields omitted; `parseFrontmatter` extracts from MDX, throws on missing delimiters and invalid YAML, does not coerce `"false"` to true, does not mis-split on body thematic break |
 | `tests/draft-state.test.ts` (16 tests) | Draft state lifecycle | `getDraftPost` returns draft-phase post, throws for wrong phase, undefined for missing; `initDraft` creates directory structure and template MDX, is idempotent, includes content-type-specific sections (technical-deep-dive has benchmarks, analysis-opinion has analysis), throws for missing post; `completeDraft` advances to evaluate, rejects placeholder sections, rejects missing asset files, throws for wrong phase and missing post; `registerAsset` inserts and is idempotent (transactional); `listAssets` returns ordered list, empty for unknown slug |
-| `tests/draft-benchmark-data.test.ts` (7 tests) | Benchmark data formatting | `formatBenchmarkTable` produces markdown from simple key-value, handles empty data, array values as rows, nested objects flattened; `formatMethodologyRef` produces correct reference string; `getBenchmarkContext` reads existing results/environment, returns nulls for missing files |
+| `tests/draft-benchmark-data.test.ts` (8 tests) | Benchmark data formatting | `formatBenchmarkTable` produces markdown from simple key-value, handles empty data, array values as rows, nested objects flattened one level; `formatMethodologyRef` produces correct reference string and honors `githubUser` from config (no hardcoded user); `getBenchmarkContext` reads existing results/environment, returns nulls for missing files |
 | `tests/draft-tags.test.ts` (6 tests) | Tag taxonomy reader | `readExistingTags` reads tags from MDX files, subdirectory-based posts, deduplicates, returns sorted; returns empty for missing directory, no MDX files, files without tags field |
-| `tests/draft-cli.test.ts` (25 tests) | Draft CLI handlers | `runDraftInit` creates draft directory and template MDX with content-type-aware sections (technical-deep-dive, analysis-opinion, project-launch, project-launch with benchmarks), errors for wrong phase; `runDraftShow` prints status, errors for wrong phase; `runDraftValidate` fails for placeholders, passes for complete draft, fails for missing assets; `runDraftAddAsset` registers existing file, errors for missing file and invalid type, rejects path traversal and subdirectory filenames; `runDraftComplete` advances to evaluate, errors for wrong phase; rejects 6 invalid slug patterns |
+| `tests/draft-cli.test.ts` (25 tests) | Draft CLI handlers | `runDraftInit` creates draft directory and template MDX with content-type-aware sections (technical-deep-dive, analysis-opinion, project-launch, project-launch with benchmarks), errors for wrong phase; `runDraftShow` prints status, errors for wrong phase, treats malformed config as best-effort; `runDraftValidate` fails for placeholders, passes for complete draft, fails for missing assets; `runDraftAddAsset` registers existing file, errors for missing file and invalid type, rejects path traversal and subdirectory filenames; `runDraftComplete` advances to evaluate, errors for wrong phase; rejects 6 invalid slug patterns |
 
 ### Source files these tests protect
 
@@ -181,7 +181,7 @@ npm test
 npm run build
 ```
 
-Expected baseline: **0 TypeScript errors, 223 tests passing across 21 suites, clean build** (as of feature/phase-4-draft). Any drift from this baseline is a signal to investigate before merging.
+Expected baseline: **0 TypeScript errors, 225 tests passing across 21 suites, clean build** (as of feature/phase-4-draft). Any drift from this baseline is a signal to investigate before merging.
 
 ## Phase 3: Code Review of Current Changes
 
@@ -269,13 +269,13 @@ Phase 3 — Benchmark:
   - Benchmark CLI handlers (14 tests): PASS / FAIL
 
 Phase 4 — Draft:
-  - PostFrontmatter schema (23 tests): PASS / FAIL
+  - PostFrontmatter schema (24 tests): PASS / FAIL
   - Draft state lifecycle (16 tests): PASS / FAIL
-  - Benchmark data formatting (7 tests): PASS / FAIL
+  - Benchmark data formatting (8 tests): PASS / FAIL
   - Tag taxonomy reader (6 tests): PASS / FAIL
   - Draft CLI handlers (25 tests): PASS / FAIL
 
-Full Suite: X passing, Y failing  (baseline: 223 passing)
+Full Suite: X passing, Y failing  (baseline: 225 passing)
 Lint: {error count} errors  (baseline: 0)
 Build: PASS / FAIL
 ```
