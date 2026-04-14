@@ -54,6 +54,7 @@ m0lz.01/
       status.ts            # Pipeline state viewer
       metrics.ts           # Aggregate stats
       ideas.ts             # Editorial backlog
+      research.ts          # Research phase (init, add-source, show, finalize)
     skills/                # Claude Code skill definitions (later phases)
     core/                  # Shared business logic
       db/                  # SQLite schema, connection, types
@@ -92,7 +93,7 @@ m0lz.01/
 
 **Claude Code Skills** (interactive, uses subscription): `/blog-research`, `/blog-benchmark`, `/blog-draft`, `/blog-evaluate`, `/blog-pipeline`, `/blog-update` — these handle AI-heavy work in Claude Code sessions.
 
-**Standalone CLI** (mechanical, no AI needed): `blog init`, `blog publish`, `blog unpublish`, `blog status`, `blog metrics`, `blog ideas` — these run independently for API calls, state queries, and pipeline execution.
+**Standalone CLI** (mechanical, no AI needed): `blog init`, `blog publish`, `blog unpublish`, `blog status`, `blog metrics`, `blog ideas`, `blog research init|add-source|show|finalize` — these run independently for API calls, state queries, and pipeline execution.
 
 **Shared state**: Both layers read/write the same SQLite database and file system artifacts.
 
@@ -154,17 +155,47 @@ import { getDatabase } from '../db/database.js';
 ### Error Handling
 
 ```typescript
-// CLI operations: fail fast with descriptive messages
-if (!existsSync(configPath)) {
-  console.error(`Config not found: ${configPath}. Run 'blog init' first.`);
+// Pre-resource-acquisition: process.exit(1) is acceptable
+if (!existsSync(dbPath)) {
+  console.error("No state database found. Run 'blog init' first.");
   process.exit(1);
+}
+
+// Post-resource-acquisition: use process.exitCode so finally blocks run
+const db = getDatabase(dbPath);
+try {
+  try {
+    result = initResearchPost(db, slug, topic, mode, contentType);
+  } catch (e) {
+    console.error((e as Error).message);
+    process.exitCode = 1;
+    return;
+  }
+} finally {
+  closeDatabase(db);
 }
 
 // Library functions: throw typed errors
 throw new Error(`Missing required config field: site.repo_path`);
 ```
 
-No try/catch wrapping for internal calls unless there's a specific recovery action. Let errors propagate to the CLI layer where they're caught and formatted.
+Library functions **throw** typed errors. CLI handlers **catch** at the boundary and format output. Use `process.exitCode = 1` (not `process.exit(1)`) after any resource acquisition to ensure `finally` blocks run.
+
+### Input Validation
+
+Validate user input (slugs, paths) at the CLI boundary before touching DB or filesystem:
+
+```typescript
+try {
+  validateSlug(slug);
+} catch (e) {
+  console.error((e as Error).message);
+  process.exitCode = 1;
+  return;
+}
+```
+
+Slug regex: `/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/` — lowercase alphanumeric with hyphens, no leading/trailing hyphens, no path separators.
 
 ### Database
 
@@ -246,6 +277,7 @@ These load automatically when editing files in their scope:
 |------|------|------|
 | Full product spec | `.claude/PRD.md` | Understanding scope, features, architecture |
 | Phase 1 plan | `.claude/plans/phase-1-foundation.md` | Implementing foundation |
+| Phase 2 plan | `.claude/plans/phase-2-research.md` | Research pipeline + contract |
 | Original brainstorm | `.claude/plans/blog-agent-prd.md` | Historical context |
 | PICE workflow | `.claude/docs/PLAYBOOK.md` | Plan/Implement/Evaluate loop |
 | Agent teams | `.claude/docs/AGENT-TEAMS-PLAYBOOK.md` | Parallel agent coordination |
@@ -256,6 +288,7 @@ These load automatically when editing files in their scope:
 
 - **ESM imports require `.js` extension** — every internal import must end in `.js` even for `.ts` source files. This is non-negotiable with Node16 module resolution.
 - **All database queries use parameterized statements** — never string interpolation for SQL. Use `?` placeholders or `@named` parameters.
+- **Phase boundary enforcement** — research commands (`add-source`, `show`, `finalize`) must reject posts not in the `research` phase. Library functions throw; CLI handlers catch and set `exitCode=1`.
 - **CLI commands are non-interactive** — use Commander.js options/arguments, not readline prompts. Interactive collaboration happens in Claude Code skills, not the CLI.
 - **Pipeline operations are idempotent** — running any publish step twice must not create duplicates or corrupt state. Use `INSERT OR IGNORE`, check-before-act patterns.
 - **Never commit secrets** — `.env`, `.blogrc.yaml`, and `.blog-agent/` are gitignored. Only `.env.example` and `.blogrc.example.yaml` are committed.

@@ -5,7 +5,7 @@ paths:
 
 # CLI Handler Conventions
 
-Rules for writing Commander.js command handlers in `src/cli/`. These patterns emerged during Phase 1 and keep the CLI testable and robust.
+Rules for writing Commander.js command handlers in `src/cli/`. These patterns emerged during Phase 1-2 and keep the CLI testable and robust.
 
 ## Handler shape
 
@@ -50,6 +50,22 @@ export function startIdea(index: number, ideasPath = IDEAS_PATH, dbPath = DB_PAT
 // Bad — not testable
 export function runMetrics(): void {
   const db = getDatabase(DB_PATH); // hardcoded, can't inject test DB
+}
+```
+
+For handlers with multiple injectable paths, group them in an interface with defaults:
+
+```typescript
+export interface ResearchPaths {
+  dbPath?: string;
+  researchDir?: string;
+  configPath?: string;
+}
+
+export function runResearchInit(slug: string, opts: InitOptions, paths: ResearchPaths = {}): void {
+  const dbPath = paths.dbPath ?? DB_PATH;
+  const researchDir = paths.researchDir ?? RESEARCH_DIR;
+  // ...
 }
 ```
 
@@ -139,6 +155,37 @@ ideas
     }
   });
 ```
+
+## Input validation at the CLI boundary
+
+Validate user-provided slugs, paths, and identifiers **before** touching the database or filesystem. Use `validateSlug()` from `src/core/research/document.ts` for slugs:
+
+```typescript
+try {
+  validateSlug(slug);
+} catch (e) {
+  console.error((e as Error).message);
+  process.exitCode = 1;
+  return;
+}
+```
+
+## Phase boundary enforcement
+
+Library functions like `getResearchPost()` and `addSource()` throw when a post is not in the expected phase. CLI handlers must catch these throws:
+
+```typescript
+let post;
+try {
+  post = getResearchPost(db, slug);
+} catch (e) {
+  console.error((e as Error).message);
+  process.exitCode = 1;
+  return;
+}
+```
+
+Never let a phase-boundary error propagate uncaught — it will crash the CLI with a raw stack trace.
 
 ## Non-interactive
 

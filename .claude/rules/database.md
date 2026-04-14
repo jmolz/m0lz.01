@@ -4,6 +4,7 @@ paths:
   - "src/core/migrate/**"
   - "tests/db.test.ts"
   - "tests/import.test.ts"
+  - "tests/db-migration.test.ts"
 ---
 
 # Database Conventions
@@ -33,8 +34,25 @@ if (currentVersion < SCHEMA_VERSION) {
 ## Idempotency
 
 - Import: `INSERT OR IGNORE INTO posts` (slug is PRIMARY KEY)
+- Sources: `UNIQUE(post_slug, url)` constraint with `INSERT OR IGNORE`
 - Pipeline steps: `UNIQUE(post_slug, step_name)` constraint
 - Always check before creating external resources
+
+## Phase boundary enforcement
+
+Library functions that operate on posts must verify the post is in the expected phase before proceeding. Throw a descriptive error if not:
+
+```typescript
+const post = db.prepare('SELECT * FROM posts WHERE slug = ?').get(slug) as PostRow | undefined;
+if (post && post.phase !== 'research') {
+  throw new Error(
+    `Post '${slug}' is in phase '${post.phase}', not 'research'. ` +
+    `Research commands only operate on posts in the research phase.`,
+  );
+}
+```
+
+This pattern applies to `getResearchPost`, `addSource`, and `initResearchPost` (cross-phase collision guard).
 
 ## Type Mapping
 

@@ -67,7 +67,12 @@ npx vitest run \
   tests/import.test.ts \
   tests/ideas.test.ts \
   tests/content-types.test.ts \
-  tests/cli.test.ts
+  tests/cli.test.ts \
+  tests/db-migration.test.ts \
+  tests/research-state.test.ts \
+  tests/research-sources.test.ts \
+  tests/research-document.test.ts \
+  tests/research-cli.test.ts
 ```
 
 ### What each test covers
@@ -83,6 +88,16 @@ npx vitest run \
 | `tests/content-types.test.ts` (6 tests) | Content type detection | Catalog project IDs (`m0lz.XX`) return `project-launch`; benchmark keywords return `technical-deep-dive`; generic prompts return `analysis-opinion`; project ID takes priority over benchmark keywords; empty prompt returns default; "test-driven development" does NOT false-positive as benchmark |
 | `tests/cli.test.ts` (13 tests) | CLI handler integration | `runStatus` prints formatted table and empty-state message; exits with error when DB missing; `computeMetrics` returns correct aggregates (posts, platforms, companion repos, evaluation pass rate); `runMetrics` prints output; `runInit` creates `.blog-agent/` with all subdirs and state.db; init with `--import` uses `config.site.content_dir`; init with `--import` prints clean error message and sets exitCode=1 on config/repo failure; `runInit` idempotent on re-run |
 
+**Phase 2 — Research (feature/phase-2-research)**
+
+| Test File | Feature | What It Validates |
+| --------- | ------- | ----------------- |
+| `tests/db-migration.test.ts` (3 tests) | Schema v1->v2 migration | Fresh DB opens at SCHEMA_VERSION=2 with unique source index; seeded v1 DB upgrades to v2 preserving data; re-opening v2 DB is idempotent |
+| `tests/research-state.test.ts` (9 tests) | Research post lifecycle | `initResearchPost` creates row with phase=research; idempotent re-init returns existing row unchanged; cross-phase slug collision throws; `getResearchPost` returns row or undefined; `getResearchPost` enforces phase=research boundary; `advancePhase` updates phase and bumps timestamp; rejects invalid phase; rejects missing slug |
+| `tests/research-sources.test.ts` (11 tests) | Source management | Inserts source with title/excerpt; deduplicates on (post_slug,url); reports existing source id; errors for missing post; detects source_type; orders by accessed_at; lists all sources; returns empty for no sources; counts correctly; returns 0 for unknown slug; rejects non-research phase posts |
+| `tests/research-document.test.ts` (18 tests) | Research documents | Writes template with all required sections; reads back losslessly; refuses overwrite without force; overwrites with force; validates missing file throws; validates all sections present; detects missing sections; detects empty sections; detects malformed frontmatter; documentPath joins correctly; YAML round-trips colons in topic; YAML round-trips quotes and hashes; validateSlug accepts kebab-case; rejects path separators; rejects uppercase/special chars; rejects empty slugs; rejects path traversal |
+| `tests/research-cli.test.ts` (13 tests) | Research CLI handlers | `runResearchInit` creates post+doc; refuses overwrite without --force; overwrites with --force; cross-phase safety rejects non-research slugs; rejects path traversal slugs; `runResearchAddSource` inserts and logs; deduplication is idempotent; missing post sets exitCode=1; `runResearchShow` prints fields; missing slug sets exitCode=1; `runResearchFinalize` fails on insufficient sources; fails on empty sections; passes when requirements met |
+
 ### Source files these tests protect
 
 - `src/core/db/schema.ts` — SQL schema for all 8 tables, SCHEMA_VERSION constant
@@ -97,6 +112,10 @@ npx vitest run \
 - `src/cli/status.ts` — `runStatus` with formatted table output
 - `src/cli/metrics.ts` — `runMetrics`, `computeMetrics` with aggregate queries
 - `src/cli/ideas.ts` — `addIdea`/`listIdeas`/`startIdea`/`removeIdea`, YAML persistence
+- `src/cli/research.ts` — `runResearchInit`/`runResearchAddSource`/`runResearchShow`/`runResearchFinalize`, slug validation, phase boundary
+- `src/core/research/state.ts` — `initResearchPost`, `getResearchPost`, `advancePhase`, phase boundary enforcement
+- `src/core/research/sources.ts` — `addSource`, `listSources`, `countSources`, phase boundary enforcement
+- `src/core/research/document.ts` — `writeResearchDocument`, `readResearchDocument`, `validateResearchDocument`, `validateSlug`, path traversal guard
 
 ### Expected results
 
@@ -136,7 +155,7 @@ npm test
 npm run build
 ```
 
-Expected baseline: **0 TypeScript errors, 48 tests passing across 6 suites, clean build** (as of feature/phase-1-foundation). Any drift from this baseline is a signal to investigate before merging.
+Expected baseline: **0 TypeScript errors, 102 tests passing across 11 suites, clean build** (as of feature/phase-2-research). Any drift from this baseline is a signal to investigate before merging.
 
 ## Phase 3: Code Review of Current Changes
 
@@ -204,12 +223,19 @@ Regression Suite: PASS / FAIL
 Phase 1 — Foundation:
   - Database schema + connection (7 tests): ✓ / ✗
   - Config loader (6 tests): ✓ / ✗
-  - Post import (3 tests): ✓ / ✗
-  - Ideas backlog CRUD (9 tests): ✓ / ✗
+  - Post import (5 tests): ✓ / ✗
+  - Ideas backlog CRUD (11 tests): ✓ / ✗
   - Content type detection (6 tests): ✓ / ✗
-  - CLI handlers (11 tests): ✓ / ✗
+  - CLI handlers (13 tests): ✓ / ✗
 
-Full Suite: X passing, Y failing  (baseline: 42 passing)
+Phase 2 — Research:
+  - Schema v1->v2 migration (3 tests): ✓ / ✗
+  - Research post lifecycle (9 tests): ✓ / ✗
+  - Source management (11 tests): ✓ / ✗
+  - Research documents (18 tests): ✓ / ✗
+  - Research CLI handlers (13 tests): ✓ / ✗
+
+Full Suite: X passing, Y failing  (baseline: 102 passing)
 Lint: {error count} errors  (baseline: 0)
 Build: PASS / FAIL
 ```

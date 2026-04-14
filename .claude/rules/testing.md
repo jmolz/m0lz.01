@@ -157,11 +157,26 @@ it('is idempotent on re-run', () => {
 
 ## Regression suite
 
-Every test file must be registered in `.claude/commands/review.md` under the current milestone. When shipping a feature:
+Every test file must be registered in **both** `.claude/commands/review.md` and `.windsurf/workflows/review.md` under the current milestone. When shipping a feature:
 
 1. Add the new `.test.ts` to the `npx vitest run` command
 2. Add a row to the "What each test covers" table
 3. Add protected source files to the "Source files these tests protect" list
-4. Update the baseline test count in Phase 2
+4. Update the baseline test count and output format template
 
-If a test exists but isn't in the regression suite, it's invisible to future `/review` runs.
+If a test exists but isn't in both regression suites, it's invisible to future `/review` runs.
+
+## Testing around phase boundaries
+
+When library functions enforce phase boundaries (e.g., `getResearchPost` throws for non-research posts), tests that intentionally advance a post to a later phase must use **direct DB queries** for assertions instead of the library function:
+
+```typescript
+// Bad — getResearchPost throws because we just advanced past research
+advancePhase(db, 'my-slug', 'draft');
+const post = getResearchPost(db, 'my-slug'); // THROWS!
+
+// Good — query the DB directly to verify state
+advancePhase(db, 'my-slug', 'draft');
+const post = db.prepare('SELECT * FROM posts WHERE slug = ?').get('my-slug') as PostRow;
+expect(post.phase).toBe('draft');
+```
