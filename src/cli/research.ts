@@ -11,6 +11,7 @@ import {
   ResearchDocument,
   writeResearchDocument,
   validateResearchDocument,
+  validateSlug,
   documentPath,
 } from '../core/research/document.js';
 import { addSource, countSources } from '../core/research/sources.js';
@@ -52,6 +53,13 @@ export function runResearchInit(
   opts: InitOptions,
   paths: ResearchPaths = {},
 ): void {
+  try {
+    validateSlug(slug);
+  } catch (e) {
+    console.error((e as Error).message);
+    process.exitCode = 1;
+    return;
+  }
   const dbPath = paths.dbPath ?? DB_PATH;
   const researchDir = paths.researchDir ?? RESEARCH_DIR;
   requireDb(dbPath);
@@ -61,17 +69,25 @@ export function runResearchInit(
 
   const db = getDatabase(dbPath);
   try {
-    const { created } = initResearchPost(db, slug, opts.topic, mode, contentType);
-    console.log(created
+    let result: { created: boolean; post: import('../core/db/types.js').PostRow };
+    try {
+      result = initResearchPost(db, slug, opts.topic, mode, contentType);
+    } catch (e) {
+      console.error((e as Error).message);
+      process.exitCode = 1;
+      return;
+    }
+    console.log(result.created
       ? `Created research entry for ${slug}`
       : `Entry already exists for ${slug} -- continuing`);
 
+    const post = result.post;
     const doc: ResearchDocument = {
-      slug,
-      topic: opts.topic,
-      mode,
-      content_type: contentType,
-      created_at: new Date().toISOString(),
+      slug: post.slug,
+      topic: post.topic ?? opts.topic,
+      mode: post.mode,
+      content_type: post.content_type ?? contentType,
+      created_at: result.created ? new Date().toISOString() : post.created_at,
       thesis: '{{thesis}}',
       findings: '{{findings}}',
       sources_list: '{{sources_list}}',
@@ -98,6 +114,13 @@ export function runResearchAddSource(
   opts: AddSourceOptions,
   paths: ResearchPaths = {},
 ): void {
+  try {
+    validateSlug(slug);
+  } catch (e) {
+    console.error((e as Error).message);
+    process.exitCode = 1;
+    return;
+  }
   const dbPath = paths.dbPath ?? DB_PATH;
   requireDb(dbPath);
 
@@ -120,13 +143,27 @@ export function runResearchAddSource(
 }
 
 export function runResearchShow(slug: string, paths: ResearchPaths = {}): void {
+  try {
+    validateSlug(slug);
+  } catch (e) {
+    console.error((e as Error).message);
+    process.exitCode = 1;
+    return;
+  }
   const dbPath = paths.dbPath ?? DB_PATH;
   const researchDir = paths.researchDir ?? RESEARCH_DIR;
   requireDb(dbPath);
 
   const db = getDatabase(dbPath);
   try {
-    const post = getResearchPost(db, slug);
+    let post;
+    try {
+      post = getResearchPost(db, slug);
+    } catch (e) {
+      console.error((e as Error).message);
+      process.exitCode = 1;
+      return;
+    }
     if (!post) {
       console.error(`Post not found: ${slug}`);
       process.exitCode = 1;
@@ -163,6 +200,13 @@ export function runResearchShow(slug: string, paths: ResearchPaths = {}): void {
 }
 
 export function runResearchFinalize(slug: string, paths: ResearchPaths = {}): void {
+  try {
+    validateSlug(slug);
+  } catch (e) {
+    console.error((e as Error).message);
+    process.exitCode = 1;
+    return;
+  }
   const dbPath = paths.dbPath ?? DB_PATH;
   const researchDir = paths.researchDir ?? RESEARCH_DIR;
   const configPath = paths.configPath ?? CONFIG_PATH;
@@ -170,7 +214,8 @@ export function runResearchFinalize(slug: string, paths: ResearchPaths = {}): vo
 
   if (!existsSync(configPath)) {
     console.error(`Config not found: ${configPath}. Run 'blog init' first.`);
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 
   const config = loadConfig(configPath);
@@ -178,7 +223,14 @@ export function runResearchFinalize(slug: string, paths: ResearchPaths = {}): vo
 
   const db = getDatabase(dbPath);
   try {
-    const post = getResearchPost(db, slug);
+    let post;
+    try {
+      post = getResearchPost(db, slug);
+    } catch (e) {
+      console.error((e as Error).message);
+      process.exitCode = 1;
+      return;
+    }
     if (!post) {
       console.error(`Post not found: ${slug}`);
       process.exitCode = 1;
