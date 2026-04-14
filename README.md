@@ -24,7 +24,7 @@ Runs locally. No server, no SaaS. Uses Claude Max 20x and OpenAI Codex CLI subsc
 Dual-layer:
 
 - **Claude Code skills** (interactive, subscription-backed): `/blog-research`, `/blog-benchmark`, `/blog-draft`, `/blog-evaluate`, `/blog-pipeline`, `/blog-update`
-- **Standalone CLI** (mechanical, no AI): `blog init`, `blog publish`, `blog status`, `blog metrics`, `blog ideas`
+- **Standalone CLI** (mechanical, no AI): `blog init`, `blog publish`, `blog status`, `blog metrics`, `blog ideas`, `blog research`
 
 Both layers share state via SQLite (`.blog-agent/state.db`) and file artifacts (`.blog-agent/`).
 
@@ -48,6 +48,10 @@ blog metrics           # Aggregate stats (published, platforms, companion repos)
 blog ideas             # List editorial backlog
 blog ideas add "topic" --priority high --type technical-deep-dive
 blog ideas start 1     # Promote idea 1 to the research phase
+blog research init <slug> --topic "..."   # Create research entry + template
+blog research add-source <slug> --url "..."  # Track a source URL
+blog research show <slug>                 # View research state and doc status
+blog research finalize <slug>             # Validate readiness for benchmark phase
 ```
 
 ## Tech Stack
@@ -61,9 +65,9 @@ blog ideas start 1     # Promote idea 1 to the research phase
 
 ## Status
 
-**Phase 1 — Foundation** complete: CLI skeleton, SQLite schema, config loader, m0lz.00 import, ideas backlog, test harness (48 tests).
+**Phase 2 — Research** complete: research pipeline CLI (init, add-source, show, finalize), schema v2 migration, YAML-safe frontmatter, slug validation, path traversal guards, phase boundary enforcement, 102 tests.
 
-Next: Phase 2 — research skill.
+Next: Phase 3 — benchmark skill.
 
 See `.claude/PRD.md` for the full scope and `.claude/plans/` for phase plans.
 
