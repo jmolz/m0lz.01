@@ -147,6 +147,49 @@ describe('runResearchInit', () => {
   });
 });
 
+describe('runResearchInit cross-phase safety', () => {
+  it('rejects init when slug exists in a non-research phase', () => {
+    const f = setupFixture();
+    const savedExitCode = process.exitCode;
+
+    try {
+      captureLogs();
+      runResearchInit('beta', { topic: 'first' }, { dbPath: f.dbPath, researchDir: f.researchDir });
+
+      // Advance to draft phase directly in DB
+      const db = getDatabase(f.dbPath);
+      try {
+        db.prepare("UPDATE posts SET phase = 'draft' WHERE slug = 'beta'").run();
+      } finally {
+        closeDatabase(db);
+      }
+
+      const { errors } = captureLogs();
+      process.exitCode = 0;
+      runResearchInit('beta', { topic: 'second' }, { dbPath: f.dbPath, researchDir: f.researchDir });
+
+      expect(process.exitCode).toBe(1);
+      expect(errors.join('\n')).toContain("already exists in phase 'draft'");
+    } finally {
+      process.exitCode = savedExitCode;
+    }
+  });
+
+  it('rejects slugs with path traversal characters', () => {
+    const f = setupFixture();
+    const savedExitCode = process.exitCode;
+
+    try {
+      const { errors } = captureLogs();
+      runResearchInit('../escape', { topic: 'evil' }, { dbPath: f.dbPath, researchDir: f.researchDir });
+      expect(process.exitCode).toBe(1);
+      expect(errors.join('\n')).toContain('Invalid slug');
+    } finally {
+      process.exitCode = savedExitCode;
+    }
+  });
+});
+
 describe('runResearchAddSource', () => {
   it('inserts a source and logs the id', () => {
     const f = setupFixture();

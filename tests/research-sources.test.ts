@@ -101,3 +101,11 @@ describe('countSources', () => {
     expect(countSources(db, 'unknown')).toBe(0);
   });
 });
+
+describe('phase boundary', () => {
+  it('addSource rejects posts not in research phase', () => {
+    db.prepare("UPDATE posts SET phase = 'draft' WHERE slug = 'test-slug'").run();
+    expect(() => addSource(db, 'test-slug', 'https://example.com'))
+      .toThrow(/not 'research'/);
+  });
+});

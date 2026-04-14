@@ -35,6 +35,20 @@ describe('initResearchPost', () => {
     expect(result.post.mode).toBe('directed');
     expect(result.post.content_type).toBe('technical-deep-dive');
   });
+
+  it('throws when slug exists in a non-research phase (cross-phase collision)', () => {
+    initResearchPost(db, 'published-post', 'topic', 'directed', 'technical-deep-dive');
+    advancePhase(db, 'published-post', 'draft');
+
+    expect(() => {
+      initResearchPost(db, 'published-post', 'new topic', 'exploratory', 'analysis-opinion');
+    }).toThrow(/already exists in phase 'draft'/);
+
+    // Original row is unchanged — use direct query since getResearchPost enforces phase
+    const post = db.prepare('SELECT * FROM posts WHERE slug = ?').get('published-post') as any;
+    expect(post?.phase).toBe('draft');
+    expect(post?.topic).toBe('topic');
+  });
 });
 
 describe('getResearchPost', () => {
@@ -46,6 +60,13 @@ describe('getResearchPost', () => {
 
   it('returns undefined when absent', () => {
     expect(getResearchPost(db, 'missing')).toBeUndefined();
+  });
+
+  it('throws when post is not in research phase', () => {
+    initResearchPost(db, 'phased-out', 'topic', 'directed', 'technical-deep-dive');
+    advancePhase(db, 'phased-out', 'draft');
+    expect(() => getResearchPost(db, 'phased-out'))
+      .toThrow(/not 'research'/);
   });
 });
 
@@ -59,7 +80,8 @@ describe('advancePhase', () => {
 
     advancePhase(db, 'a', 'benchmark');
 
-    const after = getResearchPost(db, 'a');
+    // Use direct query since getResearchPost enforces phase boundary
+    const after = db.prepare('SELECT * FROM posts WHERE slug = ?').get('a') as any;
     expect(after?.phase).toBe('benchmark');
     expect(after?.updated_at).not.toBe('2020-01-01 00:00:00');
     expect(before?.phase).toBe('research');
