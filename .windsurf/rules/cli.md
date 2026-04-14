@@ -6,7 +6,7 @@ globs:
 
 # CLI Handler Conventions
 
-Rules for writing Commander.js command handlers in `src/cli/`. These patterns emerged during Phase 1-2 and keep the CLI testable and robust.
+Rules for writing Commander.js command handlers in `src/cli/`. These patterns emerged during Phases 1-3 and keep the CLI testable and robust.
 
 ## Handler shape
 
@@ -67,6 +67,18 @@ export function runResearchInit(slug: string, opts: InitOptions, paths: Research
   const dbPath = paths.dbPath ?? DB_PATH;
   const researchDir = paths.researchDir ?? RESEARCH_DIR;
   // ...
+}
+```
+
+As the number of paths grows, the interface pattern scales cleanly:
+
+```typescript
+export interface BenchmarkPaths {
+  dbPath?: string;
+  benchmarkDir?: string;
+  reposDir?: string;
+  researchDir?: string;
+  configPath?: string;
 }
 ```
 
@@ -173,7 +185,7 @@ try {
 
 ## Phase boundary enforcement
 
-Library functions like `getResearchPost()` and `addSource()` throw when a post is not in the expected phase. CLI handlers must catch these throws:
+Library functions like `getResearchPost()`, `addSource()`, `getBenchmarkPost()`, `initBenchmark()`, and `completeBenchmark()` throw when a post is not in the expected phase. CLI handlers must catch these throws:
 
 ```typescript
 let post;

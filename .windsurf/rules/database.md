@@ -3,9 +3,11 @@ trigger: glob
 globs:
   - "src/core/db/**"
   - "src/core/migrate/**"
+  - "src/core/benchmark/state.ts"
   - "tests/db.test.ts"
   - "tests/import.test.ts"
   - "tests/db-migration.test.ts"
+  - "tests/benchmark-state.test.ts"
 ---
 
 # Database Conventions
@@ -53,7 +55,7 @@ if (post && post.phase !== 'research') {
 }
 ```
 
-This pattern applies to `getResearchPost`, `addSource`, and `initResearchPost` (cross-phase collision guard).
+This pattern applies to `getResearchPost`, `addSource`, `initResearchPost` (cross-phase collision guard), `initBenchmark` (requires research phase), `getBenchmarkPost` (requires benchmark phase), `completeBenchmark` (requires benchmark phase), and `skipBenchmark` (requires research phase).
 
 ## Type Mapping
 

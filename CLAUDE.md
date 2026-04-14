@@ -43,7 +43,7 @@ npm run lint && npm test && npm run build
 
 ## Project Structure
 
-```
+```text
 m0lz.01/
   src/
     cli/                   # Commander.js command definitions
@@ -93,16 +93,16 @@ m0lz.01/
 
 **Claude Code Skills** (interactive, uses subscription): `/blog-research`, `/blog-benchmark`, `/blog-draft`, `/blog-evaluate`, `/blog-pipeline`, `/blog-update` — these handle AI-heavy work in Claude Code sessions.
 
-**Standalone CLI** (mechanical, no AI needed): `blog init`, `blog publish`, `blog unpublish`, `blog status`, `blog metrics`, `blog ideas`, `blog research init|add-source|show|finalize` — these run independently for API calls, state queries, and pipeline execution.
+**Standalone CLI** (mechanical, no AI needed): `blog init`, `blog publish`, `blog unpublish`, `blog status`, `blog metrics`, `blog ideas`, `blog research init|add-source|show|finalize`, `blog benchmark init|env|run|show|skip|complete` — these run independently for API calls, state queries, and pipeline execution.
 
 **Shared state**: Both layers read/write the same SQLite database and file system artifacts.
 
 ### Data Flow
 
-```
+```text
 Prompt -> Detect mode (directed vs exploratory) + content type
   -> Research (web search, source gathering)
-  -> Benchmark (scaffold test harness, run, collect data) [skip for analysis/opinion]
+  -> Benchmark (scaffold test harness, run, collect data) [skip for analysis/opinion, optional for project-launch]
   -> Draft (MDX with benchmark data, Excalidraw diagrams)
   -> Evaluate (three-reviewer panel: Claude + GPT-5.4 high + GPT-5.4 xhigh)
   -> Publish (PR to m0lz.00, cross-post, companion repo, social text)
@@ -230,10 +230,11 @@ const resolvedPath = resolve(dirname(configPath), rawPath);
 - **Framework**: Vitest
 - **Location**: `tests/*.test.ts`
 - **Run**: `npm test`
+- **Baseline**: 146 tests across 16 suites (Phase 1: 48, Phase 2: 54, Phase 3: 44)
 - **Minimum**: Each module needs: 1 happy path, 1 edge case, 1 error case
 - **DB tests**: Use in-memory SQLite (`getDatabase(':memory:')`)
 - **File tests**: Use `mkdtemp` for temporary directories, clean up in `afterEach`
-- **CLI tests**: Import command handler functions directly, pass mock paths
+- **CLI tests**: Import command handler functions directly, pass mock paths via `XPaths` interface
 
 ---
 
@@ -278,6 +279,7 @@ These load automatically when editing files in their scope:
 | Full product spec | `.claude/PRD.md` | Understanding scope, features, architecture |
 | Phase 1 plan | `.claude/plans/phase-1-foundation.md` | Implementing foundation |
 | Phase 2 plan | `.claude/plans/phase-2-research.md` | Research pipeline + contract |
+| Phase 3 plan | `.claude/plans/phase-3-benchmark.md` | Benchmark test harness + contract |
 | Original brainstorm | `.claude/plans/blog-agent-prd.md` | Historical context |
 | PICE workflow | `.claude/docs/PLAYBOOK.md` | Plan/Implement/Evaluate loop |
 | Agent teams | `.claude/docs/AGENT-TEAMS-PLAYBOOK.md` | Parallel agent coordination |
@@ -288,7 +290,7 @@ These load automatically when editing files in their scope:
 
 - **ESM imports require `.js` extension** — every internal import must end in `.js` even for `.ts` source files. This is non-negotiable with Node16 module resolution.
 - **All database queries use parameterized statements** — never string interpolation for SQL. Use `?` placeholders or `@named` parameters.
-- **Phase boundary enforcement** — research commands (`add-source`, `show`, `finalize`) must reject posts not in the `research` phase. Library functions throw; CLI handlers catch and set `exitCode=1`.
+- **Phase boundary enforcement** — research commands (`add-source`, `show`, `finalize`) must reject posts not in the `research` phase. Benchmark commands (`env`, `run`, `complete`) must reject posts not in the `benchmark` phase. Library functions throw; CLI handlers catch and set `exitCode=1`.
 - **CLI commands are non-interactive** — use Commander.js options/arguments, not readline prompts. Interactive collaboration happens in Claude Code skills, not the CLI.
 - **Pipeline operations are idempotent** — running any publish step twice must not create duplicates or corrupt state. Use `INSERT OR IGNORE`, check-before-act patterns.
 - **Never commit secrets** — `.env`, `.blogrc.yaml`, and `.blog-agent/` are gitignored. Only `.env.example` and `.blogrc.example.yaml` are committed.

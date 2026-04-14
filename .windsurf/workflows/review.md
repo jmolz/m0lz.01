@@ -72,12 +72,17 @@ npx vitest run \
   tests/research-state.test.ts \
   tests/research-sources.test.ts \
   tests/research-document.test.ts \
-  tests/research-cli.test.ts
+  tests/research-cli.test.ts \
+  tests/benchmark-environment.test.ts \
+  tests/benchmark-state.test.ts \
+  tests/benchmark-results.test.ts \
+  tests/benchmark-companion.test.ts \
+  tests/benchmark-cli.test.ts
 ```
 
 ### What each test covers
 
-**Phase 1 — Foundation (feature/phase-1-foundation)**
+#### Phase 1 — Foundation
 
 | Test File | Feature | What It Validates |
 | --------- | ------- | ----------------- |
@@ -88,7 +93,7 @@ npx vitest run \
 | `tests/content-types.test.ts` (6 tests) | Content type detection | Catalog project IDs return `project-launch`; benchmark keywords return `technical-deep-dive`; generic prompts return `analysis-opinion`; project ID takes priority; empty prompt returns default; no false-positives |
 | `tests/cli.test.ts` (13 tests) | CLI handler integration | `runStatus` prints formatted table and empty-state message; exits with error when DB missing; `computeMetrics` returns correct aggregates; `runMetrics` prints output; `runInit` creates `.blog-agent/` with all subdirs and state.db; init with `--import` works; init with `--import` prints clean error on failure; `runInit` idempotent on re-run |
 
-**Phase 2 — Research (feature/phase-2-research)**
+#### Phase 2 — Research
 
 | Test File | Feature | What It Validates |
 | --------- | ------- | ----------------- |
@@ -97,6 +102,16 @@ npx vitest run \
 | `tests/research-sources.test.ts` (11 tests) | Source management | Inserts source with title/excerpt; deduplicates on (post_slug,url); reports existing source id; errors for missing post; detects source_type; orders by accessed_at; lists all sources; returns empty for no sources; counts correctly; returns 0 for unknown slug; rejects non-research phase posts |
 | `tests/research-document.test.ts` (18 tests) | Research documents | Writes template with all required sections; reads back losslessly; refuses overwrite without force; overwrites with force; validates missing file throws; validates all sections present; detects missing sections; detects empty sections; detects malformed frontmatter; documentPath joins correctly; YAML round-trips colons in topic; YAML round-trips quotes and hashes; validateSlug accepts kebab-case; rejects path separators; rejects uppercase/special chars; rejects empty slugs; rejects path traversal |
 | `tests/research-cli.test.ts` (13 tests) | Research CLI handlers | `runResearchInit` creates post+doc; refuses overwrite without --force; overwrites with --force; cross-phase safety rejects non-research slugs; rejects path traversal slugs; `runResearchAddSource` inserts and logs; deduplication is idempotent; missing post sets exitCode=1; `runResearchShow` prints fields; missing slug sets exitCode=1; `runResearchFinalize` fails on insufficient sources; fails on empty sections; passes when requirements met |
+
+#### Phase 3 — Benchmark
+
+| Test File | Feature | What It Validates |
+| --------- | ------- | ----------------- |
+| `tests/benchmark-environment.test.ts` (4 tests) | Environment capture | `captureEnvironment` returns all required fields as non-empty strings; total_memory_gb is positive integer; values stable across consecutive calls; `formatEnvironmentMarkdown` includes OS, architecture, Node.js version |
+| `tests/benchmark-state.test.ts` (15 tests) | Benchmark state lifecycle | `initBenchmark` transitions research→benchmark and parses targets; rejects non-research and missing posts; `getBenchmarkPost` returns benchmark-phase post, undefined for missing, throws for wrong phase; `skipBenchmark` transitions to draft with has_benchmarks=0; rejects non-research; `createBenchmarkRun` inserts pending row; `updateBenchmarkStatus` transitions pending→running→completed; `listBenchmarkRuns` returns ordered; `completeBenchmark` sets has_benchmarks=1 and advances to draft; rejects non-benchmark and missing posts; `getBenchmarkRequirement` routes content types correctly |
+| `tests/benchmark-results.test.ts` (5 tests) | Results storage | `writeResults`/`readResults` round-trip data; returns null for nonexistent; `writeEnvironment`/`readEnvironment` round-trip; slug validation rejects path traversal for all four functions |
+| `tests/benchmark-companion.test.ts` (6 tests) | Companion repo scaffolding | Creates src/, results/, METHODOLOGY.md, LICENSE, README.md; METHODOLOGY.md contains environment details; README.md lists targets; LICENSE contains MIT; idempotent re-scaffold preserves existing files; `writeMethodology` replaces all template placeholders |
+| `tests/benchmark-cli.test.ts` (14 tests) | Benchmark CLI handlers | `runBenchmarkInit` transitions and prints targets; rejects non-research; rejects skip content type; warns optional but proceeds for project-launch; `runBenchmarkEnv` captures and writes file; rejects non-benchmark; `runBenchmarkRun` stores results and marks completed; rejects missing environment; `runBenchmarkShow` displays state with run count; `runBenchmarkSkip` advances analysis-opinion to draft; refuses required; `runBenchmarkComplete` advances to draft; rejects non-benchmark; all handlers reject invalid slugs |
 
 ### Source files these tests protect
 
@@ -107,6 +122,9 @@ npx vitest run \
 - `src/cli/index.ts`, `src/cli/init.ts`, `src/cli/status.ts`, `src/cli/metrics.ts`, `src/cli/ideas.ts`
 - `src/cli/research.ts`
 - `src/core/research/state.ts`, `src/core/research/sources.ts`, `src/core/research/document.ts`
+- `src/cli/benchmark.ts`
+- `src/core/benchmark/environment.ts`, `src/core/benchmark/state.ts`, `src/core/benchmark/results.ts`, `src/core/benchmark/companion.ts`
+- `templates/benchmark/methodology.md`
 
 ### Expected results
 
@@ -146,7 +164,7 @@ npm test
 npm run build
 ```
 
-Expected baseline: **0 TypeScript errors, 102 tests passing across 11 suites, clean build** (as of feature/phase-2-research). Any drift from this baseline is a signal to investigate before merging.
+Expected baseline: **0 TypeScript errors, 146 tests passing across 16 suites, clean build** (as of feature/phase-3-benchmark). Any drift from this baseline is a signal to investigate before merging.
 
 ## Phase 3: Code Review of Current Changes
 
@@ -199,7 +217,7 @@ If reviewing a specific commit, check it out or diff against it.
 
 ### Migration Status
 
-```
+```text
 Schema Drift: NONE / DETECTED (tables/columns affected)
 SCHEMA_VERSION Bumped: YES / NO / N/A
 Fresh init works: PASS / FAIL
@@ -208,7 +226,7 @@ Action: Bump SCHEMA_VERSION and add migration block, or N/A
 
 ### Regression Suite Results
 
-```
+```text
 Regression Suite: PASS / FAIL
 
 Phase 1 — Foundation:
@@ -226,14 +244,21 @@ Phase 2 — Research:
   - Research documents (18 tests): PASS / FAIL
   - Research CLI handlers (13 tests): PASS / FAIL
 
-Full Suite: X passing, Y failing  (baseline: 102 passing)
+Phase 3 — Benchmark:
+  - Environment capture (4 tests): PASS / FAIL
+  - Benchmark state lifecycle (15 tests): PASS / FAIL
+  - Results storage (5 tests): PASS / FAIL
+  - Companion repo scaffolding (6 tests): PASS / FAIL
+  - Benchmark CLI handlers (14 tests): PASS / FAIL
+
+Full Suite: X passing, Y failing  (baseline: 146 passing)
 Lint: {error count} errors  (baseline: 0)
 Build: PASS / FAIL
 ```
 
 ### Contract Evaluation (if applicable)
 
-```
+```text
 Contract: {feature name} — Tier {N}
 Evaluator: Isolated sub-agent (no implementation context)
 

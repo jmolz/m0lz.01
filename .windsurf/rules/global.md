@@ -34,6 +34,7 @@ npm run lint && npm test && npm run build
 - **ESM imports require `.js` extension** — every internal import must end in `.js` even for `.ts` source files. Non-negotiable with Node16 module resolution.
 - **All database queries use parameterized statements** — never string interpolation for SQL. Use `?` placeholders or `@named` parameters.
 - **CLI commands are non-interactive** — use Commander.js options/arguments, not readline prompts.
+- **Phase boundary enforcement** — research commands reject posts not in `research` phase. Benchmark commands (`env`, `run`, `complete`) reject posts not in `benchmark` phase. Library functions throw; CLI handlers catch and set `exitCode=1`.
 - **Pipeline operations are idempotent** — running any publish step twice must not create duplicates or corrupt state.
 - **Never commit secrets** — `.env`, `.blogrc.yaml`, and `.blog-agent/` are gitignored.
 - **No emojis in content** — design constraint inherited from m0lz.00. Applies to generated MDX, social text, and all user-facing output.
@@ -70,6 +71,7 @@ import { BlogConfig } from '../config/types.js';
 ## On-Demand Context
 
 Read these files when working in their respective areas:
+
 - `.claude/PRD.md` — Full product spec
 - `.claude/plans/*.md` — Implementation plans
 - `.claude/docs/PLAYBOOK.md` — PICE workflow
