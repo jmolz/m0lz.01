@@ -8,6 +8,7 @@ import { registerStatus } from './status.js';
 import { registerMetrics } from './metrics.js';
 import { registerIdeas } from './ideas.js';
 import { registerResearch } from './research.js';
+import { registerBenchmark } from './benchmark.js';
 
 const program = new Command();
 
@@ -21,5 +22,6 @@ registerStatus(program);
 registerMetrics(program);
 registerIdeas(program);
 registerResearch(program);
+registerBenchmark(program);
 
 program.parse();
