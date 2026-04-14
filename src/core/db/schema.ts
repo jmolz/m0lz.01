@@ -1,6 +1,6 @@
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
-export const SCHEMA_SQL = `
+export const SCHEMA_V1_SQL = `
 -- Core post tracking
 CREATE TABLE IF NOT EXISTS posts (
   slug TEXT PRIMARY KEY,
@@ -104,4 +104,9 @@ CREATE TABLE IF NOT EXISTS metrics (
   value TEXT,
   timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
 );
+`;
+
+export const SCHEMA_V2_SQL = `
+-- Dedupe sources by (post_slug, url). Added in Phase 2 research pipeline.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_sources_post_url ON sources(post_slug, url);
 `;

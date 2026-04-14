@@ -1,6 +1,6 @@
 import Database from 'better-sqlite3';
 
-import { SCHEMA_VERSION, SCHEMA_SQL } from './schema.js';
+import { SCHEMA_VERSION, SCHEMA_V1_SQL, SCHEMA_V2_SQL } from './schema.js';
 
 export function getDatabase(dbPath: string): Database.Database {
   const db = new Database(dbPath);
@@ -24,12 +24,11 @@ export function getDatabase(dbPath: string): Database.Database {
 function migrate(db: Database.Database, fromVersion: number): void {
   db.transaction(() => {
     if (fromVersion < 1) {
-      // better-sqlite3 exec runs the full schema creation SQL
-      db.exec(SCHEMA_SQL);
+      db.exec(SCHEMA_V1_SQL);
     }
-
-    // Future migrations:
-    // if (fromVersion < 2) { ... }
+    if (fromVersion < 2) {
+      db.exec(SCHEMA_V2_SQL);
+    }
 
     // SQLite pragmas do not accept bound parameters. SCHEMA_VERSION is a
     // compile-time integer constant, so string interpolation here is safe.
