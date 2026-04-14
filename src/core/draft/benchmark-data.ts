@@ -11,6 +11,10 @@ export interface BenchmarkContext {
   methodologyRef: string;
 }
 
+export interface MethodologyRefOptions {
+  githubUser: string;
+}
+
 export function formatBenchmarkTable(results: BenchmarkResults): string {
   const data = results.data;
   const keys = Object.keys(data);
@@ -71,14 +75,22 @@ export function formatBenchmarkTable(results: BenchmarkResults): string {
   return [headerRow, separator, ...rows].join('\n');
 }
 
-export function formatMethodologyRef(env: EnvironmentSnapshot, slug: string): string {
+export function formatMethodologyRef(
+  env: EnvironmentSnapshot,
+  slug: string,
+  opts: MethodologyRefOptions,
+): string {
   return (
     `Tested on ${env.os} ${env.arch} (${env.cpus}) with Node.js ${env.node_version} -- ` +
-    `see [METHODOLOGY.md](https://github.com/jmolz/${slug}/blob/main/METHODOLOGY.md) for full reproduction steps.`
+    `see [METHODOLOGY.md](https://github.com/${opts.githubUser}/${slug}/blob/main/METHODOLOGY.md) for full reproduction steps.`
   );
 }
 
-export function getBenchmarkContext(benchmarkDir: string, slug: string): BenchmarkContext {
+export function getBenchmarkContext(
+  benchmarkDir: string,
+  slug: string,
+  opts: MethodologyRefOptions,
+): BenchmarkContext {
   let results: BenchmarkResults | null = null;
   let environment: EnvironmentSnapshot | null = null;
 
@@ -93,7 +105,7 @@ export function getBenchmarkContext(benchmarkDir: string, slug: string): Benchma
   }
 
   const table = results ? formatBenchmarkTable(results) : '(no benchmark data)';
-  const methodologyRef = environment ? formatMethodologyRef(environment, slug) : '';
+  const methodologyRef = environment ? formatMethodologyRef(environment, slug, opts) : '';
 
   return { results, environment, table, methodologyRef };
 }

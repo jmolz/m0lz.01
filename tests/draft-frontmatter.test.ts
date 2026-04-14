@@ -285,4 +285,24 @@ body`;
     const fm = parseFrontmatter(mdx);
     expect(fm.published).toBe(false);
   });
+
+  it('does not mis-split when body contains a thematic break', () => {
+    const mdx = `---
+title: Body With Rule
+description: Ensures body hr does not break parsing
+date: "2026-01-01"
+tags:
+  - test
+published: false
+---
+
+First paragraph.
+
+---
+
+Second paragraph after a thematic break.`;
+    const fm = parseFrontmatter(mdx);
+    expect(fm.title).toBe('Body With Rule');
+    expect(fm.description).toBe('Ensures body hr does not break parsing');
+  });
 });

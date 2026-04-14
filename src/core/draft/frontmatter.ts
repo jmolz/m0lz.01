@@ -98,11 +98,13 @@ export function serializeFrontmatter(fm: PostFrontmatter): string {
 }
 
 export function parseFrontmatter(mdxContent: string): PostFrontmatter {
-  const parts = mdxContent.split(/^---$/m);
-  if (parts.length < 3) {
+  // Match only the first two `---` delimiters so thematic breaks in the body
+  // (which render as `---` on their own line) don't corrupt parsing.
+  const match = mdxContent.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
+  if (!match) {
     throw new Error('MDX content missing frontmatter delimiters');
   }
-  const parsed = yaml.load(parts[1]);
+  const parsed = yaml.load(match[1]);
   if (!parsed || typeof parsed !== 'object') {
     throw new Error('Frontmatter is not a valid YAML object');
   }

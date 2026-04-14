@@ -14,6 +14,7 @@ import {
   registerAsset,
   listAssets,
   draftPath,
+  PLACEHOLDER_PATTERN,
 } from '../core/draft/state.js';
 import { parseFrontmatter, validateFrontmatter } from '../core/draft/frontmatter.js';
 import { getBenchmarkContext } from '../core/draft/benchmark-data.js';
@@ -132,14 +133,21 @@ export function runDraftShow(slug: string, paths: DraftPaths = {}): void {
     }
 
     const assets = listAssets(db, slug);
-    const benchmarkCtx = getBenchmarkContext(benchmarkDir, slug);
 
-    // Read existing tags if config is available
+    // Best-effort config read: a malformed .blogrc.yaml shouldn't abort `show`.
     let existingTags: string[] = [];
+    let githubUser = 'unknown';
     if (existsSync(configPath)) {
-      const config = loadConfig(configPath);
-      existingTags = readExistingTags(config.site.repo_path, config.site.content_dir);
+      try {
+        const config = loadConfig(configPath);
+        existingTags = readExistingTags(config.site.repo_path, config.site.content_dir);
+        githubUser = config.author.github;
+      } catch (e) {
+        console.error(`Warning: failed to read config (${(e as Error).message}). Tags unavailable.`);
+      }
     }
+
+    const benchmarkCtx = getBenchmarkContext(benchmarkDir, slug, { githubUser });
 
     console.log(`slug:            ${post.slug}`);
     console.log(`phase:           ${post.phase}`);
@@ -197,7 +205,7 @@ export function runDraftValidate(slug: string, paths: DraftPaths = {}): void {
     const validation = validateFrontmatter(fm);
 
     // Check for placeholder sections
-    const placeholderCount = (content.match(/\{\/\* TODO: Fill this section \*\/\}/g) || []).length;
+    const placeholderCount = (content.match(PLACEHOLDER_PATTERN) || []).length;
 
     // Check registered assets exist
     const assets = listAssets(db, slug);

@@ -172,14 +172,19 @@ describe('initDraft', () => {
     try {
       const first = initDraft(db, 'delta', draftsDir, benchmarkDir, researchDir, config);
 
-      // Modify the file
-      writeFileSync(first.draftPath, 'modified content\n---\ntitle: Custom\n---\nrest');
+      // Simulate the skill filling in the draft — keep valid frontmatter
+      // at the top so the file still parses, with author-edited body.
+      writeFileSync(
+        first.draftPath,
+        '---\ntitle: Custom\ndescription: Edited\ndate: "2026-04-14"\ntags:\n  - test\npublished: false\n---\n\nauthor body content\n',
+      );
 
       const second = initDraft(db, 'delta', draftsDir, benchmarkDir, researchDir, config);
       expect(second.draftPath).toBe(first.draftPath);
+      expect(second.frontmatter.title).toBe('Custom');
 
       const content = readFileSync(second.draftPath, 'utf-8');
-      expect(content).toContain('modified');
+      expect(content).toContain('author body content');
     } finally {
       closeDatabase(db);
     }

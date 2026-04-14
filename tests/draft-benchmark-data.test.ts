@@ -84,13 +84,21 @@ describe('formatBenchmarkTable', () => {
 describe('formatMethodologyRef', () => {
   it('produces correct reference string', () => {
     const env = makeEnv();
-    const ref = formatMethodologyRef(env, 'test-bench');
+    const ref = formatMethodologyRef(env, 'test-bench', { githubUser: 'jmolz' });
     expect(ref).toContain('darwin');
     expect(ref).toContain('arm64');
     expect(ref).toContain('Apple M4 x 10');
     expect(ref).toContain('v22.0.0');
     expect(ref).toContain('METHODOLOGY.md');
     expect(ref).toContain('test-bench');
+    expect(ref).toContain('https://github.com/jmolz/test-bench');
+  });
+
+  it('honors a custom github user from config', () => {
+    const env = makeEnv();
+    const ref = formatMethodologyRef(env, 'test-bench', { githubUser: 'someone-else' });
+    expect(ref).toContain('https://github.com/someone-else/test-bench');
+    expect(ref).not.toContain('jmolz');
   });
 });
 
@@ -103,16 +111,17 @@ describe('getBenchmarkContext', () => {
     writeFileSync(join(slugDir, 'results.json'), JSON.stringify(makeResults({ score: 42 })));
     writeFileSync(join(slugDir, 'environment.json'), JSON.stringify(makeEnv()));
 
-    const ctx = getBenchmarkContext(tempDir, 'test-slug');
+    const ctx = getBenchmarkContext(tempDir, 'test-slug', { githubUser: 'jmolz' });
     expect(ctx.results).not.toBeNull();
     expect(ctx.environment).not.toBeNull();
     expect(ctx.table).toContain('score');
     expect(ctx.methodologyRef).toContain('darwin');
+    expect(ctx.methodologyRef).toContain('github.com/jmolz');
   });
 
   it('returns nulls for missing files', () => {
     tempDir = mkdtempSync(join(tmpdir(), 'bench-data-'));
-    const ctx = getBenchmarkContext(tempDir, 'nonexistent');
+    const ctx = getBenchmarkContext(tempDir, 'nonexistent', { githubUser: 'jmolz' });
     expect(ctx.results).toBeNull();
     expect(ctx.environment).toBeNull();
     expect(ctx.table).toBe('(no benchmark data)');

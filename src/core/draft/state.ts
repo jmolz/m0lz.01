@@ -13,6 +13,11 @@ import { readExistingTags } from './tags.js';
 import { readResearchDocument } from '../research/document.js';
 import { documentPath } from '../research/document.js';
 
+// Any TODO-flavored marker the template or skill emits counts as an
+// unfilled section. Kept permissive so new placeholder variants still trip
+// validation instead of silently passing.
+export const PLACEHOLDER_PATTERN = /\{\/\*\s*TODO[:\s].*?\*\/\}/gi;
+
 export function getDraftPost(db: Database.Database, slug: string): PostRow | undefined {
   const post = db.prepare('SELECT * FROM posts WHERE slug = ?').get(slug) as PostRow | undefined;
   if (post && post.phase !== 'draft') {
@@ -67,7 +72,9 @@ export function initDraft(
     researchFindings = doc.findings || undefined;
   }
 
-  const benchmarkCtx = getBenchmarkContext(benchmarkDir, slug);
+  const benchmarkCtx = getBenchmarkContext(benchmarkDir, slug, {
+    githubUser: config.author.github,
+  });
   const existingTags = readExistingTags(config.site.repo_path, config.site.content_dir);
 
   const context: DraftContext = {
@@ -106,7 +113,7 @@ export function completeDraft(
   const errors = [...validation.errors];
 
   // Check for placeholder sections
-  const placeholderCount = (content.match(/\{\/\* TODO: Fill this section \*\/\}/g) || []).length;
+  const placeholderCount = (content.match(PLACEHOLDER_PATTERN) || []).length;
   if (placeholderCount > 0) {
     errors.push(`Placeholder sections remaining: ${placeholderCount}`);
   }
