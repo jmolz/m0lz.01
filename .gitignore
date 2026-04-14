@@ -1,0 +1,13 @@
+node_modules/
+dist/
+.blog-agent/
+.blogrc.yaml
+.env
+*.db
+*.db-journal
+*.db-wal
+.DS_Store
+
+# Plugin-installed Claude Code skills (drift with marketplace updates)
+# Project-specific skill stubs live in /skills/ at the project root
+.claude/skills/
