@@ -77,7 +77,12 @@ npx vitest run \
   tests/benchmark-state.test.ts \
   tests/benchmark-results.test.ts \
   tests/benchmark-companion.test.ts \
-  tests/benchmark-cli.test.ts
+  tests/benchmark-cli.test.ts \
+  tests/draft-frontmatter.test.ts \
+  tests/draft-state.test.ts \
+  tests/draft-benchmark-data.test.ts \
+  tests/draft-tags.test.ts \
+  tests/draft-cli.test.ts
 ```
 
 ### What each test covers
@@ -113,6 +118,16 @@ npx vitest run \
 | `tests/benchmark-companion.test.ts` (6 tests) | Companion repo scaffolding | Creates src/, results/, METHODOLOGY.md, LICENSE, README.md; METHODOLOGY.md contains environment details; README.md lists targets; LICENSE contains MIT; idempotent re-scaffold preserves existing files; `writeMethodology` replaces all template placeholders |
 | `tests/benchmark-cli.test.ts` (14 tests) | Benchmark CLI handlers | `runBenchmarkInit` transitions and prints targets; rejects non-research; rejects skip content type; warns optional but proceeds for project-launch; `runBenchmarkEnv` captures and writes file; rejects non-benchmark; `runBenchmarkRun` stores results and marks completed; rejects missing environment; `runBenchmarkShow` displays state with run count; `runBenchmarkSkip` advances analysis-opinion to draft; refuses required; `runBenchmarkComplete` advances to draft; rejects non-benchmark; all handlers reject invalid slugs |
 
+#### Phase 4 — Draft
+
+| Test File | Feature | What It Validates |
+| --------- | ------- | ----------------- |
+| `tests/draft-frontmatter.test.ts` (19 tests) | PostFrontmatter schema | `generateFrontmatter` produces canonical URL, companion_repo when has_benchmarks, project from project_id, published=false, placeholder title/description; `validateFrontmatter` passes valid, fails missing/placeholder title/description/date/tags/published; `serializeFrontmatter`/`parseFrontmatter` round-trip with optional fields omitted; `parseFrontmatter` extracts from MDX, throws on missing delimiters and invalid YAML |
+| `tests/draft-state.test.ts` (16 tests) | Draft state lifecycle | `getDraftPost` returns draft-phase post, throws for wrong phase, undefined for missing; `initDraft` creates directory structure and template MDX, is idempotent, includes content-type-specific sections (technical-deep-dive has benchmarks, analysis-opinion has analysis), throws for missing post; `completeDraft` advances to evaluate, rejects placeholder sections, rejects missing asset files, throws for wrong phase and missing post; `registerAsset` inserts and is idempotent (transactional); `listAssets` returns ordered list, empty for unknown slug |
+| `tests/draft-benchmark-data.test.ts` (7 tests) | Benchmark data formatting | `formatBenchmarkTable` produces markdown from simple key-value, handles empty data, array values as rows, nested objects flattened; `formatMethodologyRef` produces correct reference string; `getBenchmarkContext` reads existing results/environment, returns nulls for missing files |
+| `tests/draft-tags.test.ts` (6 tests) | Tag taxonomy reader | `readExistingTags` reads tags from MDX files, subdirectory-based posts, deduplicates, returns sorted; returns empty for missing directory, no MDX files, files without tags field |
+| `tests/draft-cli.test.ts` (22 tests) | Draft CLI handlers | `runDraftInit` creates draft directory and template MDX with content-type-aware sections (technical-deep-dive, analysis-opinion, project-launch), errors for wrong phase; `runDraftShow` prints status, errors for wrong phase; `runDraftValidate` fails for placeholders, passes for complete draft, fails for missing assets; `runDraftAddAsset` registers existing file, errors for missing file and invalid type; `runDraftComplete` advances to evaluate, errors for wrong phase; rejects 6 invalid slug patterns |
+
 ### Source files these tests protect
 
 - `src/core/db/schema.ts`, `src/core/db/database.ts`, `src/core/db/types.ts`
@@ -125,6 +140,8 @@ npx vitest run \
 - `src/cli/benchmark.ts`
 - `src/core/benchmark/environment.ts`, `src/core/benchmark/state.ts`, `src/core/benchmark/results.ts`, `src/core/benchmark/companion.ts`
 - `templates/benchmark/methodology.md`
+- `src/cli/draft.ts`
+- `src/core/draft/frontmatter.ts`, `src/core/draft/state.ts`, `src/core/draft/benchmark-data.ts`, `src/core/draft/tags.ts`, `src/core/draft/template.ts`
 
 ### Expected results
 
@@ -164,7 +181,7 @@ npm test
 npm run build
 ```
 
-Expected baseline: **0 TypeScript errors, 146 tests passing across 16 suites, clean build** (as of feature/phase-3-benchmark). Any drift from this baseline is a signal to investigate before merging.
+Expected baseline: **0 TypeScript errors, 216 tests passing across 21 suites, clean build** (as of feature/phase-4-draft). Any drift from this baseline is a signal to investigate before merging.
 
 ## Phase 3: Code Review of Current Changes
 
@@ -251,7 +268,14 @@ Phase 3 — Benchmark:
   - Companion repo scaffolding (6 tests): PASS / FAIL
   - Benchmark CLI handlers (14 tests): PASS / FAIL
 
-Full Suite: X passing, Y failing  (baseline: 146 passing)
+Phase 4 — Draft:
+  - PostFrontmatter schema (19 tests): PASS / FAIL
+  - Draft state lifecycle (16 tests): PASS / FAIL
+  - Benchmark data formatting (7 tests): PASS / FAIL
+  - Tag taxonomy reader (6 tests): PASS / FAIL
+  - Draft CLI handlers (22 tests): PASS / FAIL
+
+Full Suite: X passing, Y failing  (baseline: 216 passing)
 Lint: {error count} errors  (baseline: 0)
 Build: PASS / FAIL
 ```
