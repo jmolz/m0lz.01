@@ -7,6 +7,7 @@ dist/
 *.db-journal
 *.db-wal
 .DS_Store
+.worktrees/
 
 # Plugin-installed Claude Code skills (drift with marketplace updates)
 # Project-specific skill stubs live in /skills/ at the project root
