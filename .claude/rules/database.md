@@ -16,7 +16,7 @@ paths:
 - **Synchronous API only** — do not wrap in async/await
 - **WAL mode** — enabled on every database open: `db.pragma('journal_mode = WAL')`
 - **Foreign keys** — enabled on every open: `db.pragma('foreign_keys = ON')`
-- **Prepared statements** — always use `?` or `@named` parameters, never string interpolation
+- **Prepared statements** — always use `?` or `@named` parameters, never string interpolation. SQLite does not support parameterized table names — use separate prepared statements per table (branched by literal), never `${table}` template interpolation
 
 ## Schema Migrations
 
@@ -54,7 +54,7 @@ if (post && post.phase !== 'research') {
 }
 ```
 
-This pattern applies to `getResearchPost`, `addSource`, `initResearchPost` (cross-phase collision guard), `initBenchmark` (requires research phase), `getBenchmarkPost` (requires benchmark phase), `completeBenchmark` (requires benchmark phase), and `skipBenchmark` (requires research phase).
+This pattern applies to `getResearchPost`, `addSource`, `initResearchPost` (cross-phase collision guard), `initBenchmark` (requires research phase), `getBenchmarkPost` (requires benchmark phase), `completeBenchmark` (requires benchmark phase), `skipBenchmark` (requires research phase), `getEvaluatePost` (requires evaluate phase), and `initEvaluation` (accepts draft or evaluate).
 
 ## Type Mapping
 

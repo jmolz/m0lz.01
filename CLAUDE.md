@@ -94,7 +94,7 @@ m0lz.01/
 
 **Claude Code Skills** (interactive, uses subscription): `/blog-research`, `/blog-benchmark`, `/blog-draft`, `/blog-evaluate`, `/blog-pipeline`, `/blog-update` — these handle AI-heavy work in Claude Code sessions.
 
-**Standalone CLI** (mechanical, no AI needed): `blog init`, `blog publish`, `blog unpublish`, `blog status`, `blog metrics`, `blog ideas`, `blog research init|add-source|show|finalize`, `blog benchmark init|env|run|show|skip|complete`, `blog draft init|show|validate|add-asset|complete` — these run independently for API calls, state queries, and pipeline execution.
+**Standalone CLI** (mechanical, no AI needed): `blog init`, `blog publish`, `blog unpublish`, `blog status`, `blog metrics`, `blog ideas`, `blog research init|add-source|show|finalize`, `blog benchmark init|env|run|show|skip|complete`, `blog draft init|show|validate|add-asset|complete`, `blog evaluate init|structural-autocheck|record|show|synthesize|complete|reject` — these run independently for API calls, state queries, and pipeline execution.
 
 **Shared state**: Both layers read/write the same SQLite database and file system artifacts.
 
@@ -231,7 +231,7 @@ const resolvedPath = resolve(dirname(configPath), rawPath);
 - **Framework**: Vitest
 - **Location**: `tests/*.test.ts`
 - **Run**: `npm test`
-- **Baseline**: 225 tests across 21 suites (Phase 1: 48, Phase 2: 54, Phase 3: 44, Phase 4: 79)
+- **Baseline**: 388 tests across 27 suites (Phase 1: 48, Phase 2: 54, Phase 3: 44, Phase 4: 79, Phase 5: 163)
 - **Minimum**: Each module needs: 1 happy path, 1 edge case, 1 error case
 - **DB tests**: Use in-memory SQLite (`getDatabase(':memory:')`)
 - **File tests**: Use `mkdtemp` for temporary directories, clean up in `afterEach`
@@ -273,6 +273,7 @@ These load automatically when editing files in their scope:
 | `.claude/rules/cli.md` | `src/cli/**` | Handler shape, injectable paths, exit codes, DB cleanup, error boundary, best-effort config for show commands |
 | `.claude/rules/testing.md` | `tests/**`, `*.test.ts` | Temp dirs, `:memory:` DBs, mocking console/exit, fixtures, regression suite |
 | `.claude/rules/drafting.md` | `src/core/draft/**`, `src/cli/draft.ts`, `templates/draft/**` | PostFrontmatter contract, MDX parsing, placeholder tokens, content-type routing, asset safety |
+| `.claude/rules/evaluation.md` | `src/core/evaluate/**`, `src/cli/evaluate.ts` | Deterministic-CLI/judgment-skill split, autocheck determinism, JACCARD_THRESHOLD, mandatory artifact_hashes provenance, DB-authoritative re-derivation with cluster-identity, slug-scoped FS lock, readManifest single-choke-point validation, synthesis receipt, reject sentinel ordering, cycle isolation |
 
 ### Read on demand
 
@@ -283,6 +284,7 @@ These load automatically when editing files in their scope:
 | Phase 2 plan | `.claude/plans/phase-2-research.md` | Research pipeline + contract |
 | Phase 3 plan | `.claude/plans/phase-3-benchmark.md` | Benchmark test harness + contract |
 | Phase 4 plan | `.claude/plans/phase-4-draft.md` | Draft + visuals + contract |
+| Phase 5 plan | `.claude/plans/phase-5-evaluate.md` | Three-reviewer adversarial evaluation + contract |
 | Drafting rules | `.claude/rules/drafting.md` | MDX parsing pitfalls, PostFrontmatter contract, placeholder tokens |
 | Original brainstorm | `.claude/plans/blog-agent-prd.md` | Historical context |
 | PICE workflow | `.claude/docs/PLAYBOOK.md` | Plan/Implement/Evaluate loop |
@@ -293,9 +295,9 @@ These load automatically when editing files in their scope:
 ## Key Rules
 
 - **ESM imports require `.js` extension** — every internal import must end in `.js` even for `.ts` source files. This is non-negotiable with Node16 module resolution.
-- **All database queries use parameterized statements** — never string interpolation for SQL. Use `?` placeholders or `@named` parameters.
+- **All database queries use parameterized statements** — never string interpolation for SQL. Use `?` placeholders or `@named` parameters. SQLite does not support parameterized table names — use separate prepared statements per table (branched by literal), never `${table}` interpolation.
 - **Config values are threaded, never hardcoded** — `config.author.github`, `config.site.base_url`, `config.site.content_dir`, and similar identity/URL values must flow into library functions via option parameters. Baking `jmolz` or `m0lz.dev` into a module breaks the moment another author uses the agent.
-- **Phase boundary enforcement** — research commands (`add-source`, `show`, `finalize`) must reject posts not in the `research` phase. Benchmark commands (`env`, `run`, `complete`) must reject posts not in the `benchmark` phase. Draft commands (`init`, `show`, `validate`, `add-asset`, `complete`) must reject posts not in the `draft` phase. Library functions throw; CLI handlers catch and set `exitCode=1`.
+- **Phase boundary enforcement** — research commands (`add-source`, `show`, `finalize`) must reject posts not in the `research` phase. Benchmark commands (`env`, `run`, `complete`) must reject posts not in the `benchmark` phase. Draft commands (`init`, `show`, `validate`, `add-asset`, `complete`) must reject posts not in the `draft` phase. Evaluate commands (`record`, `synthesize`, `complete`, `reject`) must reject posts not in the `evaluate` phase; `init` accepts `draft` (promotes) or `evaluate`. Library functions throw; CLI handlers catch and set `exitCode=1`.
 - **CLI commands are non-interactive** — use Commander.js options/arguments, not readline prompts. Interactive collaboration happens in Claude Code skills, not the CLI.
 - **Pipeline operations are idempotent** — running any publish step twice must not create duplicates or corrupt state. Use `INSERT OR IGNORE`, check-before-act patterns.
 - **Never commit secrets** — `.env`, `.blogrc.yaml`, and `.blog-agent/` are gitignored. Only `.env.example` and `.blogrc.example.yaml` are committed.
