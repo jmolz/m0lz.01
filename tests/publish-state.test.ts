@@ -9,8 +9,10 @@ import { closeDatabase, getDatabase } from '../src/core/db/database.js';
 import { advancePhase, initResearchPost } from '../src/core/research/state.js';
 import {
   completePublish,
+  completePublishUnderLock,
   getPublishPost,
   initPublishFromEvaluate,
+  persistPublishUrls,
 } from '../src/core/publish/phase.js';
 import {
   allStepsComplete,
@@ -21,6 +23,7 @@ import {
   markStepFailed,
   markStepRunning,
   markStepSkipped,
+  reclaimStaleRunning,
 } from '../src/core/publish/steps-crud.js';
 import { acquirePublishLock } from '../src/core/publish/lock.js';
 import { PUBLISH_STEP_NAMES, PostRow } from '../src/core/publish/types.js';
@@ -431,6 +434,117 @@ describe('pipeline step CRUD — next/mark/all-complete', () => {
   });
 });
 
+describe('reclaimStaleRunning — recover from crashed prior run', () => {
+  it('demotes `running` rows back to `pending` and returns the count', () => {
+    const f = setup();
+    seedPublishPost(f.db, 'reclaim');
+    createPipelineSteps(f.db, 'reclaim', 'technical-deep-dive', makeConfig());
+    // Simulate a crashed prior runner: two steps stuck in running.
+    markStepRunning(f.db, 'reclaim', 'verify');
+    markStepRunning(f.db, 'reclaim', 'research-page');
+    const reclaimed = reclaimStaleRunning(f.db, 'reclaim');
+    expect(reclaimed).toBe(2);
+    const rows = getPipelineSteps(f.db, 'reclaim');
+    const byName = Object.fromEntries(rows.map((r) => [r.step_name, r]));
+    expect(byName.verify.status).toBe('pending');
+    expect(byName.verify.started_at).toBeNull();
+    expect(byName['research-page'].status).toBe('pending');
+  });
+
+  it('returns 0 when no rows are running', () => {
+    const f = setup();
+    seedPublishPost(f.db, 'clean');
+    createPipelineSteps(f.db, 'clean', 'technical-deep-dive', makeConfig());
+    expect(reclaimStaleRunning(f.db, 'clean')).toBe(0);
+  });
+
+  it('does not affect completed/failed/skipped/pending rows', () => {
+    const f = setup();
+    seedPublishPost(f.db, 'mixed');
+    createPipelineSteps(f.db, 'mixed', 'technical-deep-dive', makeConfig());
+    markStepCompleted(f.db, 'mixed', 'verify');
+    markStepFailed(f.db, 'mixed', 'research-page', 'boom');
+    markStepSkipped(f.db, 'mixed', 'paste-medium', 'disabled');
+    markStepRunning(f.db, 'mixed', 'site-pr');
+    expect(reclaimStaleRunning(f.db, 'mixed')).toBe(1);
+    const rows = getPipelineSteps(f.db, 'mixed');
+    const byName = Object.fromEntries(rows.map((r) => [r.step_name, r]));
+    expect(byName.verify.status).toBe('completed');
+    expect(byName['research-page'].status).toBe('failed');
+    expect(byName['paste-medium'].status).toBe('skipped');
+    expect(byName['site-pr'].status).toBe('pending');
+  });
+});
+
+describe('persistPublishUrls — per-step URL persistence with first-writer-wins', () => {
+  it('writes URLs onto the posts row when the columns are currently NULL', () => {
+    const f = setup();
+    seedPublishPost(f.db, 'first');
+    persistPublishUrls(f.db, 'first', {
+      site_url: 'https://m0lz.dev/writing/first',
+      devto_url: 'https://dev.to/jmolz/first',
+    });
+    const post = f.db
+      .prepare('SELECT site_url, devto_url, medium_url FROM posts WHERE slug = ?')
+      .get('first') as { site_url: string; devto_url: string; medium_url: string | null };
+    expect(post.site_url).toBe('https://m0lz.dev/writing/first');
+    expect(post.devto_url).toBe('https://dev.to/jmolz/first');
+    expect(post.medium_url).toBeNull();
+  });
+
+  it('does NOT overwrite an already-set URL (COALESCE keeps existing)', () => {
+    const f = setup();
+    seedPublishPost(f.db, 'wins');
+    persistPublishUrls(f.db, 'wins', { devto_url: 'https://dev.to/jmolz/v1' });
+    // Second writer tries to overwrite with a different URL.
+    persistPublishUrls(f.db, 'wins', { devto_url: 'https://dev.to/jmolz/v2' });
+    const post = f.db
+      .prepare('SELECT devto_url FROM posts WHERE slug = ?')
+      .get('wins') as { devto_url: string };
+    expect(post.devto_url).toBe('https://dev.to/jmolz/v1');
+  });
+
+  it('ignores fields that are undefined in the partial bundle', () => {
+    const f = setup();
+    seedPublishPost(f.db, 'partial');
+    // First write sets only site_url.
+    persistPublishUrls(f.db, 'partial', { site_url: 'https://m0lz.dev/writing/partial' });
+    // Second write sets only medium_url — must not clobber site_url.
+    persistPublishUrls(f.db, 'partial', { medium_url: 'https://medium.com/@jmolz/partial' });
+    const post = f.db
+      .prepare('SELECT site_url, medium_url FROM posts WHERE slug = ?')
+      .get('partial') as { site_url: string; medium_url: string };
+    expect(post.site_url).toBe('https://m0lz.dev/writing/partial');
+    expect(post.medium_url).toBe('https://medium.com/@jmolz/partial');
+  });
+});
+
+describe('completePublishUnderLock — idempotent across concurrent runners', () => {
+  it('is a no-op when the post is already in the published phase', () => {
+    const f = setup();
+    seedPublishPost(f.db, 'already', 'analysis-opinion');
+    createPipelineSteps(f.db, 'already', 'analysis-opinion', makeConfig(), { hasResearchArtifact: false });
+    for (const step of getPipelineSteps(f.db, 'already')) {
+      if (step.status === 'pending') markStepCompleted(f.db, 'already', step.step_name);
+    }
+    // First caller wins and sets URLs.
+    completePublishUnderLock(f.db, 'already', {
+      site_url: 'https://m0lz.dev/writing/already',
+      devto_url: 'https://dev.to/jmolz/already',
+    });
+    const firstPhase = f.db.prepare('SELECT phase FROM posts WHERE slug = ?').get('already') as { phase: string };
+    expect(firstPhase.phase).toBe('published');
+    // Second caller with empty URL bundle — must NOT throw, must NOT clobber the URLs.
+    expect(() => completePublishUnderLock(f.db, 'already', {})).not.toThrow();
+    const post = f.db
+      .prepare('SELECT phase, site_url, devto_url FROM posts WHERE slug = ?')
+      .get('already') as { phase: string; site_url: string; devto_url: string };
+    expect(post.phase).toBe('published');
+    expect(post.site_url).toBe('https://m0lz.dev/writing/already');
+    expect(post.devto_url).toBe('https://dev.to/jmolz/already');
+  });
+});
+
 describe('acquirePublishLock — cooperative serialization', () => {
   it('creates the lockfile with the current PID stamped inside', () => {
     const f = setup();
@@ -485,5 +599,30 @@ describe('acquirePublishLock — cooperative serialization', () => {
     release();
     // Second call must not throw even though the file is already gone.
     expect(() => release()).not.toThrow();
+  });
+
+  it('reclaims an empty lockfile (prior writer crashed between open and writeSync)', () => {
+    const f = setup();
+    const workspaceDir = join(f.publishDir, 'empty');
+    mkdirSync(workspaceDir, { recursive: true });
+    // Simulate a corrupt lockfile: file exists but is empty. Without the
+    // empty-file reclaim, the lock would spin to timeout and throw a
+    // misleading "another process holds it" error.
+    writeFileSync(join(workspaceDir, '.publish.lock'), '', 'utf-8');
+    const release = acquirePublishLock(f.publishDir, 'empty', 500);
+    const contents = readFileSync(join(workspaceDir, '.publish.lock'), 'utf-8').trim();
+    expect(contents).toBe(String(process.pid));
+    release();
+  });
+
+  it('reclaims a lockfile containing non-numeric garbage', () => {
+    const f = setup();
+    const workspaceDir = join(f.publishDir, 'garbage');
+    mkdirSync(workspaceDir, { recursive: true });
+    writeFileSync(join(workspaceDir, '.publish.lock'), 'not-a-pid', 'utf-8');
+    const release = acquirePublishLock(f.publishDir, 'garbage', 500);
+    const contents = readFileSync(join(workspaceDir, '.publish.lock'), 'utf-8').trim();
+    expect(contents).toBe(String(process.pid));
+    release();
   });
 });

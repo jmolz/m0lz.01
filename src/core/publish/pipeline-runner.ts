@@ -8,8 +8,9 @@ import {
   markStepFailed,
   markStepRunning,
   markStepSkipped,
+  reclaimStaleRunning,
 } from './steps-crud.js';
-import { completePublish } from './phase.js';
+import { completePublishUnderLock, persistPublishUrls } from './phase.js';
 import { PUBLISH_STEP_NAMES } from './types.js';
 
 // Result of a full pipeline run. `completed` is true only when every step
@@ -59,6 +60,17 @@ export async function runPipeline(
 ): Promise<PipelineRunResult> {
   const release = acquirePublishLock(ctx.paths.publishDir, ctx.slug);
   try {
+    // Reclaim stale `running` rows from a crashed prior runner. We hold the
+    // lock, so anything in `running` can't have a live owner. If we didn't
+    // reclaim, getNextPendingStep would skip past the interrupted row and
+    // execute the next step out of order. Must happen BEFORE the loop.
+    const reclaimed = reclaimStaleRunning(ctx.db, ctx.slug);
+    if (reclaimed > 0) {
+      console.log(
+        `Reclaimed ${reclaimed} stale 'running' step(s) from a prior interrupted run`,
+      );
+    }
+
     let stepsRun = 0;
 
     while (true) {
@@ -104,9 +116,21 @@ export async function runPipeline(
 
       switch (result.outcome) {
         case 'completed': {
-          markStepCompleted(ctx.db, ctx.slug, nextStep.step_name);
-          if (result.urlUpdates) {
-            Object.assign(ctx.urls, result.urlUpdates);
+          // Mark completed AND persist URLs atomically so a crash between
+          // these two writes cannot leave URLs unrecoverable. If the process
+          // dies before the commit lands, the step stays `running` and the
+          // reclaim pass above demotes it to `pending` on resume; the step
+          // module is idempotent, so the re-execution succeeds.
+          const urlUpdates = result.urlUpdates;
+          const tx = ctx.db.transaction(() => {
+            markStepCompleted(ctx.db, ctx.slug, nextStep.step_name);
+            if (urlUpdates) {
+              persistPublishUrls(ctx.db, ctx.slug, urlUpdates);
+            }
+          });
+          tx();
+          if (urlUpdates) {
+            Object.assign(ctx.urls, urlUpdates);
           }
           console.log(
             `[${nextStep.step_number}/${TOTAL_STEPS}] ${nextStep.step_name}: ${result.message}`,
@@ -150,24 +174,32 @@ export async function runPipeline(
     }
 
     // All pending/failed steps exhausted. Verify completeness and advance
-    // the post to the published phase. `completePublish` re-acquires the
-    // same slug-scoped lock, so we must release ours first — the FS lock is
-    // not reentrant within a single process. The `finally` block below is
-    // idempotent (release swallows ENOENT), so calling release() twice is
-    // safe.
+    // the post to the published phase. We stay under the lock by calling
+    // the `UnderLock` variant — this closes the race window a prior
+    // implementation had (release-then-completePublish let a second waiting
+    // runner call completePublish with its own empty ctx.urls between the
+    // release and re-acquire). Per-step URL persistence plus this
+    // lock-across-completion policy together guarantee that:
+    //   1. Every URL a step produces is persisted to the row before we
+    //      move on to the next step (crash-safe).
+    //   2. Only one runner can transition the row to `published`
+    //      (race-safe).
+    //   3. `completePublishUnderLock` is idempotent on an already-
+    //      `published` row, so a concurrent runner that reaches this path
+    //      after another completed is a harmless no-op.
     if (allStepsComplete(ctx.db, ctx.slug)) {
-      release();
-      completePublish(ctx.db, ctx.slug, ctx.urls, ctx.paths.publishDir);
+      completePublishUnderLock(ctx.db, ctx.slug, ctx.urls);
       console.log(`Pipeline complete: ${ctx.slug} is now published`);
       return { completed: true, stepsRun, totalSteps: TOTAL_STEPS };
     }
 
-    // Defensive: getNextPendingStep returned null but allStepsComplete is
-    // false — some steps may still be in 'running' state from a crashed
-    // prior run. Log a warning so the operator can inspect.
+    // Defensive: reclaim pass + atomic step transitions should make this
+    // branch unreachable, but we log and surface a non-completed result
+    // rather than silently returning, so operators notice schema drift or
+    // an unexpected state machine hole.
     console.error(
       `Pipeline for '${ctx.slug}' has no pending steps but is not fully complete. ` +
-      `Inspect pipeline_steps for stuck 'running' rows.`,
+      `Inspect pipeline_steps for rows that are neither completed nor skipped.`,
     );
     return { completed: false, stepsRun, totalSteps: TOTAL_STEPS };
   } finally {

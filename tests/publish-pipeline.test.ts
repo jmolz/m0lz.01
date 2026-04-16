@@ -462,3 +462,108 @@ describe('runPipeline — empty / stuck states', () => {
     expect(captured.errors.some((line) => line.includes('no pending steps but is not fully complete'))).toBe(true);
   });
 });
+
+// Regression tests for the Codex xhigh adversarial review findings that
+// motivated the Cluster 8 fixes. Each one pins a behaviour that the earlier
+// implementation got wrong:
+//   Codex-Critical-1: `running` rows left by a crashed process were skipped
+//     by getNextPendingStep, so downstream steps executed out of order.
+//   Codex-Critical-2: releasing the slug lock before completePublish let a
+//     second waiting runner call completePublish with an empty ctx.urls,
+//     advancing the phase to `published` with null URLs.
+describe('runPipeline — crash-safety (Codex-Critical regressions)', () => {
+  it('reclaims a stuck `running` step on resume and re-executes it in order', async () => {
+    const { markStepRunning } = await import('../src/core/publish/steps-crud.js');
+    const f = setup();
+    seedPublishPost(f.db, 'crashed');
+    createPipelineSteps(f.db, 'crashed', 'technical-deep-dive', f.config);
+    // Simulate a crashed prior run: step 1 was marked running, then killed.
+    markStepRunning(f.db, 'crashed', 'verify');
+    silenceConsole();
+
+    const calls: string[] = [];
+    setSteps(
+      buildRegistry(
+        Object.fromEntries(
+          PUBLISH_STEP_NAMES.map((name) => [
+            name,
+            async (): Promise<StepResult> => {
+              calls.push(name);
+              return { outcome: 'completed', message: `${name} ok` };
+            },
+          ]),
+        ),
+      ),
+    );
+
+    const result = await runPipeline(makeContext(f, 'crashed'));
+    expect(result.completed).toBe(true);
+    // The reclaimed step MUST be the first one executed, not skipped.
+    expect(calls[0]).toBe('verify');
+    expect(calls).toEqual([...PUBLISH_STEP_NAMES]);
+  });
+
+  it('persists URLs to the posts row per-step so a crash before completion does not lose them', async () => {
+    const f = setup();
+    seedPublishPost(f.db, 'peristed');
+    createPipelineSteps(f.db, 'peristed', 'technical-deep-dive', f.config);
+    silenceConsole();
+
+    // Step 3 (site-pr) emits site_url, step 5 (crosspost-devto) emits devto_url,
+    // step 8 (companion-repo) emits repo_url. After runPipeline, these URLs
+    // must be on the posts row even though completePublish is NOT the only
+    // writer — the per-step persist is the new invariant.
+    setSteps(
+      buildRegistry({
+        'site-pr': () => ({
+          outcome: 'completed',
+          message: 'site pr',
+          urlUpdates: { site_url: 'https://m0lz.dev/writing/peristed' },
+        }),
+        'crosspost-devto': async () => ({
+          outcome: 'completed',
+          message: 'devto',
+          urlUpdates: { devto_url: 'https://dev.to/jmolz/peristed' },
+        }),
+        'companion-repo': () => ({
+          outcome: 'completed',
+          message: 'repo',
+          urlUpdates: { repo_url: 'https://github.com/jmolz/peristed' },
+        }),
+      }),
+    );
+
+    await runPipeline(makeContext(f, 'peristed'));
+    const post = f.db
+      .prepare('SELECT site_url, devto_url, repo_url, phase FROM posts WHERE slug = ?')
+      .get('peristed') as { site_url: string; devto_url: string; repo_url: string; phase: string };
+    expect(post.site_url).toBe('https://m0lz.dev/writing/peristed');
+    expect(post.devto_url).toBe('https://dev.to/jmolz/peristed');
+    expect(post.repo_url).toBe('https://github.com/jmolz/peristed');
+    expect(post.phase).toBe('published');
+  });
+
+  it('does not deadlock at completion — runner uses completePublishUnderLock (no release-then-reacquire)', async () => {
+    // This is a regression test for the Cluster 6 deadlock fix that was
+    // itself buggy: the earlier runner called release() then completePublish
+    // (which re-acquired), opening a race window. The new runner stays
+    // under one lock the whole time. The test just asserts that a full
+    // happy-path run completes within a bounded time — if the runner ever
+    // reverts to the release-then-reacquire pattern AND the re-acquire
+    // deadlocks on own PID, this test would time out at the vitest default.
+    const f = setup();
+    seedPublishPost(f.db, 'nolockfight');
+    createPipelineSteps(f.db, 'nolockfight', 'technical-deep-dive', f.config);
+    silenceConsole();
+    setSteps(buildRegistry({}));
+
+    const start = Date.now();
+    const result = await runPipeline(makeContext(f, 'nolockfight'));
+    const elapsed = Date.now() - start;
+
+    expect(result.completed).toBe(true);
+    // A full happy-path should take well under 1 second; pin to 2s to catch
+    // a regression where the runner spins on lock contention.
+    expect(elapsed).toBeLessThan(2_000);
+  });
+});

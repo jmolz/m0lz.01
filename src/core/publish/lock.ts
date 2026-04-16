@@ -43,18 +43,27 @@ export function acquirePublishLock(
     } catch (e) {
       const err = e as NodeJS.ErrnoException;
       if (err.code !== 'EEXIST') throw err;
-      // Reclaim stale lock if holder PID is dead.
+      // Reclaim stale lock if holder PID is dead OR the lockfile is corrupt
+      // (empty, non-numeric, zero/negative PID). A corrupt lockfile most
+      // likely means a prior writer crashed between O_CREAT and writeSync;
+      // treating it as reclaimable is safer than spinning until timeout and
+      // surfacing a misleading "another process holds it" error.
       try {
-        const heldPid = parseInt(readFileSync(lockPath, 'utf-8').trim(), 10);
-        if (Number.isFinite(heldPid) && heldPid > 0) {
-          try {
-            process.kill(heldPid, 0);
-          } catch (killErr) {
-            if ((killErr as NodeJS.ErrnoException).code === 'ESRCH') {
-              try { unlinkSync(lockPath); } catch { /* raced */ }
-              continue;
-            }
+        const raw = readFileSync(lockPath, 'utf-8').trim();
+        const heldPid = raw.length === 0 ? NaN : parseInt(raw, 10);
+        if (!Number.isFinite(heldPid) || heldPid <= 0) {
+          try { unlinkSync(lockPath); } catch { /* raced */ }
+          continue;
+        }
+        try {
+          process.kill(heldPid, 0);
+        } catch (killErr) {
+          if ((killErr as NodeJS.ErrnoException).code === 'ESRCH') {
+            try { unlinkSync(lockPath); } catch { /* raced */ }
+            continue;
           }
+          // EPERM means the PID exists but we lack permission to signal it —
+          // treat as alive and fall through to the deadline/spin path.
         }
       } catch { /* lockfile unreadable — transient, retry */ }
       if (Date.now() > deadline) {

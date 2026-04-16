@@ -105,15 +105,112 @@ export function initPublish(
   }
 }
 
-// Transition a post from `publish` to `published` and write the collected
-// URLs onto the posts row. Every field in `urls` is optional; only fields
-// with a defined value update the corresponding column (coalesce pattern).
-// Steps that failed or were skipped do not contribute a URL, so the row
-// faithfully reflects what actually succeeded.
+// Persist a partial URL bundle to the posts row using COALESCE semantics so
+// the existing column value wins when already set. Called per-step by the
+// pipeline runner so that URLs survive a process crash BEFORE the final
+// completePublish transition: if runner A writes devto_url at step 5 and
+// then is killed, runner B resuming the pipeline sees devto_url already on
+// the row and never tries to re-crosspost. `first-writer-wins` is the
+// correct policy here because Dev.to article creation is not idempotent.
 //
-// Refuses to advance unless every pipeline_steps row is completed or
-// skipped. The FS lock serializes against a concurrent runner that might
-// mark additional steps running mid-complete.
+// This helper is intentionally separate from `markStepCompleted` so the
+// runner can wrap both in a single transaction — either both land or
+// neither does, preventing the "step marked completed but URL lost" crash
+// window.
+export function persistPublishUrls(
+  db: Database.Database,
+  slug: string,
+  urls: Partial<PublishUrls>,
+): void {
+  db.prepare(`
+    UPDATE posts
+    SET site_url = COALESCE(site_url, ?),
+        devto_url = COALESCE(devto_url, ?),
+        medium_url = COALESCE(medium_url, ?),
+        substack_url = COALESCE(substack_url, ?),
+        repo_url = COALESCE(repo_url, ?),
+        updated_at = CURRENT_TIMESTAMP
+    WHERE slug = ?
+  `).run(
+    urls.site_url ?? null,
+    urls.devto_url ?? null,
+    urls.medium_url ?? null,
+    urls.substack_url ?? null,
+    urls.repo_url ?? null,
+    slug,
+  );
+}
+
+// Internal variant used by the pipeline runner, which already holds the
+// slug-scoped lock. Skips the lock acquisition to avoid a re-entry deadlock
+// (the lock is non-reentrant by design — `process.kill(pid, 0)` for the
+// current PID always reports alive, so a second acquire under the same PID
+// would spin until timeout).
+//
+// Also idempotent: if another runner already promoted the post to
+// `published`, this is a no-op. This makes the runner tolerant of the
+// benign race where two processes both reach completion under the same
+// lock handoff.
+export function completePublishUnderLock(
+  db: Database.Database,
+  slug: string,
+  urls: PublishUrls,
+): void {
+  const post = db.prepare('SELECT * FROM posts WHERE slug = ?').get(slug) as PostRow | undefined;
+  if (!post) {
+    throw new Error(`Post not found: ${slug}`);
+  }
+  if (post.phase === 'published') {
+    // Another runner already completed the phase transition — URLs were
+    // written per-step, so the row is already correct.
+    return;
+  }
+  if (post.phase !== 'publish') {
+    throw new Error(
+      `Post '${slug}' is in phase '${post.phase}', not 'publish'. ` +
+      `Publish commands only operate on posts in the publish phase.`,
+    );
+  }
+  if (!allStepsComplete(db, slug)) {
+    throw new Error(
+      `Cannot complete publish for '${slug}': not every pipeline step is completed or skipped. ` +
+      `Run 'blog publish' to finish remaining steps, or inspect 'blog status ${slug}' for blocked steps.`,
+    );
+  }
+
+  const tx = db.transaction(() => {
+    advancePhase(db, slug, 'published');
+    // Coalesce-style UPDATE: each column takes the supplied URL when
+    // present, otherwise keeps its current value. Combined with per-step
+    // persistence via `persistPublishUrls`, this means `urls` can be empty
+    // here without data loss — a concurrent runner that reaches this path
+    // with `ctx.urls = {}` still sees the correct row because prior steps
+    // already persisted their outputs.
+    db.prepare(`
+      UPDATE posts
+      SET published_at = CURRENT_TIMESTAMP,
+          site_url = COALESCE(?, site_url),
+          devto_url = COALESCE(?, devto_url),
+          medium_url = COALESCE(?, medium_url),
+          substack_url = COALESCE(?, substack_url),
+          repo_url = COALESCE(?, repo_url),
+          updated_at = CURRENT_TIMESTAMP
+      WHERE slug = ?
+    `).run(
+      urls.site_url ?? null,
+      urls.devto_url ?? null,
+      urls.medium_url ?? null,
+      urls.substack_url ?? null,
+      urls.repo_url ?? null,
+      slug,
+    );
+  });
+  tx();
+}
+
+// Public wrapper that acquires the slug-scoped FS lock and calls the
+// internal variant. Use this from test code, CLI handlers, or anywhere the
+// caller does NOT already hold the publish lock.
 export function completePublish(
   db: Database.Database,
   slug: string,
@@ -122,40 +219,7 @@ export function completePublish(
 ): void {
   const release = acquirePublishLock(publishDir, slug);
   try {
-    getPublishPost(db, slug);
-    if (!allStepsComplete(db, slug)) {
-      throw new Error(
-        `Cannot complete publish for '${slug}': not every pipeline step is completed or skipped. ` +
-        `Run 'blog publish' to finish remaining steps, or inspect 'blog status ${slug}' for blocked steps.`,
-      );
-    }
-
-    const tx = db.transaction(() => {
-      advancePhase(db, slug, 'published');
-      // Coalesce-style UPDATE: each column takes the supplied URL when
-      // present, otherwise keeps its current value. This lets the function
-      // be called repeatedly (or with partial URL bundles from different
-      // runners) without clobbering already-written URLs.
-      db.prepare(`
-        UPDATE posts
-        SET published_at = CURRENT_TIMESTAMP,
-            site_url = COALESCE(?, site_url),
-            devto_url = COALESCE(?, devto_url),
-            medium_url = COALESCE(?, medium_url),
-            substack_url = COALESCE(?, substack_url),
-            repo_url = COALESCE(?, repo_url),
-            updated_at = CURRENT_TIMESTAMP
-        WHERE slug = ?
-      `).run(
-        urls.site_url ?? null,
-        urls.devto_url ?? null,
-        urls.medium_url ?? null,
-        urls.substack_url ?? null,
-        urls.repo_url ?? null,
-        slug,
-      );
-    });
-    tx();
+    completePublishUnderLock(db, slug, urls);
   } finally {
     release();
   }

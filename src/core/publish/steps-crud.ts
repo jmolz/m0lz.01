@@ -211,6 +211,30 @@ export function getPipelineSteps(
   `).all(slug) as PipelineStepRow[];
 }
 
+// Demote any `running` rows back to `pending` so the runner picks them up on
+// resume. A row is only `running` because a prior invocation was killed
+// mid-step (the success path transitions running -> completed atomically in
+// the same process, and the failure path transitions running -> failed in
+// the same process's error handler). The caller MUST hold the slug-scoped
+// publish lock before calling this — the lock is the proof that no other
+// live runner owns those rows.
+//
+// Without this reclaim, `getNextPendingStep` would skip over the interrupted
+// step (status='running' is neither 'pending' nor 'failed') and execute the
+// next step out of order — violating the sequential/resume guarantee.
+export function reclaimStaleRunning(
+  db: Database.Database,
+  slug: string,
+): number {
+  const info = db.prepare(`
+    UPDATE pipeline_steps
+    SET status = 'pending',
+        started_at = NULL
+    WHERE post_slug = ? AND status = 'running'
+  `).run(slug);
+  return info.changes;
+}
+
 // True iff every pipeline_steps row is completed or skipped AND there are
 // exactly 11 rows (sanity check: catches a partial createPipelineSteps that
 // was interrupted before all rows landed).

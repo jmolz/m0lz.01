@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 
 import Database from 'better-sqlite3';
 
@@ -54,7 +54,10 @@ export function updateProjectReadme(
     return { updated: false, skipped: true, reason: `No projects config for '${post.project_id}'` };
   }
 
-  const projectDir = config.projects[post.project_id];
+  // Resolve the project path against the directory of the config file so a
+  // relative entry like "../m0lz.02" in .blogrc.yaml works regardless of the
+  // process CWD. Mirrors site.ts's resolveSiteRepoPath pattern.
+  const projectDir = resolve(dirname(paths.configPath), config.projects[post.project_id]);
   if (!existsSync(projectDir)) {
     return { updated: false, skipped: true, reason: `Project directory not found: ${projectDir}` };
   }
@@ -128,7 +131,7 @@ export function updateProjectReadme(
 
   execFileSync(
     'git',
-    ['-C', projectDir, 'commit', '-m', `docs: add writing link for ${slug}`],
+    ['-C', projectDir, 'commit', '-m', `chore: add writing link for ${slug}`],
     { encoding: 'utf-8' },
   );
 
