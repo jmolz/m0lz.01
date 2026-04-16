@@ -3,6 +3,8 @@ dist/
 .blog-agent/
 .blogrc.yaml
 .env
+.env.local
+.env.*.local
 *.db
 *.db-journal
 *.db-wal
