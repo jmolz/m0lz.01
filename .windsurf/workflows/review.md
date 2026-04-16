@@ -82,7 +82,13 @@ npx vitest run \
   tests/draft-state.test.ts \
   tests/draft-benchmark-data.test.ts \
   tests/draft-tags.test.ts \
-  tests/draft-cli.test.ts
+  tests/draft-cli.test.ts \
+  tests/evaluate-reviewer.test.ts \
+  tests/evaluate-autocheck.test.ts \
+  tests/evaluate-synthesize.test.ts \
+  tests/evaluate-report.test.ts \
+  tests/evaluate-state.test.ts \
+  tests/evaluate-cli.test.ts
 ```
 
 ### What each test covers
@@ -128,6 +134,17 @@ npx vitest run \
 | `tests/draft-tags.test.ts` (6 tests) | Tag taxonomy reader | `readExistingTags` reads tags from MDX files, subdirectory-based posts, deduplicates, returns sorted; returns empty for missing directory, no MDX files, files without tags field |
 | `tests/draft-cli.test.ts` (25 tests) | Draft CLI handlers | `runDraftInit` creates draft directory and template MDX with content-type-aware sections (technical-deep-dive, analysis-opinion, project-launch, project-launch with benchmarks), errors for wrong phase; `runDraftShow` prints status, errors for wrong phase, treats malformed config as best-effort; `runDraftValidate` fails for placeholders, passes for complete draft, fails for missing assets; `runDraftAddAsset` registers existing file, errors for missing file and invalid type, rejects path traversal and subdirectory filenames; `runDraftComplete` advances to evaluate, errors for wrong phase; rejects 6 invalid slug patterns |
 
+#### Phase 5 — Evaluate
+
+| Test File | Feature | What It Validates |
+| --------- | ------- | ----------------- |
+| `tests/evaluate-reviewer.test.ts` (21 tests) | ReviewerOutput schema | `normalizeText` lowercases, strips punctuation, collapses whitespace; `issueFingerprint` is deterministic, normalizes case/whitespace, differs by reviewer, returns 12-char hex; `validateReviewerOutput` accepts valid outputs and empty issues, rejects missing reviewer, unknown enum, non-boolean passed, non-array issues, malformed Issue fields; `parseReviewerOutput` parses valid JSON, throws descriptive errors for invalid JSON and schema violations |
+| `tests/evaluate-autocheck.test.ts` (15 tests) | Deterministic structural lints | Two runs produce byte-identical output; issues sorted by (category, id); valid draft yields zero issues; missing draft returns empty list; catches frontmatter-placeholder, frontmatter-schema, placeholder-section, broken-internal-link (both /writing/ and anchor), mdx-parse unbalanced fences, benchmark-claim-unbacked for numbers not in results.json; skips benchmark-claim-unbacked silently when no results.json; catches missing-companion-repo when has_benchmarks=1 without companion_repo; does not flag when companion_repo is present; every issue tagged source=autocheck |
+| `tests/evaluate-synthesize.test.ts` (24 tests) | Two-tier issue matching + categorization | `tokenize` produces unique token set; `jaccardSimilarity` returns 1 for identical, 0 for disjoint, partial ratio for overlap; Tier 1 fingerprint clusters identical issues across reviewers, handles whitespace/case differences; Tier 2 Jaccard matches paraphrased issues >= 0.6, does not match below threshold; same-reviewer dedupes to one cluster with reviewers.size=1; `categorize` returns consensus/majority/single by reviewer count; two-reviewer analysis-opinion uses 2/2=consensus, 1/2=single (no majority bucket); `computeVerdict` is pass iff consensus=0 AND majority=0; synthesize end-to-end produces 1 consensus + 1 majority + 1 single for canonical scenario; all-empty reviewers yield pass with zero counts; `JACCARD_THRESHOLD` exported as 0.6 |
+| `tests/evaluate-report.test.ts` (4 tests) | Synthesis report renderer | Renders all five sections (Consensus, Majority, Single, Disagreements, Per-Reviewer Summaries); fail verdict shows FAIL badge; empty categories render as "(none)"; per-reviewer block includes model name and issue count |
+| `tests/evaluate-state.test.ts` (78 tests) | Evaluation state lifecycle | `expectedReviewers` routes content types to 3 vs 2 reviewers; `getEvaluatePost` enforces phase boundary; `initEvaluation` creates manifest with correct reviewers, is idempotent, promotes from draft, rejects wrong phase, purges stale reviewer artifacts when rolling a new cycle; `recordReview` inserts row, rejects reviewer mismatch between arg and output, rejects reviewer not in expected list for analysis-opinion, allows re-record with dedupe on list, enforces phase boundary; `runSynthesis` throws on missing reviewers, writes row + report on success, updates posts.evaluation_passed, throws on corrupt issues_json without writing partial row, captures MAX(id) inside the synthesis transaction (race-free pin); `completeEvaluation` advances on pass, throws on fail, throws without synthesis, fail-closed when synthesis pin is missing; `rejectEvaluation` moves back to draft with .rejected_at marker, flags subsequent records with is_update_review=1, enforces phase; `readReviewerOutputFromFile` validates; `listRecordedReviewers`/`readManifest` return correct shape |
+| `tests/evaluate-cli.test.ts` (21 tests) | Evaluate CLI handlers | `runEvaluateInit` creates 3-reviewer manifest for technical-deep-dive, 2-reviewer for analysis-opinion, promotes draft-phase posts; all 7 handlers set exitCode=1 for invalid slugs; `runEvaluateAutocheck` writes structural.lint.json that is byte-equal across reruns; `runEvaluateRecord` rejects malformed JSON with descriptive error, rejects reviewer not in expected list (methodology for analysis-opinion), rejects invalid reviewer enum; `runEvaluateShow` prints status table and verdict, cycle-scoped after reject+re-init (prior reviewers render as pending, old verdict not shown as current, historical cycles summarized); `runEvaluateSynthesize` refuses when reviewers missing, prints pass verdict after all recorded; `runEvaluateComplete` advances to publish on pass, exitCode=1 on fail; `runEvaluateReject` moves to draft (verified via direct DB query), enforces phase boundary |
+
 ### Source files these tests protect
 
 - `src/core/db/schema.ts`, `src/core/db/database.ts`, `src/core/db/types.ts`
@@ -142,6 +159,9 @@ npx vitest run \
 - `templates/benchmark/methodology.md`
 - `src/cli/draft.ts`
 - `src/core/draft/frontmatter.ts`, `src/core/draft/state.ts`, `src/core/draft/benchmark-data.ts`, `src/core/draft/tags.ts`, `src/core/draft/template.ts`
+- `src/cli/evaluate.ts`
+- `src/core/evaluate/reviewer.ts`, `src/core/evaluate/autocheck.ts`, `src/core/evaluate/synthesize.ts`, `src/core/evaluate/report.ts`, `src/core/evaluate/state.ts`
+- `skills/blog-evaluate.md`
 
 ### Expected results
 
@@ -181,7 +201,7 @@ npm test
 npm run build
 ```
 
-Expected baseline: **0 TypeScript errors, 225 tests passing across 21 suites, clean build** (as of feature/phase-4-draft). Any drift from this baseline is a signal to investigate before merging.
+Expected baseline: **0 TypeScript errors, 388 tests passing across 27 suites, clean build** (as of feature/phase-5-evaluate). Any drift from this baseline is a signal to investigate before merging.
 
 ## Phase 3: Code Review of Current Changes
 
@@ -275,7 +295,15 @@ Phase 4 — Draft:
   - Tag taxonomy reader (6 tests): PASS / FAIL
   - Draft CLI handlers (25 tests): PASS / FAIL
 
-Full Suite: X passing, Y failing  (baseline: 225 passing)
+Phase 5 — Evaluate:
+  - ReviewerOutput schema (18 tests): PASS / FAIL
+  - Structural autocheck lints (15 tests): PASS / FAIL
+  - Synthesis + matching (24 tests): PASS / FAIL
+  - Report renderer (4 tests): PASS / FAIL
+  - Evaluation state lifecycle (46 tests): PASS / FAIL
+  - Evaluate CLI handlers (19 tests): PASS / FAIL
+
+Full Suite: X passing, Y failing  (baseline: 388 passing)
 Lint: {error count} errors  (baseline: 0)
 Build: PASS / FAIL
 ```
