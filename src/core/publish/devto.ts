@@ -68,6 +68,73 @@ interface DevToArticleResponse {
   url?: string;
 }
 
+// Each article in the /me/all listing exposes its canonical_url and the
+// Dev.to-side URL. Shape is intentionally narrow — we only read fields we
+// use, and tolerate missing fields via optional typing since Dev.to's API
+// response shape is not strictly versioned.
+interface DevToListArticle {
+  id?: number;
+  url?: string;
+  canonical_url?: string | null;
+}
+
+// Probe the authenticated user's articles for one whose canonical_url
+// matches the post we're about to cross-post. Returns the existing article's
+// Dev.to URL + id when found, null otherwise. This closes the resume hole:
+// a prior run may have succeeded at POST /api/articles but died before the
+// local transaction that marks the step completed and persists the URL
+// to the posts row. Without a probe, resume would POST again and create a
+// duplicate draft on Dev.to.
+//
+// Any error from the probe (network, auth, JSON parse) is treated as fatal:
+// throw so the step is marked failed and the operator retries. Falling
+// through to POST would reopen the duplicate-create window on transient
+// probe failures.
+async function probeDevToForCanonical(
+  apiKey: string,
+  canonicalUrl: string,
+): Promise<{ id?: number; url?: string } | null> {
+  // per_page=1000 is Dev.to's documented max; one page is enough for
+  // typical usage (hundreds of posts is rare). If we ever exceed that,
+  // paginate via ?page=N — out of scope for v1.
+  const response = await fetch(
+    'https://dev.to/api/articles/me/all?per_page=1000',
+    {
+      method: 'GET',
+      headers: {
+        'api-key': apiKey,
+        Accept: 'application/json',
+      },
+    },
+  );
+
+  if (response.status !== 200) {
+    const text = await response.text();
+    throw new Error(
+      `Dev.to probe failed (${response.status}): ${text}`,
+    );
+  }
+
+  const data = (await response.json()) as unknown;
+  if (!Array.isArray(data)) {
+    throw new Error('Dev.to probe returned a non-array response');
+  }
+
+  // Normalize trailing slashes so an author that stores canonical with a
+  // slash in Dev.to still matches one without here (and vice versa).
+  const target = canonicalUrl.replace(/\/+$/, '');
+  for (const entry of data as DevToListArticle[]) {
+    if (typeof entry.canonical_url !== 'string') continue;
+    if (entry.canonical_url.replace(/\/+$/, '') === target) {
+      return {
+        id: typeof entry.id === 'number' ? entry.id : undefined,
+        url: typeof entry.url === 'string' ? entry.url : undefined,
+      };
+    }
+  }
+  return null;
+}
+
 export async function crosspostToDevTo(
   slug: string,
   config: BlogConfig,
@@ -78,13 +145,23 @@ export async function crosspostToDevTo(
     return { skipped: true, reason: 'DEVTO_API_KEY not set' };
   }
 
+  const canonicalUrl = `${config.site.base_url.replace(/\/+$/, '')}/writing/${slug}`;
+
+  // Probe-then-create. If a prior run already created the Dev.to draft but
+  // crashed before the local commit, we find it here and return the existing
+  // URL instead of POSTing a duplicate. Mirrors the probe-then-create
+  // pattern in repo.ts.
+  const existing = await probeDevToForCanonical(apiKey, canonicalUrl);
+  if (existing) {
+    return { id: existing.id, url: existing.url };
+  }
+
   const draftPath = join(paths.draftsDir, slug, 'index.mdx');
   const mdx = readFileSync(draftPath, 'utf-8');
   const fm = parseFrontmatter(mdx);
   const { body } = splitMdx(mdx);
 
   const bodyMarkdown = mdxToMarkdown(body, slug, config.site.base_url);
-  const canonicalUrl = `${config.site.base_url.replace(/\/+$/, '')}/writing/${slug}`;
   const tags = mapDevToTags(fm.tags);
 
   const payload = {

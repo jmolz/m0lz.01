@@ -126,21 +126,35 @@ describe('crosspostToDevTo', () => {
   it('builds POST with api-key header, correct URL, and article payload', async () => {
     const f = setup('sample');
     process.env.DEVTO_API_KEY = 'test-key-abc';
-    const mockFetch = vi.fn().mockResolvedValue(
-      new Response(JSON.stringify({ id: 123, url: 'https://dev.to/jmolz/sample-abc' }), {
-        status: 201,
-        headers: { 'Content-Type': 'application/json' },
-      }),
-    );
+    // First call: probe GET returns an empty array (no existing draft for
+    // this canonical). Second call: POST creates a new draft.
+    const mockFetch = vi.fn()
+      .mockResolvedValueOnce(
+        new Response('[]', {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ id: 123, url: 'https://dev.to/jmolz/sample-abc' }), {
+          status: 201,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      );
     vi.stubGlobal('fetch', mockFetch);
 
     const result = await crosspostToDevTo('sample', makeConfig(), { draftsDir: f.draftsDir });
     expect(result.id).toBe(123);
     expect(result.url).toBe('https://dev.to/jmolz/sample-abc');
 
-    // Inspect the fetch call.
-    expect(mockFetch).toHaveBeenCalledTimes(1);
-    const [url, init] = mockFetch.mock.calls[0];
+    // Two fetch calls: the probe (GET) then the create (POST).
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    const [probeUrl, probeInit] = mockFetch.mock.calls[0];
+    expect(probeUrl).toMatch(/^https:\/\/dev\.to\/api\/articles\/me\/all/);
+    expect(probeInit.method).toBe('GET');
+    expect(probeInit.headers['api-key']).toBe('test-key-abc');
+
+    const [url, init] = mockFetch.mock.calls[1];
     expect(url).toBe('https://dev.to/api/articles');
     expect(init.method).toBe('POST');
     expect(init.headers['api-key']).toBe('test-key-abc');
@@ -156,12 +170,80 @@ describe('crosspostToDevTo', () => {
     expect(payload.article.body_markdown).not.toContain('<FancyComponent');
   });
 
+  it('probe-then-create: returns existing URL without POSTing when canonical already on Dev.to', async () => {
+    // Regression for Codex Pass 2 Critical: a prior run may have succeeded
+    // at POST /api/articles but died before the local DB transaction.
+    // On resume the runner re-executes crosspost-devto; without the probe,
+    // this would create a duplicate Dev.to draft. The probe must find the
+    // existing article and return its URL instead.
+    const f = setup('duplicate');
+    process.env.DEVTO_API_KEY = 'retry-key';
+    const existingArticles = [
+      { id: 999, url: 'https://dev.to/jmolz/unrelated', canonical_url: 'https://m0lz.dev/writing/other' },
+      { id: 777, url: 'https://dev.to/jmolz/duplicate-abc', canonical_url: 'https://m0lz.dev/writing/duplicate' },
+    ];
+    const mockFetch = vi.fn().mockResolvedValueOnce(
+      new Response(JSON.stringify(existingArticles), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+    vi.stubGlobal('fetch', mockFetch);
+
+    const result = await crosspostToDevTo('duplicate', makeConfig(), { draftsDir: f.draftsDir });
+    expect(result.id).toBe(777);
+    expect(result.url).toBe('https://dev.to/jmolz/duplicate-abc');
+
+    // Critical assertion: only the probe was called. No POST.
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    const [probeUrl, probeInit] = mockFetch.mock.calls[0];
+    expect(probeUrl).toMatch(/articles\/me\/all/);
+    expect(probeInit.method).toBe('GET');
+  });
+
+  it('probe matches canonicals regardless of trailing slash', async () => {
+    const f = setup('slashed');
+    process.env.DEVTO_API_KEY = 'k';
+    // Existing article canonical has a trailing slash; the canonical we
+    // compute does not. The probe must still match them as the same URL.
+    const mockFetch = vi.fn().mockResolvedValueOnce(
+      new Response(
+        JSON.stringify([
+          { id: 55, url: 'https://dev.to/jmolz/slashed', canonical_url: 'https://m0lz.dev/writing/slashed/' },
+        ]),
+        { status: 200 },
+      ),
+    );
+    vi.stubGlobal('fetch', mockFetch);
+    const result = await crosspostToDevTo('slashed', makeConfig(), { draftsDir: f.draftsDir });
+    expect(result.id).toBe(55);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('throws with probe context when the probe endpoint returns non-200', async () => {
+    const f = setup('probefail');
+    process.env.DEVTO_API_KEY = 'k';
+    const mockFetch = vi.fn().mockResolvedValueOnce(
+      new Response('Unauthorized', { status: 401 }),
+    );
+    vi.stubGlobal('fetch', mockFetch);
+
+    await expect(crosspostToDevTo('probefail', makeConfig(), { draftsDir: f.draftsDir }))
+      .rejects.toThrow(/Dev\.to probe failed \(401\)/);
+    // Must not fall through to POST when the probe fails — otherwise a
+    // transient probe failure would race a duplicate-create with a
+    // subsequent retry that succeeds on the probe.
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
   it('throws a descriptive error on 422 validation failure', async () => {
     const f = setup('validation');
     process.env.DEVTO_API_KEY = 'k';
-    const mockFetch = vi.fn().mockResolvedValue(
-      new Response('{"error":"validation failed"}', { status: 422 }),
-    );
+    const mockFetch = vi.fn()
+      .mockResolvedValueOnce(new Response('[]', { status: 200 }))  // probe: nothing
+      .mockResolvedValueOnce(
+        new Response('{"error":"validation failed"}', { status: 422 }),
+      );
     vi.stubGlobal('fetch', mockFetch);
 
     await expect(crosspostToDevTo('validation', makeConfig(), { draftsDir: f.draftsDir }))
@@ -171,9 +253,11 @@ describe('crosspostToDevTo', () => {
   it('throws on other non-2xx errors with status in message', async () => {
     const f = setup('bigfail');
     process.env.DEVTO_API_KEY = 'k';
-    const mockFetch = vi.fn().mockResolvedValue(
-      new Response('Service unavailable', { status: 503 }),
-    );
+    const mockFetch = vi.fn()
+      .mockResolvedValueOnce(new Response('[]', { status: 200 }))  // probe: nothing
+      .mockResolvedValueOnce(
+        new Response('Service unavailable', { status: 503 }),
+      );
     vi.stubGlobal('fetch', mockFetch);
 
     await expect(crosspostToDevTo('bigfail', makeConfig(), { draftsDir: f.draftsDir }))

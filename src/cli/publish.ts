@@ -11,7 +11,7 @@ import { initPublish } from '../core/publish/phase.js';
 import { getPipelineSteps } from '../core/publish/steps-crud.js';
 import { runPipeline } from '../core/publish/pipeline-runner.js';
 import { PipelineContext } from '../core/publish/pipeline-types.js';
-import { PipelineStepRow } from '../core/publish/types.js';
+import { PipelineStepRow, PublishUrls } from '../core/publish/types.js';
 
 // CLI handlers for the publish phase. Mirrors the pattern in `evaluate.ts`
 // and `draft.ts`: `runPublishStart` and `runPublishShow` are exported and
@@ -147,6 +147,32 @@ export async function runPublishStart(
       return;
     }
 
+    // Hydrate ctx.urls from the posts row so a resumed run can see URLs
+    // that a prior invocation persisted via persistPublishUrls. Without
+    // this, step 9 (update-frontmatter) would read empty ctx.urls on
+    // resume and write incomplete frontmatter — a real bug surfaced by
+    // the Cluster 8 adversarial review: per-step URLs landed on the row,
+    // but downstream steps only looked at the in-memory bundle.
+    const urlRow = db
+      .prepare(
+        'SELECT site_url, devto_url, medium_url, substack_url, repo_url FROM posts WHERE slug = ?',
+      )
+      .get(slug) as
+      | {
+          site_url: string | null;
+          devto_url: string | null;
+          medium_url: string | null;
+          substack_url: string | null;
+          repo_url: string | null;
+        }
+      | undefined;
+    const hydratedUrls: PublishUrls = {};
+    if (urlRow?.site_url) hydratedUrls.site_url = urlRow.site_url;
+    if (urlRow?.devto_url) hydratedUrls.devto_url = urlRow.devto_url;
+    if (urlRow?.medium_url) hydratedUrls.medium_url = urlRow.medium_url;
+    if (urlRow?.substack_url) hydratedUrls.substack_url = urlRow.substack_url;
+    if (urlRow?.repo_url) hydratedUrls.repo_url = urlRow.repo_url;
+
     const ctx: PipelineContext = {
       db,
       slug,
@@ -164,7 +190,7 @@ export async function runPublishStart(
         publishDir,
         templatesDir,
       },
-      urls: {},
+      urls: hydratedUrls,
     };
 
     let result;

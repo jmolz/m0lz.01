@@ -311,6 +311,58 @@ describe('runPublishStart — runner result handling', () => {
   });
 });
 
+describe('runPublishStart — ctx.urls hydration from posts row', () => {
+  it('seeds ctx.urls from non-null URL columns on the posts row before runPipeline', async () => {
+    // Regression for Codex Pass 2 High: every invocation of runPublishStart
+    // used to set `urls: {}` unconditionally. On a resume, URLs persisted
+    // by a prior run (via persistPublishUrls) were invisible to downstream
+    // steps like update-frontmatter, which reads ctx.urls. The hydration
+    // closes that hole.
+    const f = setup();
+    seedPublishPost(f.dbPath, 'hydrated');
+    const db = getDatabase(f.dbPath);
+    try {
+      db.prepare(
+        'UPDATE posts SET site_url = ?, devto_url = ?, repo_url = ? WHERE slug = ?',
+      ).run(
+        'https://m0lz.dev/writing/hydrated',
+        'https://dev.to/jmolz/hydrated-123',
+        'https://github.com/jmolz/hydrated',
+        'hydrated',
+      );
+    } finally {
+      closeDatabase(db);
+    }
+    mockRunPipeline.mockResolvedValue({ completed: true, stepsRun: 11, totalSteps: 11 });
+    captureLogs();
+
+    await runPublishStart('hydrated', paths(f));
+
+    expect(mockRunPipeline).toHaveBeenCalledTimes(1);
+    const ctx = mockRunPipeline.mock.calls[0][0];
+    expect(ctx.urls.site_url).toBe('https://m0lz.dev/writing/hydrated');
+    expect(ctx.urls.devto_url).toBe('https://dev.to/jmolz/hydrated-123');
+    expect(ctx.urls.repo_url).toBe('https://github.com/jmolz/hydrated');
+    // Columns that were NULL on the row stay absent on ctx.urls — not
+    // present as `undefined` keys, so downstream COALESCE semantics are
+    // clean.
+    expect(ctx.urls.medium_url).toBeUndefined();
+    expect(ctx.urls.substack_url).toBeUndefined();
+  });
+
+  it('ctx.urls is empty object when all URL columns are NULL (fresh publish)', async () => {
+    const f = setup();
+    seedPublishPost(f.dbPath, 'fresh');
+    mockRunPipeline.mockResolvedValue({ completed: true, stepsRun: 11, totalSteps: 11 });
+    captureLogs();
+
+    await runPublishStart('fresh', paths(f));
+    expect(mockRunPipeline).toHaveBeenCalledTimes(1);
+    const ctx = mockRunPipeline.mock.calls[0][0];
+    expect(ctx.urls).toEqual({});
+  });
+});
+
 describe('runPublishShow', () => {
   it('post not found -> exitCode=1', () => {
     const f = setup();
