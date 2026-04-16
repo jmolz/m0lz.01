@@ -150,8 +150,13 @@ export async function runPipeline(
     }
 
     // All pending/failed steps exhausted. Verify completeness and advance
-    // the post to the published phase.
+    // the post to the published phase. `completePublish` re-acquires the
+    // same slug-scoped lock, so we must release ours first — the FS lock is
+    // not reentrant within a single process. The `finally` block below is
+    // idempotent (release swallows ENOENT), so calling release() twice is
+    // safe.
     if (allStepsComplete(ctx.db, ctx.slug)) {
+      release();
       completePublish(ctx.db, ctx.slug, ctx.urls, ctx.paths.publishDir);
       console.log(`Pipeline complete: ${ctx.slug} is now published`);
       return { completed: true, stepsRun, totalSteps: TOTAL_STEPS };
