@@ -5,6 +5,7 @@ site:
   repo_path: "../m0lz.00"          # Path to the m0lz.00 site repo (relative to this file)
   base_url: "https://m0lz.dev"    # Canonical base URL for all content
   content_dir: "content/posts"     # Posts directory within the site repo
+  research_dir: "content/research" # Research pages directory within the site repo
 
 author:
   name: "Jacob Molz"
@@ -73,3 +74,12 @@ updates:
   preserve_original_data: true     # Keep original benchmark data alongside updates
   update_notice: true              # Append update notice with date and summary
   update_crosspost: true           # Attempt to update Dev.to cross-posts
+
+# Optional: companion project repo paths keyed by catalog ID (e.g. m0lz.02).
+# Used by the publish pipeline when a post's frontmatter `project:` field
+# identifies a project repo that should receive the post's README link back.
+# Paths are relative to this config file.
+#
+# projects:
+#   m0lz.02: "../m0lz.02"
+#   m0lz.03: "../m0lz.03"

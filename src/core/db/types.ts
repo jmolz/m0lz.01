@@ -53,19 +53,6 @@ export interface BenchmarkRow {
   status: BenchmarkStatus;
 }
 
-export type PipelineStatus = 'pending' | 'running' | 'completed' | 'failed' | 'skipped';
-
-export interface PipelineStepRow {
-  id: number;
-  post_slug: string;
-  step_number: number;
-  step_name: string;
-  status: PipelineStatus;
-  started_at: string | null;
-  completed_at: string | null;
-  error_message: string | null;
-}
-
 export type AssetType = 'excalidraw' | 'chart' | 'image' | 'benchmark_viz';
 
 export interface AssetRow {

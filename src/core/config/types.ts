@@ -2,6 +2,7 @@ export interface SiteConfig {
   repo_path: string;
   base_url: string;
   content_dir: string;
+  research_dir: string;
 }
 
 export interface AuthorConfig {
@@ -91,4 +92,5 @@ export interface BlogConfig {
   social: SocialConfig;
   evaluation: EvaluationConfig;
   updates: UpdatesConfig;
+  projects?: Record<string, string>;
 }
