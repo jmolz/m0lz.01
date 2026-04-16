@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path';
 import Database from 'better-sqlite3';
 
 import { BlogConfig } from '../config/types.js';
+import { parseFrontmatter } from '../draft/frontmatter.js';
 
 // Step 2 of the publish pipeline: generate the m0lz.00 research-companion
 // MDX page for a post. The page lives alongside the post on the hub and
@@ -27,12 +28,12 @@ export interface ResearchPagePaths {
   benchmarkDir: string; // .blog-agent/benchmarks
   researchPagesDir: string; // .blog-agent/research-pages
   templatesDir: string; // templates/
+  draftsDir: string; // .blog-agent/drafts — description sourced from draft frontmatter
 }
 
 interface PostLookupRow {
   content_type: string | null;
   title: string | null;
-  description: string | null;
 }
 
 function extractSection(body: string, headingPattern: RegExp): string | null {
@@ -135,10 +136,27 @@ export function generateResearchPage(
   db: Database.Database,
 ): ResearchPageResult {
   const post = db
-    .prepare('SELECT content_type, title, description FROM posts WHERE slug = ?')
+    .prepare('SELECT content_type, title FROM posts WHERE slug = ?')
     .get(slug) as PostLookupRow | undefined;
   if (!post) {
     throw new Error(`Post not found: ${slug}`);
+  }
+
+  // Description lives in the draft MDX frontmatter — the posts table has
+  // no `description` column. Matches the pattern in medium.ts, substack.ts,
+  // devto.ts. Empty string when the draft is absent or missing the field;
+  // an absent draft is not fatal because the research page can still
+  // render with the title alone.
+  let description = '';
+  const draftPath = join(paths.draftsDir, slug, 'index.mdx');
+  if (existsSync(draftPath)) {
+    try {
+      const fm = parseFrontmatter(readFileSync(draftPath, 'utf-8'));
+      description = fm.description ?? '';
+    } catch {
+      // Malformed frontmatter — fall back to empty description rather than
+      // blocking the pipeline. site-pr will surface draft issues separately.
+    }
   }
 
   const researchDocPath = join(paths.researchDir, `${slug}.md`);
@@ -165,7 +183,6 @@ export function generateResearchPage(
 
   // Derive template variables.
   const title = post.title ?? slug;
-  const description = post.description ?? '';
   const date = new Date().toISOString().slice(0, 10);
   const tagsYaml = renderTagsYaml([
     'research',

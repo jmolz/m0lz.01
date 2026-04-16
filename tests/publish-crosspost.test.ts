@@ -1,0 +1,259 @@
+import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+
+import { crosspostToDevTo, mapDevToTags } from '../src/core/publish/devto.js';
+import { generateMediumPaste } from '../src/core/publish/medium.js';
+import { generateSubstackPaste } from '../src/core/publish/substack.js';
+import { BlogConfig } from '../src/core/config/types.js';
+
+function makeConfig(): BlogConfig {
+  return {
+    site: {
+      repo_path: '/tmp/site',
+      base_url: 'https://m0lz.dev',
+      content_dir: 'content/posts',
+      research_dir: 'content/research',
+    },
+    author: { name: 'Tester', github: 'jmolz' },
+    ai: {
+      primary: 'claude-code',
+      reviewers: { structural: 'claude-code', adversarial: 'codex-cli', methodology: 'codex-cli' },
+      codex: { adversarial_effort: 'high', methodology_effort: 'xhigh' },
+    },
+    content_types: {
+      'project-launch': { benchmark: 'optional', companion_repo: 'existing', social_prefix: 'Show HN:' },
+      'technical-deep-dive': { benchmark: 'required', companion_repo: 'new', social_prefix: '' },
+      'analysis-opinion': { benchmark: 'skip', companion_repo: 'optional', social_prefix: '' },
+    },
+    benchmark: { capture_environment: true, methodology_template: true, preserve_raw_data: true, multiple_runs: 3 },
+    publish: { devto: true, medium: true, substack: true, github_repos: true, social_drafts: true, research_pages: true },
+    social: { platforms: ['linkedin', 'hackernews'], timing_recommendations: true },
+    evaluation: {
+      require_pass: true, min_sources: 3, max_reading_level: 12, three_reviewer_panel: true,
+      consensus_must_fix: true, majority_should_fix: true, single_advisory: true,
+      verify_benchmark_claims: true, methodology_completeness: true,
+    },
+    updates: { preserve_original_data: true, update_notice: true, update_crosspost: true },
+  };
+}
+
+const SAMPLE_MDX = `---
+title: "Sample Post"
+description: "A one-line description"
+date: "2026-04-16"
+tags:
+  - TypeScript
+  - Web Performance
+  - benchmark
+published: false
+canonical: "https://m0lz.dev/writing/sample"
+---
+
+# Heading
+
+Body paragraph here.
+
+\`\`\`ts
+const x = 1;
+\`\`\`
+
+<FancyComponent>gone</FancyComponent>
+`;
+
+interface Fixture {
+  tempDir: string;
+  draftsDir: string;
+  socialDir: string;
+}
+
+let fixture: Fixture | undefined;
+// Save DEVTO_API_KEY once at module load. Each test may mutate it and we
+// restore in afterEach so no test leaks into another.
+const savedDevtoKey = process.env.DEVTO_API_KEY;
+
+function setup(slug: string): Fixture {
+  const tempDir = mkdtempSync(join(tmpdir(), 'publish-xxx-crosspost-'));
+  const draftsDir = join(tempDir, 'drafts');
+  const socialDir = join(tempDir, 'social');
+  mkdirSync(join(draftsDir, slug), { recursive: true });
+  writeFileSync(join(draftsDir, slug, 'index.mdx'), SAMPLE_MDX, 'utf-8');
+  fixture = { tempDir, draftsDir, socialDir };
+  return fixture;
+}
+
+afterEach(() => {
+  if (fixture) rmSync(fixture.tempDir, { recursive: true, force: true });
+  fixture = undefined;
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+  // Restore env so DEVTO_API_KEY tests don't bleed between each other.
+  if (savedDevtoKey === undefined) {
+    delete process.env.DEVTO_API_KEY;
+  } else {
+    process.env.DEVTO_API_KEY = savedDevtoKey;
+  }
+});
+
+describe('mapDevToTags', () => {
+  it('normalizes: lowercases, spaces→hyphens, preserves order, caps at 4', () => {
+    const result = mapDevToTags(['TypeScript', 'Web Performance', 'benchmark']);
+    expect(result).toEqual(['typescript', 'web-performance', 'benchmark']);
+  });
+
+  it('caps result at 4 tags', () => {
+    const result = mapDevToTags(['a', 'b', 'c', 'd', 'e', 'f']);
+    expect(result).toHaveLength(4);
+    expect(result).toEqual(['a', 'b', 'c', 'd']);
+  });
+
+  it('strips non [a-z0-9-] and drops tags that become empty', () => {
+    const result = mapDevToTags(['!!!', '@@@', 'valid']);
+    expect(result).toEqual(['valid']);
+  });
+});
+
+describe('crosspostToDevTo', () => {
+  it('skips with reason when DEVTO_API_KEY is not set', async () => {
+    const f = setup('no-key');
+    delete process.env.DEVTO_API_KEY;
+    const result = await crosspostToDevTo('no-key', makeConfig(), { draftsDir: f.draftsDir });
+    expect(result.skipped).toBe(true);
+    expect(result.reason).toMatch(/DEVTO_API_KEY not set/);
+  });
+
+  it('builds POST with api-key header, correct URL, and article payload', async () => {
+    const f = setup('sample');
+    process.env.DEVTO_API_KEY = 'test-key-abc';
+    const mockFetch = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ id: 123, url: 'https://dev.to/jmolz/sample-abc' }), {
+        status: 201,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+    vi.stubGlobal('fetch', mockFetch);
+
+    const result = await crosspostToDevTo('sample', makeConfig(), { draftsDir: f.draftsDir });
+    expect(result.id).toBe(123);
+    expect(result.url).toBe('https://dev.to/jmolz/sample-abc');
+
+    // Inspect the fetch call.
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    const [url, init] = mockFetch.mock.calls[0];
+    expect(url).toBe('https://dev.to/api/articles');
+    expect(init.method).toBe('POST');
+    expect(init.headers['api-key']).toBe('test-key-abc');
+    const payload = JSON.parse(init.body);
+    expect(payload.article.title).toBe('Sample Post');
+    expect(payload.article.published).toBe(false);
+    expect(payload.article.canonical_url).toBe('https://m0lz.dev/writing/sample');
+    expect(payload.article.tags).toEqual(['typescript', 'web-performance', 'benchmark']);
+    expect(payload.article.description).toBe('A one-line description');
+    // Body should contain the heading and code fence, JSX stripped.
+    expect(payload.article.body_markdown).toContain('# Heading');
+    expect(payload.article.body_markdown).toContain('const x = 1;');
+    expect(payload.article.body_markdown).not.toContain('<FancyComponent');
+  });
+
+  it('throws a descriptive error on 422 validation failure', async () => {
+    const f = setup('validation');
+    process.env.DEVTO_API_KEY = 'k';
+    const mockFetch = vi.fn().mockResolvedValue(
+      new Response('{"error":"validation failed"}', { status: 422 }),
+    );
+    vi.stubGlobal('fetch', mockFetch);
+
+    await expect(crosspostToDevTo('validation', makeConfig(), { draftsDir: f.draftsDir }))
+      .rejects.toThrow(/Dev\.to validation failed/);
+  });
+
+  it('throws on other non-2xx errors with status in message', async () => {
+    const f = setup('bigfail');
+    process.env.DEVTO_API_KEY = 'k';
+    const mockFetch = vi.fn().mockResolvedValue(
+      new Response('Service unavailable', { status: 503 }),
+    );
+    vi.stubGlobal('fetch', mockFetch);
+
+    await expect(crosspostToDevTo('bigfail', makeConfig(), { draftsDir: f.draftsDir }))
+      .rejects.toThrow(/Dev\.to request failed \(503\)/);
+  });
+
+  it('skips when DEVTO_API_KEY is empty string (not just undefined)', async () => {
+    const f = setup('empty-key');
+    process.env.DEVTO_API_KEY = '';
+    const result = await crosspostToDevTo('empty-key', makeConfig(), { draftsDir: f.draftsDir });
+    expect(result.skipped).toBe(true);
+  });
+});
+
+describe('generateMediumPaste', () => {
+  it('writes a Medium paste file with H1 title, description, body, and canonical footer', () => {
+    const f = setup('mpost');
+    const result = generateMediumPaste('mpost', makeConfig(), {
+      draftsDir: f.draftsDir,
+      socialDir: f.socialDir,
+    });
+
+    const expectedPath = join(f.socialDir, 'mpost', 'medium-paste.md');
+    expect(result.path).toBe(expectedPath);
+    expect(existsSync(expectedPath)).toBe(true);
+
+    const content = readFileSync(expectedPath, 'utf-8');
+    expect(content.startsWith('# Sample Post')).toBe(true);
+    expect(content).toContain('A one-line description');
+    expect(content).toContain('# Heading');
+    // Display URL strips the protocol — "m0lz.dev" appears without "https://".
+    expect(content).toContain('[m0lz.dev](https://m0lz.dev/writing/mpost)');
+  });
+
+  it('creates nested socialDir/slug directory recursively', () => {
+    const f = setup('deepdir');
+    // Do NOT pre-create the socialDir — rely on the function to mkdir.
+    generateMediumPaste('deepdir', makeConfig(), {
+      draftsDir: f.draftsDir,
+      socialDir: f.socialDir,
+    });
+    expect(existsSync(join(f.socialDir, 'deepdir'))).toBe(true);
+  });
+
+  it('displayBaseUrl correctly strips protocol from config.site.base_url', () => {
+    const f = setup('proto');
+    const config = makeConfig();
+    config.site.base_url = 'https://example.com/';
+    generateMediumPaste('proto', config, { draftsDir: f.draftsDir, socialDir: f.socialDir });
+    const content = readFileSync(join(f.socialDir, 'proto', 'medium-paste.md'), 'utf-8');
+    // Label text must drop protocol + trailing slash.
+    expect(content).toContain('[example.com](https://example.com/writing/proto)');
+  });
+});
+
+describe('generateSubstackPaste', () => {
+  it('writes Substack paste with H1 title and H2 description subtitle', () => {
+    const f = setup('sspost');
+    const result = generateSubstackPaste('sspost', makeConfig(), {
+      draftsDir: f.draftsDir,
+      socialDir: f.socialDir,
+    });
+    const expectedPath = join(f.socialDir, 'sspost', 'substack-paste.md');
+    expect(result.path).toBe(expectedPath);
+    const content = readFileSync(expectedPath, 'utf-8');
+    // Substack layout: H1 then H2 (distinct from Medium's H1 + paragraph).
+    expect(content).toMatch(/^# Sample Post\n\n## A one-line description/);
+  });
+
+  it('applies mdxToMarkdown — JSX stripped outside fences, code blocks preserved', () => {
+    const f = setup('mdxclean');
+    generateSubstackPaste('mdxclean', makeConfig(), {
+      draftsDir: f.draftsDir,
+      socialDir: f.socialDir,
+    });
+    const content = readFileSync(join(f.socialDir, 'mdxclean', 'substack-paste.md'), 'utf-8');
+    // JSX component removed from prose region.
+    expect(content).not.toContain('<FancyComponent');
+    // Code fence preserved.
+    expect(content).toContain('const x = 1;');
+    expect(content).toContain('```ts');
+  });
+});
