@@ -90,49 +90,67 @@ interface DevToListArticle {
 // throw so the step is marked failed and the operator retries. Falling
 // through to POST would reopen the duplicate-create window on transient
 // probe failures.
+// Paginate /api/articles/me/all until we find a matching canonical or hit a
+// short page (< per_page entries → last page). Dev.to's documented max is
+// per_page=1000; we cap the loop at 100 pages to avoid an infinite scan if
+// the API ever misreports the short-page signal.
+const DEVTO_PROBE_PER_PAGE = 1000;
+const DEVTO_PROBE_MAX_PAGES = 100;
+
 async function probeDevToForCanonical(
   apiKey: string,
   canonicalUrl: string,
 ): Promise<{ id?: number; url?: string } | null> {
-  // per_page=1000 is Dev.to's documented max; one page is enough for
-  // typical usage (hundreds of posts is rare). If we ever exceed that,
-  // paginate via ?page=N — out of scope for v1.
-  const response = await fetch(
-    'https://dev.to/api/articles/me/all?per_page=1000',
-    {
+  // Normalize trailing slashes so an author that stores canonical with a
+  // slash in Dev.to still matches one without here (and vice versa).
+  const target = canonicalUrl.replace(/\/+$/, '');
+
+  for (let page = 1; page <= DEVTO_PROBE_MAX_PAGES; page += 1) {
+    const url = `https://dev.to/api/articles/me/all?per_page=${DEVTO_PROBE_PER_PAGE}&page=${page}`;
+    const response = await fetch(url, {
       method: 'GET',
       headers: {
         'api-key': apiKey,
         Accept: 'application/json',
       },
-    },
-  );
+    });
 
-  if (response.status !== 200) {
-    const text = await response.text();
-    throw new Error(
-      `Dev.to probe failed (${response.status}): ${text}`,
-    );
-  }
+    if (response.status !== 200) {
+      const text = await response.text();
+      throw new Error(
+        `Dev.to probe failed (${response.status}): ${text}`,
+      );
+    }
 
-  const data = (await response.json()) as unknown;
-  if (!Array.isArray(data)) {
-    throw new Error('Dev.to probe returned a non-array response');
-  }
+    const data = (await response.json()) as unknown;
+    if (!Array.isArray(data)) {
+      throw new Error('Dev.to probe returned a non-array response');
+    }
 
-  // Normalize trailing slashes so an author that stores canonical with a
-  // slash in Dev.to still matches one without here (and vice versa).
-  const target = canonicalUrl.replace(/\/+$/, '');
-  for (const entry of data as DevToListArticle[]) {
-    if (typeof entry.canonical_url !== 'string') continue;
-    if (entry.canonical_url.replace(/\/+$/, '') === target) {
-      return {
-        id: typeof entry.id === 'number' ? entry.id : undefined,
-        url: typeof entry.url === 'string' ? entry.url : undefined,
-      };
+    for (const entry of data as DevToListArticle[]) {
+      if (typeof entry.canonical_url !== 'string') continue;
+      if (entry.canonical_url.replace(/\/+$/, '') === target) {
+        return {
+          id: typeof entry.id === 'number' ? entry.id : undefined,
+          url: typeof entry.url === 'string' ? entry.url : undefined,
+        };
+      }
+    }
+
+    // Short page means no more results — stop paginating.
+    if ((data as unknown[]).length < DEVTO_PROBE_PER_PAGE) {
+      return null;
     }
   }
-  return null;
+
+  // Hit the safety cap without finding a match. This is effectively a
+  // "probe could not confirm absence" result. Throw so the step is
+  // marked failed and the operator notices, rather than falling through
+  // to POST and potentially creating a duplicate for a >100,000-article
+  // author (the real-world likelihood of this is near zero).
+  throw new Error(
+    `Dev.to probe exceeded ${DEVTO_PROBE_MAX_PAGES} pages — aborting to avoid duplicate-create`,
+  );
 }
 
 export async function crosspostToDevTo(

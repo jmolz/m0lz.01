@@ -5,6 +5,7 @@ import { dirname, join, resolve } from 'node:path';
 import Database from 'better-sqlite3';
 
 import { BlogConfig } from '../config/types.js';
+import { getAheadCount } from './frontmatter.js';
 
 // Step 10 of the publish pipeline: update the project README in the site
 // repo with a link back to the published post. Only applies to posts that
@@ -126,6 +127,22 @@ export function updateProjectReadme(
   }
 
   if (!hasStaged) {
+    // Same crash-between-commit-and-push protection as updateFrontmatter.
+    // A prior run may have committed the README change locally, crashed
+    // before `git push`, and left the worktree clean. Without this check,
+    // the retry would silently skip the push — project README on GitHub
+    // would never receive the writing link even though the pipeline
+    // marked the step completed.
+    const ahead = getAheadCount(projectDir);
+    if (ahead > 0) {
+      execFileSync('git', ['-C', projectDir, 'push', 'origin', 'main'], {
+        encoding: 'utf-8',
+      });
+      return {
+        updated: true,
+        reason: `Pushed ${ahead} previously-committed change(s) that never reached origin`,
+      };
+    }
     return { updated: false, reason: 'No README changes staged' };
   }
 

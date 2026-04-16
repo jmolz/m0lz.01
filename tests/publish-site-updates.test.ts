@@ -176,10 +176,14 @@ describe('updateFrontmatter — direct push to main of site repo', () => {
     }
   });
 
-  it('is a no-op when nothing staged (idempotent on second run)', () => {
+  it('is a no-op when nothing staged AND HEAD is not ahead of origin (true idempotent)', () => {
     const f = setup();
     writeSampleDraftMdx(f.siteRepoPath, 'idem');
-    simulateNoStagedChanges();
+    // Diff --cached --quiet exits 0 (no staged); rev-list returns 0 (not ahead).
+    mockExec.mockImplementation((cmd: string, args: string[]): Buffer => {
+      if (args.includes('rev-list')) return Buffer.from('0\n');
+      return Buffer.from('');
+    });
 
     const result = updateFrontmatter(
       'idem',
@@ -191,11 +195,45 @@ describe('updateFrontmatter — direct push to main of site repo', () => {
     expect(result.reason).toMatch(/No frontmatter changes/);
 
     // Critical: must not call `commit` or `push` when there are no staged
-    // changes — otherwise every re-run would generate an empty commit.
+    // changes AND HEAD is not ahead — otherwise every re-run would generate
+    // an empty commit or an unnecessary push.
     const commitCall = mockExec.mock.calls.find((c) => c[1].includes('commit'));
     expect(commitCall).toBeUndefined();
     const pushCall = mockExec.mock.calls.find((c) => c[1].includes('push'));
     expect(pushCall).toBeUndefined();
+  });
+
+  it('crash-replay: pushes when HEAD is ahead of origin/main even though nothing is staged', () => {
+    // Regression for Codex Pass 3 Critical. A prior run committed the
+    // frontmatter edit locally but died before `git push`. On retry, the
+    // worktree is clean (prior run's write is on disk), git diff --cached
+    // --quiet reports 0, the naive implementation returned updated:false
+    // and the runner marked the step completed — leaving origin/main
+    // without the commit. The fix: `git rev-list origin/main..HEAD --count`
+    // reveals the unpushed commit, then push.
+    const f = setup();
+    writeSampleDraftMdx(f.siteRepoPath, 'crashreplay');
+    mockExec.mockImplementation((cmd: string, args: string[]): Buffer => {
+      if (args.includes('rev-list')) return Buffer.from('1\n');
+      return Buffer.from('');
+    });
+
+    const result = updateFrontmatter(
+      'crashreplay',
+      makeConfig(f.siteRepoPath),
+      { devto_url: 'https://dev.to/jmolz/crashreplay' },
+      { configPath: f.configPath },
+    );
+    expect(result.updated).toBe(true);
+    expect(result.reason).toMatch(/previously-committed/);
+
+    // A push to origin main MUST have happened. And NO new commit
+    // (because nothing was staged).
+    const pushCall = mockExec.mock.calls.find((c) => c[1].includes('push'));
+    expect(pushCall).toBeDefined();
+    expect(pushCall![1]).toEqual(expect.arrayContaining(['push', 'origin', 'main']));
+    const commitCall = mockExec.mock.calls.find((c) => c[1].includes('commit'));
+    expect(commitCall).toBeUndefined();
   });
 
   it('throws when the site repo path does not exist', () => {
@@ -363,6 +401,39 @@ describe('updateProjectReadme — direct push to main of project repo', () => {
     expect(result.reason).toMatch(/already present/);
     // No git calls at all.
     expect(mockExec.mock.calls.length).toBe(0);
+  });
+
+  it('crash-replay: pushes when HEAD is ahead of origin/main even though nothing is staged', () => {
+    // Same regression as updateFrontmatter — Codex Pass 3 Medium. A prior
+    // run committed the README edit locally but died before `git push`.
+    // The retry must push the orphan commit instead of silently returning
+    // updated:false and letting the runner advance the phase.
+    const f = setup();
+    // README does NOT yet contain the canonical URL — we want the code to
+    // pass the idempotency check (`if (readmeContent.includes(canonicalUrl))`)
+    // and proceed to the git sequence where the ahead check can fire. BUT
+    // we want the `diff --cached --quiet` check to report "no staged
+    // changes" (simulating a crashed prior run whose write+commit left
+    // the worktree clean on retry).
+    const projectDir = makeProjectRepo(f.tempDir, 'm0lz.02', '# m0lz.02\n\n## Writing\n\n');
+    seedProjectPost(f.db, 'readme-crashreplay', 'm0lz.02');
+    mockExec.mockImplementation((cmd: string, args: string[]): Buffer => {
+      if (args.includes('rev-list')) return Buffer.from('1\n');
+      // diff --cached --quiet — exit 0 means NO staged changes.
+      // Everything else (checkout, pull, add, push) — plain success.
+      return Buffer.from('');
+    });
+
+    const config = makeConfig(f.siteRepoPath, { 'm0lz.02': projectDir });
+    const result = updateProjectReadme('readme-crashreplay', config, { configPath: f.configPath }, f.db);
+    expect(result.updated).toBe(true);
+    expect(result.reason).toMatch(/previously-committed/);
+
+    const pushCall = mockExec.mock.calls.find((c) => c[1].includes('push'));
+    expect(pushCall).toBeDefined();
+    expect(pushCall![1]).toEqual(expect.arrayContaining(['push', 'origin', 'main']));
+    const commitCall = mockExec.mock.calls.find((c) => c[1].includes('commit'));
+    expect(commitCall).toBeUndefined();
   });
 
   it('throws when the post row is missing', () => {

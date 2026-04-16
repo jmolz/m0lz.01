@@ -35,6 +35,25 @@ interface SubprocessError extends Error {
   stderr?: Buffer | string;
 }
 
+// Return the number of commits HEAD is ahead of origin/main. Used to detect
+// the crash-between-commit-and-push window: a prior run may have committed
+// the frontmatter edit locally, crashed before `git push`, and left the
+// worktree clean. On retry the naive "no staged changes" branch would treat
+// that as idempotent success — but the remote still lacks the commit, so
+// canonical site MDX never receives the platform URLs.
+//
+// Implemented as a shared helper so updateFrontmatter and updateProjectReadme
+// can use the same check without duplicating the subprocess error pattern.
+export function getAheadCount(repoPath: string): number {
+  const out = execFileSync(
+    'git',
+    ['-C', repoPath, 'rev-list', 'origin/main..HEAD', '--count'],
+    { encoding: 'utf-8' },
+  );
+  const n = parseInt(String(out).trim(), 10);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
 export function updateFrontmatter(
   slug: string,
   config: BlogConfig,
@@ -111,6 +130,20 @@ export function updateFrontmatter(
   }
 
   if (!hasStaged) {
+    // No local edit staged — but a prior run may have already committed
+    // the edit and died before the push reached origin. Check whether
+    // HEAD is ahead of origin/main; if so, push the backlog and report
+    // updated=true so the step records that it did real work on retry.
+    const ahead = getAheadCount(siteRepoPath);
+    if (ahead > 0) {
+      execFileSync('git', ['-C', siteRepoPath, 'push', 'origin', 'main'], {
+        encoding: 'utf-8',
+      });
+      return {
+        updated: true,
+        reason: `Pushed ${ahead} previously-committed change(s) that never reached origin`,
+      };
+    }
     return { updated: false, reason: 'No frontmatter changes' };
   }
 

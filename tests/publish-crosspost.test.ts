@@ -201,6 +201,71 @@ describe('crosspostToDevTo', () => {
     expect(probeInit.method).toBe('GET');
   });
 
+  it('probe paginates beyond 1000 articles and matches on a later page', async () => {
+    // Regression for Codex Pass 3 Medium. The original probe stopped at
+    // page 1 (per_page=1000), so an author with >1000 articles whose
+    // matching draft lived on page 2+ would invisibly miss and duplicate.
+    // The fix: walk pages until a short page OR a match is found.
+    const f = setup('paginated');
+    process.env.DEVTO_API_KEY = 'many-articles';
+
+    // Page 1: 1000 entries, none matching.
+    const page1 = Array.from({ length: 1000 }, (_, i) => ({
+      id: i + 1,
+      url: `https://dev.to/jmolz/other-${i + 1}`,
+      canonical_url: `https://m0lz.dev/writing/other-${i + 1}`,
+    }));
+    // Page 2: a few entries, the last of which matches.
+    const page2 = [
+      { id: 1001, url: 'https://dev.to/jmolz/filler', canonical_url: 'https://m0lz.dev/writing/filler' },
+      { id: 1002, url: 'https://dev.to/jmolz/paginated-match', canonical_url: 'https://m0lz.dev/writing/paginated' },
+    ];
+    const mockFetch = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(page1), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(page2), { status: 200 }));
+    vi.stubGlobal('fetch', mockFetch);
+
+    const result = await crosspostToDevTo('paginated', makeConfig(), { draftsDir: f.draftsDir });
+    expect(result.id).toBe(1002);
+    expect(result.url).toBe('https://dev.to/jmolz/paginated-match');
+
+    // Two probe GETs (page 1 + page 2), no POST.
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    const [url1] = mockFetch.mock.calls[0];
+    const [url2] = mockFetch.mock.calls[1];
+    expect(url1).toMatch(/[?&]page=1\b/);
+    expect(url2).toMatch(/[?&]page=2\b/);
+    const methods = mockFetch.mock.calls.map((c) => c[1]?.method);
+    expect(methods).toEqual(['GET', 'GET']);
+  });
+
+  it('probe stops on short page: page 1 has <1000 entries => no page 2 fetch', async () => {
+    const f = setup('short');
+    process.env.DEVTO_API_KEY = 'k';
+    // Page 1: 3 entries, none matching. The pager must recognize the short
+    // page as the last page and stop — NOT fetch page 2.
+    const page1 = [
+      { id: 1, url: 'u1', canonical_url: 'https://m0lz.dev/writing/a' },
+      { id: 2, url: 'u2', canonical_url: 'https://m0lz.dev/writing/b' },
+      { id: 3, url: 'u3', canonical_url: 'https://m0lz.dev/writing/c' },
+    ];
+    const mockFetch = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(page1), { status: 200 }))
+      // Fallback for the POST that should follow — probe returns null so
+      // we POST.
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ id: 999, url: 'https://dev.to/jmolz/short-xyz' }), { status: 201 }),
+      );
+    vi.stubGlobal('fetch', mockFetch);
+
+    const result = await crosspostToDevTo('short', makeConfig(), { draftsDir: f.draftsDir });
+    expect(result.id).toBe(999);
+    // Exactly 2 calls: probe page 1, then POST. Page 2 should NOT be fetched.
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    const methods = mockFetch.mock.calls.map((c) => c[1]?.method);
+    expect(methods).toEqual(['GET', 'POST']);
+  });
+
   it('probe matches canonicals regardless of trailing slash', async () => {
     const f = setup('slashed');
     process.env.DEVTO_API_KEY = 'k';
