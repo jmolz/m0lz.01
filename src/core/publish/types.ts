@@ -79,4 +79,5 @@ export interface PublishPaths {
   socialDir?: string;
   researchPagesDir?: string;
   publishDir?: string;
+  templatesDir?: string;
 }
