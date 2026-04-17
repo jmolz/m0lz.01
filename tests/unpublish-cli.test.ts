@@ -31,13 +31,19 @@ function setup(phase: 'published' | 'draft' = 'published'): void {
 }
 
 describe('blog unpublish start', () => {
-  it('refuses without --confirm and writes no rows', async () => {
+  it('refuses without --confirm; writes no rows; makes no fetch call', async () => {
     setup();
     const errors: string[] = [];
     vi.spyOn(console, 'error').mockImplementation((msg: string) => {
       errors.push(msg);
     });
     vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    // Fetch spy — when --confirm is missing the handler MUST exit before
+    // any external API call. Criterion #2 explicitly requires "zero fetch
+    // calls" alongside "zero DB writes".
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
 
     const savedExit = process.exitCode;
     try {
@@ -48,6 +54,7 @@ describe('blog unpublish start', () => {
     }
 
     expect(errors.join('\n')).toMatch(/--confirm/);
+    expect(fetchSpy).not.toHaveBeenCalled();
 
     const db = getDatabase(dbPath);
     const count = (
@@ -55,6 +62,8 @@ describe('blog unpublish start', () => {
     ).c;
     closeDatabase(db);
     expect(count).toBe(0);
+
+    vi.unstubAllGlobals();
   });
 
   it('rejects non-published posts with phase-boundary error', async () => {

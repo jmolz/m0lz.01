@@ -98,7 +98,21 @@ npx vitest run \
   tests/publish-research-page.test.ts \
   tests/publish-repo.test.ts \
   tests/publish-cli.test.ts \
-  tests/publish-site-updates.test.ts
+  tests/publish-site-updates.test.ts \
+  tests/db-migration-v3.test.ts \
+  tests/update-cycles.test.ts \
+  tests/update-notice.test.ts \
+  tests/update-cli.test.ts \
+  tests/update-devto.test.ts \
+  tests/update-publish-pipeline.test.ts \
+  tests/publish-guard.test.ts \
+  tests/unpublish-state.test.ts \
+  tests/unpublish-cli.test.ts \
+  tests/unpublish-readme.test.ts \
+  tests/unpublish-site.test.ts \
+  tests/unpublish-devto.test.ts \
+  tests/unpublish-pipeline.test.ts \
+  tests/skills-crossref.test.ts
 ```
 
 ### What each test covers
@@ -268,7 +282,7 @@ npm test
 npm run build
 ```
 
-Expected baseline: **0 TypeScript errors, 646 tests passing across 45 suites, clean build** (as of feature/phase-7-lifecycle). Any drift from this baseline is a signal to investigate before merging.
+Expected baseline: **0 TypeScript errors, 676 tests passing across 51 suites, clean build** (as of feature/phase-7-lifecycle after Cluster I hardening: origin-guard + index-clean extensions into unpublish + 30 new tests for the contract-named files that were absent in Pass 1). Any drift from this baseline is a signal to investigate before merging.
 
 ## Phase 3: Code Review of Current Changes
 

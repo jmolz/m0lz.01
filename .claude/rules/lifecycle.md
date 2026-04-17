@@ -112,12 +112,28 @@ Every Phase 6 invariant carries through Phase 7:
   the post's own `{content_dir}/<slug>/` path. Parses `gh pr list` JSON
   for idempotency. PR-only — there is no `site_revert_mode` config flag
   and no direct-push code path. Grep-verifiable: no `push origin main`
-  references in `src/core/unpublish/site.ts`.
+  references in `src/core/unpublish/site.ts` (enforced by a test in
+  `tests/unpublish-site.test.ts`). Calls `assertOriginMatches(siteRepoPath,
+  config.author.github, basename(config.site.repo_path))` BEFORE any
+  stage/commit/push so a misconfigured origin throws instead of silently
+  opening a PR against the wrong repo.
 - **Project README**: `revertProjectReadmeLink` has three explicit
   skip paths (no `project_id`, `config.projects[id]` absent, link not
   in README). Dirty-state check is path-scoped to `README.md`;
-  unrelated changes throw.
+  unrelated changes throw. Calls `assertIndexClean(repo, 'readme')`
+  BEFORE `git add` and `assertOriginMatches(repo, config.author.github,
+  post.project_id)` BEFORE `git push origin main` — symmetric to the
+  Phase 6 publish/readme.ts guardrails.
 - **Forem PUT**: `unpublishFromDevTo` body is `{ article: { published: false } }`
   per `docs/spikes/forem-put-semantics.md`. The spike is the canonical
   source for the request shape; if Forem's contract changes, update the
   spike AND the helper in the same commit.
+
+## Shared origin-guard module
+
+`src/core/publish/origin-guard.ts` exports `parseGitHubRemoteUrl` and
+`assertOriginMatches`. Phase 6's publish/repo.ts previously inlined the
+helper; Phase 7 extracted it so unpublish/site and unpublish/readme can
+reuse the same trust boundary instead of duplicating (and eventually
+diverging from) it. Any new repo-touching code path — Phase 8 or later
+— MUST import from this module rather than re-parsing origin inline.

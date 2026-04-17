@@ -5,6 +5,8 @@ import { dirname, isAbsolute, join, resolve } from 'node:path';
 import Database from 'better-sqlite3';
 
 import { BlogConfig } from '../config/types.js';
+import { assertIndexClean } from '../publish/frontmatter.js';
+import { assertOriginMatches } from '../publish/origin-guard.js';
 
 // Phase 7: readme-revert. Removes the writing link added by the initial
 // `update-readme` step. Direct-push to main (matches the Phase 6 readme
@@ -12,6 +14,13 @@ import { BlogConfig } from '../config/types.js';
 //   1. post has no project_id                 (not a catalog project)
 //   2. config.projects[post.project_id] absent (project repo unconfigured)
 //   3. link not present in README              (already removed)
+//
+// Trust-boundary guards (Codex Phase 7 Pass 1 Critical):
+//   - assertIndexClean BEFORE `git add` to refuse operator-staged sweeps.
+//   - assertOriginMatches(config.author.github, post.project_id) BEFORE
+//     `git push`. Direct push to an unrelated repository because origin
+//     was misconfigured would look indistinguishable from success — the
+//     guard forces a loud failure instead.
 
 export interface ReadmeRevertPaths {
   configPath: string;
@@ -96,6 +105,10 @@ export function revertProjectReadmeLink(
   }
   writeFileSync(readmePath, rewritten, 'utf-8');
 
+  // Index-clean precondition: refuse if anything is staged in the repo
+  // before our own `git add`. Mirrors Phase 6 publish/readme.ts.
+  assertIndexClean(repo, 'readme');
+
   // Commit + push. Path-scoped add.
   execFileSync('git', ['-C', repo, 'add', 'README.md'], { encoding: 'utf-8' });
   execFileSync(
@@ -103,6 +116,11 @@ export function revertProjectReadmeLink(
     ['-C', repo, 'commit', '-m', `chore(readme): remove ${slug} writing link (unpublished)`],
     { encoding: 'utf-8' },
   );
+
+  // Origin-matches precondition BEFORE push. Expected target is
+  // {author.github}/{project_id} — symmetric to the companion-repo
+  // guard in publish/repo.ts.
+  assertOriginMatches(repo, config.author.github, post.project_id);
   execFileSync('git', ['-C', repo, 'push', 'origin', 'main'], { encoding: 'utf-8' });
   return { reverted: true };
 }

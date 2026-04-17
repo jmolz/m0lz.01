@@ -231,7 +231,7 @@ const resolvedPath = resolve(dirname(configPath), rawPath);
 - **Framework**: Vitest
 - **Location**: `tests/*.test.ts`
 - **Run**: `npm test`
-- **Baseline**: 646 tests across 45 suites (Phase 1: 48, Phase 2: 54, Phase 3: 44, Phase 4: 79, Phase 5: 163, Phase 6: 195, Phase 7: 63)
+- **Baseline**: 676 tests across 51 suites (Phase 1: 48, Phase 2: 54, Phase 3: 44, Phase 4: 79, Phase 5: 163, Phase 6: 195, Phase 7: 93)
 - **Minimum**: Each module needs: 1 happy path, 1 edge case, 1 error case
 - **DB tests**: Use in-memory SQLite (`getDatabase(':memory:')`)
 - **File tests**: Use `mkdtemp` for temporary directories, clean up in `afterEach`
