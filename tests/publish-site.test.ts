@@ -482,6 +482,59 @@ describe('createSitePR — dirty-state guardrail (Codex Pass 4 regression)', () 
     expect(() => createSitePR('ownedonly', f.config, f.paths, f.db)).not.toThrow();
   });
 
+  it('rejects rename/copy records whose destination escapes owned prefixes (Codex Pass 5 regression)', () => {
+    // A staged rename like:
+    //   R  content/posts/alpha/foo.ts -> static/leaked.ts
+    // has an owned SOURCE but an UNOWNED DESTINATION. The naive slice(3) +
+    // startsWith check misses this because the raw string starts with the
+    // owned prefix. The fix: detect ' -> ' in R/C records, split, check
+    // both sides for ownership. If either side isn't owned → reject.
+    const f = setup();
+    seedPost(f.db, 'renamed');
+    seedDraftMdx(f.draftsDir, 'renamed');
+
+    mockExec.mockImplementation((cmd: string, args: string[]) => {
+      if (cmd === 'git' && args.includes('status') && args.includes('--porcelain')) {
+        return 'R  content/posts/renamed/foo.ts -> static/leaked.ts\n';
+      }
+      throw new Error(`Unexpected exec call: ${cmd} ${args.join(' ')}`);
+    });
+
+    expect(() => createSitePR('renamed', f.config, f.paths, f.db)).toThrow(
+      /uncommitted changes unrelated to this post/,
+    );
+  });
+
+  it('tolerates rename/copy entries whose both sides live under owned prefixes', () => {
+    const f = setup();
+    seedPost(f.db, 'owned-rename');
+    seedDraftMdx(f.draftsDir, 'owned-rename');
+
+    // Both source and destination under content/posts/owned-rename/ — a
+    // rename within the pipeline's own directory is tolerable.
+    mockExec.mockImplementation((cmd: string, args: string[]) => {
+      if (cmd === 'git' && args.includes('status') && args.includes('--porcelain')) {
+        return 'R  content/posts/owned-rename/old.mdx -> content/posts/owned-rename/index.mdx\n';
+      }
+      if (cmd === 'git' && args.includes('config') && args.includes('--get')) {
+        return 'git@github.com:jmolz/m0lz.00.git\n';
+      }
+      if (cmd === 'git' && args.includes('branch') && args.includes('--list')) return '';
+      if (cmd === 'git' && args.includes('checkout') && args.includes('-b')) return '';
+      if (cmd === 'git' && args.includes('add')) return '';
+      if (cmd === 'git' && args.includes('diff') && args.includes('--cached')) {
+        throw makeExecError(1);
+      }
+      if (cmd === 'git' && args.includes('commit')) return '';
+      if (cmd === 'git' && args.includes('push')) return '';
+      if (cmd === 'gh' && args.includes('list')) return '[]';
+      if (cmd === 'gh' && args.includes('create')) return 'https://github.com/jmolz/m0lz.00/pull/201';
+      throw new Error(`Unexpected exec call: ${cmd} ${args.join(' ')}`);
+    });
+
+    expect(() => createSitePR('owned-rename', f.config, f.paths, f.db)).not.toThrow();
+  });
+
   it('stages only pipeline-owned paths — not `git add .`', () => {
     const f = setup();
     seedPost(f.db, 'scoped');

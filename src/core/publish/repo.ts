@@ -36,6 +36,74 @@ interface SubprocessError extends Error {
   stderr?: Buffer | string;
 }
 
+// Parse a GitHub remote URL (SSH or HTTPS, with or without .git suffix)
+// and return the owner/name components. Returns null for non-GitHub or
+// unparseable URLs. Exported so tests can cover the URL shape matrix
+// without having to stand up a real git repo.
+export function parseGitHubRemoteUrl(
+  url: string,
+): { owner: string; name: string } | null {
+  const trimmed = url.trim();
+  // SSH: git@github.com:owner/name[.git]
+  const sshMatch = trimmed.match(/^git@github\.com:([^/]+)\/([^/]+?)(?:\.git)?$/);
+  if (sshMatch) {
+    return { owner: sshMatch[1], name: sshMatch[2] };
+  }
+  // HTTPS: https://github.com/owner/name[.git] (also tolerate http)
+  const httpsMatch = trimmed.match(/^https?:\/\/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/);
+  if (httpsMatch) {
+    return { owner: httpsMatch[1], name: httpsMatch[2] };
+  }
+  return null;
+}
+
+// Verify the local repo's `origin` remote points at the expected GitHub
+// target before a push. Returns:
+//   'absent'     — no origin configured (caller should add it)
+//   'matches'    — origin points at expected owner/name (safe to push)
+// Throws when origin is configured but points somewhere ELSE. That case is
+// a trust-boundary violation — silently pushing would mutate an unrelated
+// repository and claim success in the publish pipeline (Codex Pass 5
+// Critical). Forcing a loud failure makes the operator decide whether to
+// `remote set-url` or abandon the scaffold.
+type OriginState = 'absent' | 'matches';
+
+function assertOriginMatches(
+  repoPath: string,
+  expectedOwner: string,
+  expectedName: string,
+): OriginState {
+  let originRaw: string;
+  try {
+    originRaw = String(
+      execFileSync('git', ['-C', repoPath, 'remote', 'get-url', 'origin'], {
+        encoding: 'utf-8',
+        stdio: ['pipe', 'pipe', 'pipe'],
+      }),
+    );
+  } catch {
+    return 'absent';
+  }
+  const parsed = parseGitHubRemoteUrl(originRaw);
+  if (!parsed) {
+    throw new Error(
+      `Companion repo at '${repoPath}' has origin '${originRaw.trim()}' ` +
+      `which is not a recognized GitHub URL. ` +
+      `Expected 'github.com/${expectedOwner}/${expectedName}'. ` +
+      `Fix with 'git -C ${repoPath} remote set-url origin ...' or remove the scaffold and let the pipeline recreate it.`,
+    );
+  }
+  if (parsed.owner !== expectedOwner || parsed.name !== expectedName) {
+    throw new Error(
+      `Companion repo at '${repoPath}' origin points to 'github.com/${parsed.owner}/${parsed.name}' ` +
+      `but the pipeline expected 'github.com/${expectedOwner}/${expectedName}'. ` +
+      `Refusing to push — doing so would mutate an unrelated repository. ` +
+      `Fix with 'git -C ${repoPath} remote set-url origin https://github.com/${expectedOwner}/${expectedName}.git' or remove the scaffold.`,
+    );
+  }
+  return 'matches';
+}
+
 export function pushCompanionRepo(
   slug: string,
   config: BlogConfig,
@@ -83,16 +151,12 @@ export function pushCompanionRepo(
   }
 
   if (remoteExists) {
-    // Ensure the local repo has origin pointing at the right place. If
-    // `git remote get-url origin` fails, add origin; if it succeeds, the
-    // remote is already configured.
-    try {
-      execFileSync('git', ['-C', repoPath, 'remote', 'get-url', 'origin'], {
-        encoding: 'utf-8',
-        stdio: ['pipe', 'pipe', 'pipe'],
-      });
-    } catch {
-      // No origin configured — add it.
+    // Ensure the local repo has origin pointing at the EXPECTED GitHub
+    // target. assertOriginMatches throws if origin points somewhere else
+    // — silently pushing would mutate an unrelated repository and report
+    // success (Codex Pass 5 Critical).
+    const state = assertOriginMatches(repoPath, config.author.github, slug);
+    if (state === 'absent') {
       execFileSync(
         'git',
         ['-C', repoPath, 'remote', 'add', 'origin', `https://github.com/${repoName}.git`],
@@ -127,12 +191,10 @@ export function pushCompanionRepo(
       // Race condition: another process created the repo between our probe
       // and our create call. Fall back to a manual push.
       if (stderr.includes('already exists')) {
-        try {
-          execFileSync('git', ['-C', repoPath, 'remote', 'get-url', 'origin'], {
-            encoding: 'utf-8',
-            stdio: ['pipe', 'pipe', 'pipe'],
-          });
-        } catch {
+        // Same origin-URL guardrail as the remoteExists branch — the
+        // race fallback must not push to an unrelated remote either.
+        const state = assertOriginMatches(repoPath, config.author.github, slug);
+        if (state === 'absent') {
           execFileSync(
             'git',
             ['-C', repoPath, 'remote', 'add', 'origin', `https://github.com/${repoName}.git`],

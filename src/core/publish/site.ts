@@ -145,9 +145,31 @@ export function createSitePR(
       `${config.site.content_dir}/${slug}/`,
       `${config.site.research_dir}/${slug}/`,
     ];
-    const unrelated = porcelainLines
-      .map((line) => line.slice(3)) // strip the 2-char status + space
-      .filter((path) => !ownedPrefixes.some((prefix) => path.startsWith(prefix)));
+    const isOwned = (p: string): boolean =>
+      ownedPrefixes.some((prefix) => p.startsWith(prefix));
+    const unrelated: string[] = [];
+    for (const line of porcelainLines) {
+      // Porcelain format: XY<space>path — for renames (R) and copies (C)
+      // the path is encoded as "source -> destination" and BOTH sides
+      // must be owned for the guardrail to tolerate the entry. Without
+      // this split, a staged rename `content/posts/slug/foo -> static/
+      // unrelated.tsx` would slip through: the raw string starts with
+      // an owned prefix, but the destination is not owned and would
+      // still be in the index for the subsequent commit.
+      const status = line.slice(0, 2);
+      const pathPart = line.slice(3);
+      const isRenameOrCopy =
+        status[0] === 'R' || status[0] === 'C' ||
+        status[1] === 'R' || status[1] === 'C';
+      const paths = isRenameOrCopy && pathPart.includes(' -> ')
+        ? pathPart.split(' -> ')
+        : [pathPart];
+      for (const p of paths) {
+        if (!isOwned(p)) {
+          unrelated.push(p);
+        }
+      }
+    }
     if (unrelated.length > 0) {
       throw new Error(
         `Site repo at '${siteRepoPath}' has uncommitted changes unrelated to this post:\n` +

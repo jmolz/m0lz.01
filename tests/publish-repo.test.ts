@@ -16,7 +16,7 @@ import { closeDatabase, getDatabase } from '../src/core/db/database.js';
 // eslint-disable-next-line import/first
 import { initResearchPost, advancePhase } from '../src/core/research/state.js';
 // eslint-disable-next-line import/first
-import { pushCompanionRepo, RepoPaths } from '../src/core/publish/repo.js';
+import { parseGitHubRemoteUrl, pushCompanionRepo, RepoPaths } from '../src/core/publish/repo.js';
 // eslint-disable-next-line import/first
 import { BlogConfig } from '../src/core/config/types.js';
 
@@ -259,6 +259,143 @@ describe('pushCompanionRepo — technical-deep-dive paths', () => {
     expect(result.repoUrl).toBe('https://github.com/otheruser/custom');
     const viewCall = calls.find((c) => c.cmd === 'gh' && c.args[1] === 'view');
     expect(viewCall!.args).toContain('otheruser/custom');
+  });
+});
+
+describe('pushCompanionRepo — origin-URL guardrail (Codex Pass 5 regression)', () => {
+  it('throws when origin points to a different GitHub repo (SSH form)', () => {
+    const f = setup();
+    seedPost(f.db, 'wrongorigin', 'technical-deep-dive');
+    seedRepoDir(f.reposDir, 'wrongorigin');
+
+    installExec((cmd, args) => {
+      if (cmd === 'gh' && args[1] === 'view') return '';
+      // Origin points at an UNRELATED repo. Pushing would mutate someone
+      // else's project — the guardrail must refuse.
+      if (cmd === 'git' && args.includes('get-url')) {
+        return 'git@github.com:jmolz/different-project.git\n';
+      }
+      return null;
+    });
+
+    expect(() => pushCompanionRepo('wrongorigin', makeConfig(), f.paths, f.db)).toThrow(
+      /origin points to 'github\.com\/jmolz\/different-project'.*pipeline expected 'github\.com\/jmolz\/wrongorigin'/,
+    );
+  });
+
+  it('throws when origin points to a different owner (HTTPS form)', () => {
+    const f = setup();
+    seedPost(f.db, 'wrongowner', 'technical-deep-dive');
+    seedRepoDir(f.reposDir, 'wrongowner');
+
+    installExec((cmd, args) => {
+      if (cmd === 'gh' && args[1] === 'view') return '';
+      if (cmd === 'git' && args.includes('get-url')) {
+        return 'https://github.com/someone-else/wrongowner.git\n';
+      }
+      return null;
+    });
+
+    expect(() => pushCompanionRepo('wrongowner', makeConfig(), f.paths, f.db)).toThrow(
+      /Refusing to push/,
+    );
+  });
+
+  it('throws when origin is a non-GitHub URL (GitLab, bitbucket, self-hosted)', () => {
+    const f = setup();
+    seedPost(f.db, 'gitlab', 'technical-deep-dive');
+    seedRepoDir(f.reposDir, 'gitlab');
+
+    installExec((cmd, args) => {
+      if (cmd === 'gh' && args[1] === 'view') return '';
+      if (cmd === 'git' && args.includes('get-url')) {
+        return 'https://gitlab.com/jmolz/gitlab.git\n';
+      }
+      return null;
+    });
+
+    expect(() => pushCompanionRepo('gitlab', makeConfig(), f.paths, f.db)).toThrow(
+      /not a recognized GitHub URL/,
+    );
+  });
+
+  it('accepts origin in SSH form when owner/name matches', () => {
+    const f = setup();
+    seedPost(f.db, 'sshform', 'technical-deep-dive');
+    seedRepoDir(f.reposDir, 'sshform');
+
+    const calls: Array<{ cmd: string; args: string[] }> = [];
+    installExec((cmd, args) => {
+      calls.push({ cmd, args });
+      if (cmd === 'gh' && args[1] === 'view') return '';
+      if (cmd === 'git' && args.includes('get-url')) {
+        return 'git@github.com:jmolz/sshform.git\n';
+      }
+      if (cmd === 'git' && args.includes('push')) return '';
+      return null;
+    });
+
+    const result = pushCompanionRepo('sshform', makeConfig(), f.paths, f.db);
+    expect(result.repoUrl).toBe('https://github.com/jmolz/sshform');
+    expect(calls.some((c) => c.cmd === 'git' && c.args.includes('push'))).toBe(true);
+  });
+
+  it('race-fallback also enforces origin validation (Codex Pass 5 — same guardrail on both paths)', () => {
+    const f = setup();
+    seedPost(f.db, 'raceorigin', 'technical-deep-dive');
+    seedRepoDir(f.reposDir, 'raceorigin');
+
+    installExec((cmd, args) => {
+      if (cmd === 'gh' && args[1] === 'view') throw makeExecError(1);
+      if (cmd === 'gh' && args[1] === 'create') throw makeExecError(1, 'repository name already exists');
+      // Origin points elsewhere — the race fallback must refuse just
+      // like the remoteExists branch does.
+      if (cmd === 'git' && args.includes('get-url')) {
+        return 'https://github.com/evil/unrelated.git\n';
+      }
+      return null;
+    });
+
+    expect(() => pushCompanionRepo('raceorigin', makeConfig(), f.paths, f.db)).toThrow(
+      /Refusing to push/,
+    );
+  });
+});
+
+describe('parseGitHubRemoteUrl — URL shape matrix', () => {
+  it('parses SSH with .git suffix', () => {
+    expect(parseGitHubRemoteUrl('git@github.com:jmolz/slug.git')).toEqual({
+      owner: 'jmolz',
+      name: 'slug',
+    });
+  });
+  it('parses SSH without .git suffix', () => {
+    expect(parseGitHubRemoteUrl('git@github.com:jmolz/slug')).toEqual({
+      owner: 'jmolz',
+      name: 'slug',
+    });
+  });
+  it('parses HTTPS with .git suffix', () => {
+    expect(parseGitHubRemoteUrl('https://github.com/jmolz/slug.git')).toEqual({
+      owner: 'jmolz',
+      name: 'slug',
+    });
+  });
+  it('parses HTTPS without .git suffix', () => {
+    expect(parseGitHubRemoteUrl('https://github.com/jmolz/slug')).toEqual({
+      owner: 'jmolz',
+      name: 'slug',
+    });
+  });
+  it('returns null for gitlab / bitbucket / self-hosted', () => {
+    expect(parseGitHubRemoteUrl('https://gitlab.com/jmolz/slug.git')).toBeNull();
+    expect(parseGitHubRemoteUrl('git@bitbucket.org:jmolz/slug')).toBeNull();
+    expect(parseGitHubRemoteUrl('https://git.internal.co/jmolz/slug')).toBeNull();
+  });
+  it('returns null for garbage', () => {
+    expect(parseGitHubRemoteUrl('')).toBeNull();
+    expect(parseGitHubRemoteUrl('not-a-url')).toBeNull();
+    expect(parseGitHubRemoteUrl('https://github.com/singlesegment')).toBeNull();
   });
 });
 
