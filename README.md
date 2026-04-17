@@ -95,7 +95,9 @@ blog publish show <slug>                   # Display per-step status table
 
 ## Status
 
-**Phase 6 — Publish** complete: 11-step sequential pipeline with resume via SQLite `pipeline_steps` + slug-scoped filesystem lock. Pipeline covers:
+**Phase 7 — Lifecycle** complete: unpublish pipeline, update flow, orchestrator skills. Two new lifecycle flows on top of Phase 6's initial-publish.
+
+**Phase 6 — Publish** (baseline): 11-step sequential pipeline with resume via SQLite `pipeline_steps` + slug-scoped filesystem lock. Pipeline covers:
 
 1. `verify` — evaluation-passed gate
 2. `research-page` — generate m0lz.00 research companion MDX
@@ -111,11 +113,19 @@ blog publish show <slug>                   # Display per-step status table
 
 Crash-safety invariants: stale `running` rows reclaimed on resume; URLs persisted per-step (first-writer-wins via COALESCE); lock held continuously through completion (no release-then-reacquire race); every direct-push step verifies index cleanness + strict ahead-commit matching before any `git push`; companion repo push verifies origin URL matches the expected GitHub target.
 
-Test suite: **583 tests across 37 suites**. Phase breakdown: Phase 1 foundation 48 · Phase 2 research 54 · Phase 3 benchmark 44 · Phase 4 draft 79 · Phase 5 evaluate 163 · Phase 6 publish 195.
+Test suite: **646 tests across 45 suites**. Phase breakdown: Phase 1 foundation 48 · Phase 2 research 54 · Phase 3 benchmark 44 · Phase 4 draft 79 · Phase 5 evaluate 163 · Phase 6 publish 195 · Phase 7 lifecycle 63.
 
-Three-reviewer adversarial evaluation (Claude structural + Codex GPT-5.4 high adversarial + Codex GPT-5.4 xhigh methodology) implemented in Phase 5 and used to harden Phase 6 across 7 iteration passes.
+Three-reviewer adversarial evaluation (Claude structural + Codex GPT-5.4 high adversarial + Codex GPT-5.4 xhigh methodology) implemented in Phase 5, used to harden Phase 6 across 7 iteration passes, and designed into Phase 7 via explicit `is_update_review` flagging (no inference from cycle count).
 
-Next: Phase 7 — `blog unpublish` rollback + `/blog-pipeline` full orchestrator skill + `/blog-update` content update workflow.
+### Phase 7 adds
+
+- **Schema v3** — `pipeline_steps.cycle_id` (table rebuild), `update_cycles` (partial-unique open-cycle constraint), `unpublish_steps`.
+- **`blog update start|benchmark|draft|evaluate|publish|abort|show`** — in-place update flow. `posts.phase` stays `published`; update state is a first-class `update_cycles` row.
+- **`blog unpublish start --confirm` / `show`** — seven-step inverse pipeline: phase verify, Dev.to PUT `published: false`, Medium/Substack manual-removal instructions, site-revert PR, preview-gate pause, README link removal. Shares the per-slug lock with publish for mutual exclusion.
+- **`publishMode` dispatch** on the publish pipeline runner — update mode substitutes `site-update` for `site-pr`, drops `companion-repo` + `update-readme`, routes `crosspost-devto` through probe-then-PUT, and keeps `posts.phase` fixed.
+- **`/blog-pipeline`, `/blog-update`, `/blog-unpublish`** orchestrator skills with `Preflight` / `Workflow` / `CLI Reference` / `Troubleshooting` / `Degraded Mode` sections (cross-referenced mechanically against the CLI registry in `tests/skills-crossref.test.ts`).
+
+Phase 7 preserves every Phase 6 crash-safety invariant: lock held through finalization, per-step URL persistence via COALESCE, index-clean guards before direct-push, origin-URL verification, stale-running reclaim, config-driven step reconciliation on resume.
 
 See `.claude/PRD.md` for the full scope and `.claude/plans/` for phase plans.
 

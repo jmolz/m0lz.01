@@ -217,3 +217,73 @@ export async function crosspostToDevTo(
   }
   throw new Error(`Dev.to request failed (${response.status}): ${text}`);
 }
+
+// Phase 7: probe-then-PUT. Update-mode Dev.to refresh. The probe resolves
+// the article id via canonical URL; a successful probe triggers a PUT that
+// replaces body_markdown + tags + description. A probe miss falls through
+// to the regular create path (recovers from manual deletion on Dev.to).
+//
+// Per Cluster E6 spike (docs/spikes/forem-put-semantics.md), Forem's PUT
+// accepts the same article-shape payload POST uses — body_markdown is NOT
+// required on every PUT but IS required to actually update the rendered
+// body, so we always include it.
+export async function updateDevToArticle(
+  slug: string,
+  config: BlogConfig,
+  paths: DevToPaths,
+): Promise<DevToResult> {
+  const apiKey = process.env.DEVTO_API_KEY;
+  if (!apiKey || apiKey.length === 0) {
+    return { skipped: true, reason: 'DEVTO_API_KEY not set' };
+  }
+
+  const canonicalUrl = `${config.site.base_url.replace(/\/+$/, '')}/writing/${slug}`;
+  const existing = await probeDevToForCanonical(apiKey, canonicalUrl);
+  if (!existing || typeof existing.id !== 'number') {
+    // Probe miss — likely manual deletion on Dev.to. Recover by falling
+    // through to POST via the standard crosspost path.
+    return crosspostToDevTo(slug, config, paths);
+  }
+
+  const draftPath = join(paths.draftsDir, slug, 'index.mdx');
+  const mdx = readFileSync(draftPath, 'utf-8');
+  const fm = parseFrontmatter(mdx);
+  const { body } = splitMdx(mdx);
+
+  const bodyMarkdown = mdxToMarkdown(body, slug, config.site.base_url);
+  const tags = mapDevToTags(fm.tags);
+
+  const payload = {
+    article: {
+      title: fm.title,
+      body_markdown: bodyMarkdown,
+      canonical_url: canonicalUrl,
+      tags,
+      description: fm.description,
+    },
+  };
+
+  const response = await fetch(`https://dev.to/api/articles/${existing.id}`, {
+    method: 'PUT',
+    headers: {
+      'api-key': apiKey,
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (response.status === 200) {
+    const data = (await response.json()) as DevToArticleResponse;
+    return {
+      id: typeof data.id === 'number' ? data.id : existing.id,
+      url: typeof data.url === 'string' ? data.url : existing.url,
+    };
+  }
+
+  const text = await response.text();
+  if (response.status === 422) {
+    throw new Error(`Dev.to PUT validation failed: ${text}`);
+  }
+  throw new Error(`Dev.to PUT failed (${response.status}): ${text}`);
+}

@@ -28,7 +28,39 @@ export const PUBLISH_STEP_NAMES = [
   'social-text',
 ] as const;
 
-export type PublishStepName = typeof PUBLISH_STEP_NAMES[number];
+// Phase 7: update-mode step order. Replaces `site-pr` with `site-update`
+// (regenerates MDX body into the site repo) and drops steps that only
+// apply to first-time publish — `companion-repo` (the repo already
+// exists) and `update-readme` (the writing link was added on initial
+// publish; the link is unchanged on updates).
+export const UPDATE_STEP_NAMES = [
+  'verify',
+  'research-page',
+  'site-update',
+  'preview-gate',
+  'crosspost-devto',
+  'paste-medium',
+  'paste-substack',
+  'update-frontmatter',
+  'social-text',
+] as const;
+
+// Unified name type — publishStepName ∪ updateStepName. TypeScript's
+// literal-union inference collapses the shared names to their single
+// literal, so this remains assignable from either tuple element.
+export type PublishStepName =
+  | typeof PUBLISH_STEP_NAMES[number]
+  | typeof UPDATE_STEP_NAMES[number];
+
+// Return the authoritative step-name tuple for the given publish mode.
+// The runner orders steps by the row's `step_number` (1-based index into
+// this tuple as materialized at createPipelineSteps time), so a given
+// cycle's step ordering is frozen at creation.
+export function stepNamesForMode(
+  mode: 'initial' | 'update',
+): readonly PublishStepName[] {
+  return mode === 'update' ? UPDATE_STEP_NAMES : PUBLISH_STEP_NAMES;
+}
 
 export type PublishStepStatus =
   | 'pending'

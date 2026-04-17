@@ -6,7 +6,9 @@ import {
   PUBLISH_STEP_NAMES,
   PipelineStepRow,
   PublishStepName,
+  stepNamesForMode,
 } from './types.js';
+import { PublishMode } from './pipeline-types.js';
 
 // CRUD operations over the `pipeline_steps` table, scoped to the 11 publish
 // step names defined in ./types.ts. The table's UNIQUE(post_slug, cycle_id,
@@ -33,16 +35,18 @@ export interface CreatePipelineStepsOptions {
   hasResearchArtifact?: boolean;
 }
 
-// Build the full list of 11 step rows with content-type + config-driven
-// pre-skip decisions. Returns tuples so a single transactional insert sees
-// them in declaration order.
+// Build the list of step rows with content-type + config-driven pre-skip
+// decisions. Phase 7: the step set depends on `publishMode` (initial uses
+// PUBLISH_STEP_NAMES; update uses UPDATE_STEP_NAMES with site-update
+// substituted for site-pr and companion-repo/update-readme dropped).
 function buildInitialSteps(
   contentType: ContentType,
   config: BlogConfig,
   options?: CreatePipelineStepsOptions,
+  publishMode: PublishMode = 'initial',
 ): Array<{ name: PublishStepName; status: 'pending' | 'skipped'; reason?: string }> {
   const rows: Array<{ name: PublishStepName; status: 'pending' | 'skipped'; reason?: string }> = [];
-  for (const name of PUBLISH_STEP_NAMES) {
+  for (const name of stepNamesForMode(publishMode)) {
     let status: 'pending' | 'skipped' = 'pending';
     let reason: string | undefined;
 
@@ -94,10 +98,11 @@ function buildInitialSteps(
   return rows;
 }
 
-// Idempotent creation of all 11 pipeline_steps rows for a post + cycle.
+// Idempotent creation of all pipeline_steps rows for a post + cycle.
 // UNIQUE on (post_slug, cycle_id, step_name) makes INSERT OR IGNORE safe
 // under repeated calls. The first call establishes the pre-skip decisions;
-// subsequent calls never override an existing row's status.
+// subsequent calls never override an existing row's status. Step count
+// is mode-dependent (11 for initial publish, 9 for update).
 export function createPipelineSteps(
   db: Database.Database,
   slug: string,
@@ -105,8 +110,9 @@ export function createPipelineSteps(
   config: BlogConfig,
   options?: CreatePipelineStepsOptions,
   cycleId: number = 0,
+  publishMode: PublishMode = 'initial',
 ): void {
-  const initial = buildInitialSteps(contentType, config, options);
+  const initial = buildInitialSteps(contentType, config, options, publishMode);
   const insert = db.prepare(`
     INSERT OR IGNORE INTO pipeline_steps
       (post_slug, step_number, step_name, status, completed_at, error_message, cycle_id)
@@ -239,8 +245,9 @@ export function reconcilePipelineSteps(
   config: BlogConfig,
   options?: CreatePipelineStepsOptions,
   cycleId: number = 0,
+  publishMode: PublishMode = 'initial',
 ): number {
-  const expected = buildInitialSteps(contentType, config, options);
+  const expected = buildInitialSteps(contentType, config, options, publishMode);
   const expectedByName = new Map(expected.map((r) => [r.name, r]));
   const existing = db.prepare(`
     SELECT step_name, status FROM pipeline_steps
@@ -287,18 +294,20 @@ export function reclaimStaleRunning(
 }
 
 // True iff every pipeline_steps row for the given cycle is completed or
-// skipped AND there are exactly 11 rows (sanity check: catches a partial
-// createPipelineSteps that was interrupted before all rows landed).
+// skipped AND the row count matches the expected set for the mode (11 for
+// initial, 9 for update). The length check catches a partial
+// createPipelineSteps that was interrupted before all rows landed.
 export function allStepsComplete(
   db: Database.Database,
   slug: string,
   cycleId: number = 0,
+  publishMode: PublishMode = 'initial',
 ): boolean {
   const rows = db.prepare(`
     SELECT status
     FROM pipeline_steps
     WHERE post_slug = ? AND cycle_id = ?
   `).all(slug, cycleId) as Array<{ status: string }>;
-  if (rows.length !== PUBLISH_STEP_NAMES.length) return false;
+  if (rows.length !== stepNamesForMode(publishMode).length) return false;
   return rows.every((r) => r.status === 'completed' || r.status === 'skipped');
 }

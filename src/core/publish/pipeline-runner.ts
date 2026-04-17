@@ -16,7 +16,7 @@ import {
   completeUpdateUnderLock,
   persistPublishUrls,
 } from './phase.js';
-import { PUBLISH_STEP_NAMES } from './types.js';
+import { stepNamesForMode } from './types.js';
 import { ContentType } from '../db/types.js';
 
 // Result of a full pipeline run. `completed` is true only when every step
@@ -32,7 +32,9 @@ export interface PipelineRunResult {
   pausedStep?: string;
 }
 
-const TOTAL_STEPS = PUBLISH_STEP_NAMES.length;
+function totalStepsFor(ctx: PipelineContext): number {
+  return stepNamesForMode(ctx.publishMode).length;
+}
 
 // Revert a step from 'running' back to 'pending' so a subsequent
 // runPipeline invocation picks it up again. Used when a step returns
@@ -127,7 +129,7 @@ export async function runPipeline(
         return {
           completed: false,
           stepsRun,
-          totalSteps: TOTAL_STEPS,
+          totalSteps: totalStepsFor(ctx),
           failedStep: nextStep.step_name,
         };
       }
@@ -147,12 +149,12 @@ export async function runPipeline(
           ctx.cycleId,
         );
         console.error(
-          `[${nextStep.step_number}/${TOTAL_STEPS}] ${nextStep.step_name}: FAILED -- ${message}`,
+          `[${nextStep.step_number}/${totalStepsFor(ctx)}] ${nextStep.step_name}: FAILED -- ${message}`,
         );
         return {
           completed: false,
           stepsRun,
-          totalSteps: TOTAL_STEPS,
+          totalSteps: totalStepsFor(ctx),
           failedStep: nextStep.step_name,
         };
       }
@@ -181,7 +183,7 @@ export async function runPipeline(
             Object.assign(ctx.urls, urlUpdates);
           }
           console.log(
-            `[${nextStep.step_number}/${TOTAL_STEPS}] ${nextStep.step_name}: ${result.message}`,
+            `[${nextStep.step_number}/${totalStepsFor(ctx)}] ${nextStep.step_name}: ${result.message}`,
           );
           stepsRun += 1;
           break;
@@ -195,7 +197,7 @@ export async function runPipeline(
             ctx.cycleId,
           );
           console.log(
-            `[${nextStep.step_number}/${TOTAL_STEPS}] ${nextStep.step_name}: SKIPPED -- ${result.message}`,
+            `[${nextStep.step_number}/${totalStepsFor(ctx)}] ${nextStep.step_name}: SKIPPED -- ${result.message}`,
           );
           stepsRun += 1;
           break;
@@ -203,12 +205,12 @@ export async function runPipeline(
         case 'paused': {
           revertStepToPending(ctx, nextStep.step_name);
           console.log(
-            `[${nextStep.step_number}/${TOTAL_STEPS}] ${nextStep.step_name}: PAUSED -- ${result.message}`,
+            `[${nextStep.step_number}/${totalStepsFor(ctx)}] ${nextStep.step_name}: PAUSED -- ${result.message}`,
           );
           return {
             completed: false,
             stepsRun,
-            totalSteps: TOTAL_STEPS,
+            totalSteps: totalStepsFor(ctx),
             pausedStep: nextStep.step_name,
           };
         }
@@ -221,12 +223,12 @@ export async function runPipeline(
             ctx.cycleId,
           );
           console.error(
-            `[${nextStep.step_number}/${TOTAL_STEPS}] ${nextStep.step_name}: FAILED -- ${result.message}`,
+            `[${nextStep.step_number}/${totalStepsFor(ctx)}] ${nextStep.step_name}: FAILED -- ${result.message}`,
           );
           return {
             completed: false,
             stepsRun,
-            totalSteps: TOTAL_STEPS,
+            totalSteps: totalStepsFor(ctx),
             failedStep: nextStep.step_name,
           };
         }
@@ -246,7 +248,7 @@ export async function runPipeline(
     //   3. The finalizers are idempotent on an already-finalized post or
     //      closed cycle, so a concurrent runner that reaches this path
     //      after another completed is a harmless no-op.
-    if (allStepsComplete(ctx.db, ctx.slug, ctx.cycleId)) {
+    if (allStepsComplete(ctx.db, ctx.slug, ctx.cycleId, ctx.publishMode)) {
       if (ctx.publishMode === 'update') {
         completeUpdateUnderLock(
           ctx.db,
@@ -267,7 +269,7 @@ export async function runPipeline(
         );
         console.log(`Pipeline complete: ${ctx.slug} is now published`);
       }
-      return { completed: true, stepsRun, totalSteps: TOTAL_STEPS };
+      return { completed: true, stepsRun, totalSteps: totalStepsFor(ctx) };
     }
 
     // Defensive: reclaim pass + atomic step transitions should make this
@@ -278,7 +280,7 @@ export async function runPipeline(
       `Pipeline for '${ctx.slug}' has no pending steps but is not fully complete. ` +
       `Inspect pipeline_steps for rows that are neither completed nor skipped.`,
     );
-    return { completed: false, stepsRun, totalSteps: TOTAL_STEPS };
+    return { completed: false, stepsRun, totalSteps: totalStepsFor(ctx) };
   } finally {
     release();
   }

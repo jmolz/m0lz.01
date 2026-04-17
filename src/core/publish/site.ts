@@ -102,11 +102,23 @@ interface SubprocessError extends Error {
   stderr?: Buffer | string;
 }
 
+// Phase 7: optional overrides let the `site-update` step reuse this
+// function's robust dirty-state/origin-match/strict-ahead machinery while
+// emitting different branch names, commit messages, and PR titles. Default
+// values preserve the Phase 6 initial-publish strings.
+export interface SitePROverrides {
+  branchName?: string;
+  commitMessage?: string;
+  prTitle?: string;
+  prBodyPrefix?: string;
+}
+
 export function createSitePR(
   slug: string,
   config: BlogConfig,
   paths: SitePaths,
   db: Database.Database,
+  overrides?: SitePROverrides,
 ): SitePRResult {
   const siteRepoPath = resolveSiteRepoPath(paths.configPath, config.site.repo_path);
   if (!existsSync(siteRepoPath)) {
@@ -188,7 +200,7 @@ export function createSitePR(
   const coords = parseRepoCoords(remoteUrl);
   const repoFlag = `${coords.owner}/${coords.name}`;
 
-  const branchName = `post/${slug}`;
+  const branchName = overrides?.branchName ?? `post/${slug}`;
 
   // Branch detection: `git branch --list` returns 0 whether the branch
   // matches or not — empty stdout means no match.
@@ -265,9 +277,10 @@ export function createSitePR(
   }
 
   if (hasStaged) {
+    const commitMessage = overrides?.commitMessage ?? `feat(post): ${slug}`;
     execFileSync(
       'git',
-      ['-C', siteRepoPath, 'commit', '-m', `feat(post): ${slug}`],
+      ['-C', siteRepoPath, 'commit', '-m', commitMessage],
       { encoding: 'utf-8' },
     );
   }
@@ -311,7 +324,9 @@ export function createSitePR(
   }
 
   if (prUrl === null || prNumber === null) {
-    const body = `Automated PR for ${slug}\n\nSee ${paths.publishDir}/${slug} for context.`;
+    const prBodyPrefix = overrides?.prBodyPrefix ?? `Automated PR for ${slug}`;
+    const body = `${prBodyPrefix}\n\nSee ${paths.publishDir}/${slug} for context.`;
+    const prTitle = overrides?.prTitle ?? `Post: ${title}`;
     const createOut = execFileSync(
       'gh',
       [
@@ -320,7 +335,7 @@ export function createSitePR(
         '--repo',
         repoFlag,
         '--title',
-        `Post: ${title}`,
+        prTitle,
         '--body',
         body,
         '--base',

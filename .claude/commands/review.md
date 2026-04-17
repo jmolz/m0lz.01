@@ -268,7 +268,7 @@ npm test
 npm run build
 ```
 
-Expected baseline: **0 TypeScript errors, 583 tests passing across 37 suites, clean build** (as of feature/phase-6-publish). Any drift from this baseline is a signal to investigate before merging.
+Expected baseline: **0 TypeScript errors, 646 tests passing across 45 suites, clean build** (as of feature/phase-7-lifecycle). Any drift from this baseline is a signal to investigate before merging.
 
 ## Phase 3: Code Review of Current Changes
 
@@ -382,7 +382,7 @@ Phase 6 — Publish:
   - Publish CLI handlers + ctx.urls hydration (15 tests): ✓ / ✗
   - updateFrontmatter + updateProjectReadme + index-clean + crash-replay (20 tests): ✓ / ✗
 
-Full Suite: X passing, Y failing  (baseline: 583 passing)
+Full Suite: X passing, Y failing  (baseline: 646 passing)
 Lint: {error count} errors  (baseline: 0)
 Build: PASS / FAIL
 ```

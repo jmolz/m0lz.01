@@ -207,7 +207,7 @@ export function completePublishUnderLock(
         `Publish commands only operate on posts in the publish phase.`,
       );
     }
-    if (!allStepsComplete(db, slug, 0)) {
+    if (!allStepsComplete(db, slug, 0, 'initial')) {
       throw new Error(
         `Cannot complete publish for '${slug}': not every pipeline step is completed or skipped. ` +
         `Run 'blog publish' to finish remaining steps, or inspect 'blog status ${slug}' for blocked steps.`,
@@ -280,7 +280,7 @@ export function completeUpdateUnderLock(
         `Update cycles only operate on published posts.`,
       );
     }
-    if (!allStepsComplete(db, slug, cycleId)) {
+    if (!allStepsComplete(db, slug, cycleId, 'update')) {
       throw new Error(
         `Cannot complete update cycle ${cycleId} for '${slug}': ` +
         `not every pipeline step is completed or skipped.`,

@@ -12,6 +12,8 @@ import { registerBenchmark } from './benchmark.js';
 import { registerDraft } from './draft.js';
 import { registerEvaluate } from './evaluate.js';
 import { registerPublish } from './publish.js';
+import { registerUpdate } from './update.js';
+import { registerUnpublish } from './unpublish.js';
 
 const program = new Command();
 
@@ -29,5 +31,7 @@ registerBenchmark(program);
 registerDraft(program);
 registerEvaluate(program);
 registerPublish(program);
+registerUpdate(program);
+registerUnpublish(program);
 
 program.parse();

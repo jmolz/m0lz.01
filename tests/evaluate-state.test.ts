@@ -396,16 +396,20 @@ describe('rejectEvaluation', () => {
     expect(existsSync(join(f.evaluationsDir, 'reject', '.rejected_at'))).toBe(true);
   });
 
-  it('flags subsequent recordReview rows with is_update_review=1', () => {
+  it('reject-retry cycles do NOT flag subsequent recordReview as is_update_review (Phase 7: explicit flag only)', () => {
+    // Phase 7 behavior change: pre-Phase-7 this test expected
+    // is_update_review=1 via the `cycles.length > 1` inference. That
+    // inference is wrong — a reject-retry is a re-evaluation of the same
+    // draft, not an update review of a published post. Only cycles opened
+    // via `blog update evaluate` (isUpdateReview=true) tag reviewer rows
+    // with is_update_review=1; reject-retries stay 0.
     const f = setup();
     seedEvaluatePost(f.db, 'rework');
     initEvaluation(f.db, 'rework', f.evaluationsDir);
     recordReview(f.db, 'rework', 'structural', '/tmp/r.md', makeOutput('structural', [], 'rework'), f.evaluationsDir, artifactPaths(f));
     rejectEvaluation(f.db, 'rework', f.evaluationsDir);
-    // Back in draft — promote to evaluate and init a new cycle, then re-record.
     advancePhase(f.db, 'rework', 'evaluate');
     initEvaluation(f.db, 'rework', f.evaluationsDir);
-    // Use a distinct report path so the idempotency check does not collapse the rows.
     recordReview(f.db, 'rework', 'structural', '/tmp/rework.md', makeOutput('structural', [], 'rework'), f.evaluationsDir, artifactPaths(f));
 
     const rows = f.db.prepare(`
@@ -413,7 +417,36 @@ describe('rejectEvaluation', () => {
     `).all('rework') as Array<{ is_update_review: number }>;
     expect(rows).toHaveLength(2);
     expect(rows[0].is_update_review).toBe(0);
-    expect(rows[1].is_update_review).toBe(1);
+    expect(rows[1].is_update_review).toBe(0);
+  });
+
+  it('initEvaluation with isUpdateReview=true tags reviewer rows with is_update_review=1', () => {
+    const f = setup();
+    // Seed a published post — update-review can only init from 'published'.
+    f.db.prepare(
+      `INSERT INTO posts (slug, phase, mode, content_type)
+       VALUES ('update-flow', 'published', 'directed', 'technical-deep-dive')`,
+    ).run();
+    initEvaluation(f.db, 'update-flow', f.evaluationsDir, { isUpdateReview: true });
+    recordReview(f.db, 'update-flow', 'structural', '/tmp/upd.md', makeOutput('structural', [], 'update-flow'), f.evaluationsDir, artifactPaths(f));
+
+    const rows = f.db.prepare(`
+      SELECT is_update_review, phase
+      FROM evaluations e JOIN posts p ON p.slug = e.post_slug
+      WHERE e.post_slug = ? ORDER BY e.id ASC
+    `).all('update-flow') as Array<{ is_update_review: number; phase: string }>;
+    expect(rows).toHaveLength(1);
+    expect(rows[0].is_update_review).toBe(1);
+    // Phase stays 'published' — update-review does not rewind the lifecycle.
+    expect(rows[0].phase).toBe('published');
+  });
+
+  it('initEvaluation with isUpdateReview=true rejects non-published posts', () => {
+    const f = setup();
+    seedEvaluatePost(f.db, 'draft-flow');
+    expect(() =>
+      initEvaluation(f.db, 'draft-flow', f.evaluationsDir, { isUpdateReview: true }),
+    ).toThrow(/not 'published'/);
   });
 
   it('enforces phase boundary (rejects post in draft already)', () => {

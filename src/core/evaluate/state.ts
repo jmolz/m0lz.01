@@ -50,6 +50,13 @@ export interface EvaluationCycle {
   reviewer_artifact_hashes?: Record<ReviewerType, Record<string, string>>;
   ended_at?: string;
   ended_reason?: CycleEndedReason;
+  // Phase 7: explicit flag that this cycle is a Phase 7 update-review
+  // (launched by `blog update evaluate`). `recordReview` reads this value
+  // and sets `is_update_review=1` on every inserted row — replacing the
+  // pre-Phase-7 `manifest.cycles.length > 1` inference that falsely tagged
+  // reject-retry cycles as updates. Defaults to false when absent
+  // (back-compat for pre-Phase-7 manifests).
+  is_update_cycle?: boolean;
 }
 
 export interface EvaluationManifest {
@@ -291,15 +298,47 @@ function dbNow(db: Database.Database): string {
   return row.t;
 }
 
-export function getEvaluatePost(db: Database.Database, slug: string): PostRow | undefined {
+export function getEvaluatePost(
+  db: Database.Database,
+  slug: string,
+  options?: { allowPublished?: boolean },
+): PostRow | undefined {
   const post = db.prepare('SELECT * FROM posts WHERE slug = ?').get(slug) as PostRow | undefined;
-  if (post && post.phase !== 'evaluate') {
+  if (!post) return undefined;
+  // Phase 7: when the current evaluation cycle is an update-review (started
+  // by `blog update evaluate`), the post is in 'published' not 'evaluate'.
+  // Callers pass allowPublished=true after reading the manifest's current
+  // cycle's is_update_cycle flag; keeps the default strict for the Phase 5
+  // path.
+  const ok =
+    post.phase === 'evaluate' ||
+    (options?.allowPublished === true && post.phase === 'published');
+  if (!ok) {
+    const expected = options?.allowPublished
+      ? `'evaluate' or 'published'`
+      : `'evaluate'`;
     throw new Error(
-      `Post '${slug}' is in phase '${post.phase}', not 'evaluate'. ` +
-      `Evaluate commands only operate on posts in the evaluate phase.`,
+      `Post '${slug}' is in phase '${post.phase}', not ${expected}. ` +
+      `Evaluate commands only operate on posts in these phases.`,
     );
   }
   return post;
+}
+
+// Phase 7: helper that peeks at the workspace manifest to decide whether
+// the current evaluation cycle is an update-review, and returns the post
+// with the appropriate phase allowance. Callers that already read the
+// manifest can pass it explicitly to avoid a redundant read.
+export function getEvaluateOrUpdatePost(
+  db: Database.Database,
+  slug: string,
+  manifest: EvaluationManifest | null,
+): PostRow | undefined {
+  const cycle = manifest && manifest.cycles.length > 0
+    ? manifest.cycles[manifest.cycles.length - 1]
+    : undefined;
+  const allowPublished = cycle?.is_update_cycle === true;
+  return getEvaluatePost(db, slug, { allowPublished });
 }
 
 export function expectedReviewers(contentType: ContentType): ReviewerType[] {
@@ -377,6 +416,13 @@ export function readManifest(evaluationsDir: string, slug: string): EvaluationMa
           reviewerHashes[reviewerKey as ReviewerType] = innerHashes;
         }
       }
+      // is_update_cycle: must be boolean if present; coercion to false on
+      // absence is back-compat for pre-Phase-7 manifests. Silent coercion on
+      // a non-boolean value would mask tampering, so we reject with the same
+      // loud-fail policy used for other cycle fields.
+      if (c.is_update_cycle !== undefined && typeof c.is_update_cycle !== 'boolean') {
+        throw new Error(`Manifest cycle has invalid is_update_cycle: ${JSON.stringify(c)}`);
+      }
       return {
         started_at: c.started_at,
         evaluation_id_floor: c.evaluation_id_floor,
@@ -386,6 +432,7 @@ export function readManifest(evaluationsDir: string, slug: string): EvaluationMa
         reviewer_artifact_hashes: reviewerHashes,
         ended_at: c.ended_at,
         ended_reason: c.ended_reason,
+        is_update_cycle: c.is_update_cycle === true ? true : undefined,
       };
     })
     : [{ started_at: cycle_started_at, evaluation_id_floor: 0, synthesis_id_floor: 0 }];
@@ -527,16 +574,35 @@ export interface InitEvaluationResult {
   workspaceDir: string;
 }
 
+export interface InitEvaluationOptions {
+  // Phase 7: when true, this invocation is from `blog update evaluate`. The
+  // function (a) accepts `post.phase === 'published'` (instead of the usual
+  // draft/evaluate gate), (b) leaves the phase unchanged (no advancePhase),
+  // and (c) tags the newly-opened cycle's manifest entry with
+  // `is_update_cycle: true` so recordReview sets `is_update_review=1`
+  // explicitly — no inference from cycles.length.
+  isUpdateReview?: boolean;
+}
+
 export function initEvaluation(
   db: Database.Database,
   slug: string,
   evaluationsDir: string,
+  options?: InitEvaluationOptions,
 ): InitEvaluationResult {
+  const isUpdateReview = options?.isUpdateReview === true;
   const post = db.prepare('SELECT * FROM posts WHERE slug = ?').get(slug) as PostRow | undefined;
   if (!post) {
     throw new Error(`Post not found: ${slug}`);
   }
-  if (post.phase !== 'draft' && post.phase !== 'evaluate') {
+  if (isUpdateReview) {
+    if (post.phase !== 'published') {
+      throw new Error(
+        `Post '${slug}' is in phase '${post.phase}', not 'published'. ` +
+        `Update-review initialization requires the post to already be published.`,
+      );
+    }
+  } else if (post.phase !== 'draft' && post.phase !== 'evaluate') {
     throw new Error(
       `Post '${slug}' is in phase '${post.phase}', not 'draft' or 'evaluate'. ` +
       `Evaluation can only be initialized from one of these phases.`,
@@ -583,6 +649,7 @@ export function initEvaluation(
           started_at: now,
           evaluation_id_floor: maxId(db, 'evaluations', slug),
           synthesis_id_floor: maxId(db, 'evaluation_synthesis', slug),
+          is_update_cycle: isUpdateReview ? true : undefined,
         }],
       };
       writeManifest(evaluationsDir, created);
@@ -605,6 +672,7 @@ export function initEvaluation(
         started_at: now,
         evaluation_id_floor: maxId(db, 'evaluations', slug),
         synthesis_id_floor: maxId(db, 'evaluation_synthesis', slug),
+        is_update_cycle: isUpdateReview ? true : undefined,
       });
       fresh.cycle_started_at = now;
       writeManifest(evaluationsDir, fresh);
@@ -620,7 +688,13 @@ export function initEvaluation(
   });
   manifest = openCycle();
 
-  if (post.phase === 'draft') {
+  // Phase advance semantics:
+  //   - standard (!isUpdateReview): draft → evaluate when entering eval flow
+  //   - update-review (isUpdateReview): phase stays 'published'; the update
+  //     cycle is tracked separately in update_cycles and does NOT rewind the
+  //     post's lifecycle phase (plan: "posts.phase stays published throughout
+  //     an update")
+  if (!isUpdateReview && post.phase === 'draft') {
     advancePhase(db, slug, 'evaluate');
   }
 
@@ -708,7 +782,10 @@ function recordReviewLocked(
   evaluationsDir: string,
   artifactPaths: SynthesisArtifactPaths,
 ): EvaluationRow {
-  const post = getEvaluatePost(db, slug);
+  // Phase 7: peek at manifest first so the phase guard allows 'published'
+  // when the current cycle is an update-review.
+  const earlyManifest = readManifest(evaluationsDir, slug);
+  const post = getEvaluateOrUpdatePost(db, slug, earlyManifest);
   if (!post) {
     throw new Error(`Post not found: ${slug}`);
   }
@@ -772,9 +849,13 @@ function recordReviewLocked(
     );
   }
 
-  // is_update_review = 1 when this record belongs to a rework cycle
-  // (manifest has more than one cycle entry). First-cycle records remain 0.
-  const isUpdate = manifest.cycles.length > 1 ? 1 : 0;
+  // Phase 7: is_update_review is driven by the explicit is_update_cycle flag
+  // on the current cycle (set by `initEvaluation` when invoked by
+  // `blog update evaluate`). Replaces the pre-Phase-7 `cycles.length > 1`
+  // inference, which falsely tagged reject-retry cycles as updates and
+  // couldn't fire until the first reject. First-cycle records are 0 unless
+  // explicitly tagged.
+  const isUpdate = cycle.is_update_cycle === true ? 1 : 0;
 
   const issuesJson = JSON.stringify(output.issues);
   const canonicalIssues = canonicalIssuesJson(output.issues);
@@ -1019,7 +1100,11 @@ function runSynthesisLocked(
   evaluationsDir: string,
   artifactPaths: SynthesisArtifactPaths,
 ): RunSynthesisResult {
-  const post = getEvaluatePost(db, slug);
+  // Phase 7: read manifest first to surface the update-cycle phase
+  // allowance; the original dispatch (post → manifest) rejected 'published'
+  // posts unconditionally.
+  const earlyManifest = readManifest(evaluationsDir, slug);
+  const post = getEvaluateOrUpdatePost(db, slug, earlyManifest);
   if (!post) {
     throw new Error(`Post not found: ${slug}`);
   }
@@ -1252,7 +1337,11 @@ function completeEvaluationLocked(
   evaluationsDir: string,
   artifactPaths: SynthesisArtifactPaths,
 ): void {
-  const post = getEvaluatePost(db, slug);
+  // Phase 7: read manifest first so update-cycle posts in 'published' are
+  // accepted. The original getEvaluatePost → readManifest order rejected
+  // 'published' before the update-review branch could evaluate.
+  const earlyManifest = readManifest(evaluationsDir, slug);
+  const post = getEvaluateOrUpdatePost(db, slug, earlyManifest);
   if (!post) {
     throw new Error(`Post not found: ${slug}`);
   }
@@ -1444,7 +1533,13 @@ function completeEvaluationLocked(
     }
 
     closeCurrentCycle(db, evaluationsDir, slug, 'passed');
-    advancePhase(db, slug, 'publish');
+    // Phase 7: update-review cycles do NOT advance the post's phase — the
+    // post stays 'published' throughout an update. The pipeline runner for
+    // `blog update publish` reads the fresh pass verdict from
+    // evaluation_synthesis directly.
+    if (cycle.is_update_cycle !== true) {
+      advancePhase(db, slug, 'publish');
+    }
   });
   completeTx();
 }
@@ -1467,13 +1562,19 @@ function rejectEvaluationLocked(
   slug: string,
   evaluationsDir: string,
 ): void {
-  const post = getEvaluatePost(db, slug);
+  // Phase 7: peek at manifest so update-cycle posts in 'published' pass
+  // the phase guard; their cycle is closed without a phase rewind.
+  const earlyManifest = readManifest(evaluationsDir, slug);
+  const post = getEvaluateOrUpdatePost(db, slug, earlyManifest);
   if (!post) {
     throw new Error(`Post not found: ${slug}`);
   }
   const manifest = readManifest(evaluationsDir, slug);
   if (manifest) validateManifestAgainstDb(db, slug, manifest, post);
   mkdirSync(evaluationDir(evaluationsDir, slug), { recursive: true });
+
+  const currentCycleEntry = manifest ? currentCycle(manifest) : undefined;
+  const isUpdateReviewReject = currentCycleEntry?.is_update_cycle === true;
 
   // Write the reject sentinel BEFORE the DB commit. If the DB commit lands
   // and any later FS write fails, the sentinel is already on disk — the next
@@ -1484,18 +1585,21 @@ function rejectEvaluationLocked(
   // rejectEvaluation can be retried idempotently (sentinel overwritten).
   writeFileSync(rejectMarkerPath(evaluationsDir, slug), dbNow(db), 'utf-8');
 
-  // DB UPDATE inside a transaction. If it fails, the sentinel remains on
-  // disk but no state flip has occurred — retry is safe. If it succeeds,
-  // the sentinel + phase=draft both hold and the cycle-close FS write
-  // below can fail without compromising the gate.
+  // Phase 7: update-review rejects DO NOT rewind phase — the post stays
+  // 'published'. The eval cycle closes so a subsequent `blog update draft`
+  // + `blog update evaluate` opens a fresh update-review cycle. The
+  // reject sentinel still serializes the "init reuses cycle intact"
+  // bypass check in initEvaluation.
   const tx = db.transaction(() => {
-    advancePhase(db, slug, 'draft');
+    if (!isUpdateReviewReject) {
+      advancePhase(db, slug, 'draft');
+    }
   });
   tx();
 
-  // Cycle-close manifest write. If this fails, the sentinel + phase=draft
-  // already hold, and initEvaluation's sentinel check will force a fresh
-  // cycle instead of reusing the pre-reject one.
+  // Cycle-close manifest write. If this fails, the sentinel already holds,
+  // and initEvaluation's sentinel check will force a fresh cycle instead
+  // of reusing the pre-reject one.
   closeCurrentCycle(db, evaluationsDir, slug, 'rejected');
 }
 
