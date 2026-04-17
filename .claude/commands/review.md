@@ -189,6 +189,30 @@ npx vitest run \
 | `tests/publish-cli.test.ts` (15 tests) | Publish CLI handlers (`blog publish start` / `show`) | Invalid slug → exitCode=1 before DB open; post not found → descriptive error; wrong phase (e.g., research) → exitCode=1 with valid-phases hint; evaluate phase → promotes + seeds 11 steps + runs pipeline; publish phase → resumes without duplicating rows; runner `completed:true` → success log; `pausedStep` → info log (NOT error); `failedStep` → exitCode=1; runner throws → "pipeline crashed" message; `runPublishShow` prints slug/phase/step table; empty table prints "No pipeline steps yet"; malformed config is best-effort (show still prints); **ctx.urls hydrated from posts row URL columns before runPipeline (Codex Pass 2 regression) — resumed runs see prior-invocation URLs**; fresh publish hydrates to empty object |
 | `tests/publish-site-updates.test.ts` (20 tests) | `updateFrontmatter` + `updateProjectReadme` (direct-push steps 9 & 10) | `updateFrontmatter`: **switches to main BEFORE any file mutation (Codex Pass 4 Critical regression — prior ordering made checkout fail on stale local main)**; writes `published:true`, `canonical`, `devto_url`, `companion_repo` to site MDX frontmatter; commits with `chore(post):` prefix; pushes to `origin main`; uses `execFileSync` with argv arrays; idempotent no-op when nothing staged AND HEAD not ahead of origin; **crash-replay push-ahead uses `inspectAheadCommits` with strict match: requires exactly 1 ahead commit, subject == `chore(post): {slug} add platform URLs`, touched file == `{content_dir}/{slug}/index.mdx` — throws on wrong subject, wrong file, or 2+ commits ahead (Codex Pass 4 High regression prevents shipping operator's unrelated local work)**; throws on missing site repo; throws on missing MDX; **index-cleanness guardrail via `assertIndexClean`: refuses to proceed when operator has staged unrelated files — otherwise the subsequent `git commit` would sweep them into the chore(post): commit and push to origin/main (Codex Pass 6 regression)**; `updateProjectReadme`: resolves `config.projects[id]` against `dirname(configPath)` (relative path works); switches to main before file mutation; same index-cleanness guardrail on project repo; inserts link under `## Writing` heading; creates heading when absent; **commits with `chore:` prefix (not `docs:`) per contract**; skips when no `project_id`, when no `projects` config entry, when project dir missing; idempotent when canonical URL already in README; crash-replay push-ahead uses same strict match; refuses to push unrelated local README commits; throws on missing post |
 
+**Phase 7 — Lifecycle (feature/phase-7-lifecycle)**
+
+| Test File | Feature | What It Validates |
+| --------- | ------- | ----------------- |
+| `tests/db-migration-v3.test.ts` (12 tests) | Schema v2→v3 canonical table-rebuild | Fresh DB opens at SCHEMA_VERSION=3; v1→v3 migration preserves pipeline_steps rows with `cycle_id=0` via rename→create→INSERT..SELECT→drop; v2→v3 preserves all pre-v3 data with cycle_id=0; `update_cycles` + `unpublish_steps` created additively; partial unique index `idx_update_cycles_open` rejects a second INSERT when `closed_at IS NULL`; multiple closed cycles per post allowed; re-opening a v3 DB is a no-op; FK enforcement preserved through table rebuild |
+| `tests/update-cycles.test.ts` (17 tests) | Update-cycle lifecycle | `openUpdateCycle` validates phase=='published', enforces single-open invariant, writes `update_cycles` row + `update_opened` metric in one transaction; rejects duplicate open with actionable error; `closeUpdateCycle` sets `closed_at` + `ended_reason`, writes `update_aborted` OR `update_completed` metric; `getOpenUpdateCycle` returns row or null; `listUpdateCycles` returns ordered by cycle_number |
+| `tests/update-notice.test.ts` (13 tests) | Cycle-keyed update-notice MDX marker | Marker regex `update-notice cycle=(\d+) date=(\d{4}-\d{2}-\d{2})`; same-cycle re-run replaces in-place regardless of date; multi-cycle preserves historical blocks; atomic temp+rename writes; no date-based matching inlined anywhere |
+| `tests/update-cli.test.ts` (5 tests) | `blog update abort` / `start` / `show` CLI | abort closes cycle + writes metric + PRESERVES `.blog-agent/drafts/{slug}/` artifacts on disk; exit 1 when no open cycle; exit 1 on invalid slug before DB open; start refuses with `--summary ""` when `require_summary=true`; show prints phase/update_count/cycle table |
+| `tests/update-devto.test.ts` (4 tests) | `updateDevToArticle` probe-then-PUT with POST fallthrough | Probe match → PUT body contains title + body_markdown + canonical_url + tags + description; probe miss → falls through to POST (recovers from manual Dev.to deletion); PUT 500 throws; PUT 422 throws with validation context |
+| `tests/update-publish-pipeline.test.ts` (5 tests) | `createSiteUpdate` + `completeUpdateUnderLock` unit coverage | site-update uses `update/<slug>-cycle-<N>` branch, `chore(site): update <slug> (cycle <N>)` commit, `Update <title> (cycle <N>)` PR title; MDX body lands in site repo (not just frontmatter); completeUpdateUnderLock closes cycle, increments update_count, sets last_updated_at, phase stays published, writes `update_completed` metric with value=cycleId; grep invariant: update finalizer does NOT advancePhase; throws when no open cycle |
+| `tests/publish-guard.test.ts` (2 tests) | `blog publish start` refuses on open update cycle | getOpenUpdateCycle check runs early; exit 1 with message mentioning BOTH `blog update publish` and `blog update abort`; no pipeline_steps rows created |
+| `tests/unpublish-state.test.ts` (6 tests) | Unpublish init + finalize state | `initUnpublish` seeds all 7 step rows + writes `unpublish_started` metric; pre-skips rows disabled by config; returns alreadyUnpublished:true for already-unpublished post; rejects non-published phase with error message including current phase; rejects missing posts; `completeUnpublishUnderLock` advances phase + sets unpublished_at + writes `unpublished` metric via finalizePipelineUnderLock |
+| `tests/unpublish-cli.test.ts` (3 tests) | `blog unpublish start|show` CLI | `--confirm` required: missing flag → exit 1 + zero DB writes + zero fetch calls (fetch-spy asserted); rejects non-published posts with phase-boundary error; show prints status + "No unpublish steps recorded" when not started |
+| `tests/unpublish-readme.test.ts` (5 tests) | `revertProjectReadmeLink` skip paths + guardrails | Three skip paths: no project_id, config.projects[id] absent, link not in README; assertIndexClean throws when staged unrelated file exists; requireOriginMatch throws on wrong-origin remote (real git repos, not mocked) |
+| `tests/unpublish-site.test.ts` (5 tests) | `createSiteRevertPR` PR-only trust boundaries | Happy-path: `unpublish/<slug>` branch, MDX flipped to `published: false`, PR opened via gh; idempotent on existing PR; requireOriginMatch throws on wrong origin (no push, no PR); throws on unparseable GitHub URL; grep-verified: source file contains no `push origin main` and no `site_revert_mode` |
+| `tests/unpublish-devto.test.ts` (7 tests) | `unpublishFromDevTo` Forem PUT | Skips when DEVTO_API_KEY unset; probe match → PUT body is exactly `{ article: { published: false } }` per spike; probe miss → skip with reason; probe HTTP 500 throws; PUT 500 throws; PUT 422 throws; probe pagination stops on short page |
+| `tests/unpublish-pipeline.test.ts` (4 tests) | `runUnpublishPipeline` E2E via mocked step modules | Happy path drives all 7 steps → phase=unpublished, unpublished_at set, metrics=[unpublish_started, unpublished]; per-slug lock contention via acquirePublishLock direct; runner imports from `../publish/lock.js` (trust-boundary proof); failure path leaves phase=published and records failedStep |
+| `tests/skills-crossref.test.ts` (2 tests) | Orchestrator skill files contract | All three skill files (blog-pipeline, blog-update, blog-unpublish) contain exactly H2 set {Preflight, Workflow, CLI Reference, Troubleshooting, Degraded Mode}; every `blog <cmd>` in fenced code blocks resolves to a registered Commander handler in src/cli/index.ts (AST-based parse, not string grep) |
+| `tests/update-runner-pipeline.test.ts` (3 tests) | TRUE E2E update-mode runPipeline via step registry mock | Every UPDATE_STEP_NAMES step runs in order via real runPipeline({publishMode:'update', cycleId}); cycle_id persists on every pipeline_steps row (no cycle_id=0 leakage); post.phase stays 'published'; update_count increments; update_completed metric with value=cycleId; pause/resume works in update mode |
+| `tests/cross-flow-lock.test.ts` (3 tests) | Cross-flow lock mutual exclusion | TRUE same-slug contention: runPipeline(alpha) blocks on step 2 → lockfile contains process.pid → runUnpublishPipeline(alpha, lockTimeoutMs=100) throws with contention error (real runner, not primitive); release-then-reacquire succeeds; disjoint slugs don't contend: publish(alpha) + unpublish(beta) both complete concurrently |
+| `tests/frontmatter-phase7.test.ts` (15 tests) | PostFrontmatter Phase 7 round-trip + cross-repo fixtures | serialize + parse preserves unpublished_at / updated_at / update_count (numeric); emits all three together; omits when unset (legacy compat); parses legacy MDX with new fields undefined; parses production-shape Phase 7 MDX with all platform + lifecycle fields; tolerates update_count as YAML string `"5"`; reads 6 fixture files from `fixtures/frontmatter-phase7/` asserting parsed shapes; drift guard: every .mdx on disk must appear in REGISTERED_FIXTURES and vice versa |
+| `tests/origin-guard.test.ts` (16 tests) | Split tolerant/strict origin APIs | parseGitHubRemoteUrl handles SSH/HTTPS; returns null for non-GitHub; getOriginState returns 'matches'/'absent'; narrows catch to 'No such remote' stderr only (re-throws environment errors); throws on wrong-target or unparseable URL; normalizes case (GitHub is case-insensitive); forces LC_ALL=C/LANG=C on subprocess (locale independence); requireOriginMatch throws on absent (unlike tolerant variant); expectedSiteCoords prefers config.site.github_repo over basename(repo_path) fallback; handles trailing slash in repo_path |
+| `tests/pipeline-registry-integrity.test.ts` (8 tests) | Registry ↔ step-tuple invariants | PIPELINE_STEPS exports every PUBLISH_STEP_NAMES entry; every UPDATE_STEP_NAMES entry; pairwise unique names; numbers cover 1..11 with slot 3 shared between site-pr and site-update; each name maps to consistent number; every step has callable execute; no step name outside union of publish+update tuples; createPipelineSteps seeds DB step_numbers that match tuple positions per mode (the ACTUAL invariant the runner depends on) |
+
 ### Source files these tests protect
 
 - `src/core/db/schema.ts` — SQL schema for all 8 tables, SCHEMA_VERSION constant
@@ -248,6 +272,43 @@ npx vitest run \
 - `templates/social/linkedin.md` — LinkedIn template with `{{title}}`, `{{description}}`, `{{takeaway}}`, `{{canonical_url}}`, `{{hashtags}}`, `{{timing}}` placeholders
 - `templates/social/hackernews.md` — HN template with `{{title}}`, `{{canonical_url}}`, `{{first_comment}}`, `{{repo_url}}`, `{{timing}}` placeholders
 - `skills/blog-publish.md` — publish workflow narration, 11-step descriptions, manual preview-gate at step 4, resume semantics, troubleshooting (missing DEVTO_API_KEY, gh auth, PR not merged)
+
+**Phase 7 — Lifecycle source files:**
+
+- `src/core/db/schema.ts` — SCHEMA_VERSION=3, SCHEMA_V3_SQL (pipeline_steps canonical table-rebuild adding cycle_id + UNIQUE(post_slug, cycle_id, step_name)), `update_cycles` + `unpublish_steps` tables, partial-unique-index `idx_update_cycles_open`
+- `src/core/db/database.ts` — v3 migration block with FK-off toggle around transactional rebuild
+- `src/core/db/types.ts` — UpdateCycleRow, UnpublishStepRow, UpdateCycleEndedReason types
+- `src/core/publish/types.ts` — UPDATE_STEP_NAMES tuple, PublishMode union, `stepNamesForMode()` helper, cycle_id on PipelineStepRow
+- `src/core/publish/pipeline-types.ts` — PipelineContext.publishMode + .cycleId + .lockTimeoutMs (test-only)
+- `src/core/publish/pipeline-runner.ts` — mode-aware finalization (completePublishUnderLock vs completeUpdateUnderLock); passes ctx.lockTimeoutMs through to acquirePublishLock
+- `src/core/publish/pipeline-registry.ts` — mode-aware verify step (checks evaluation_passed for initial, is_update_review + cycle timing for update); site-update step entry; updateDevToArticle dispatch for update mode
+- `src/core/publish/phase.ts` — `finalizePipelineUnderLock` shared PID-ownership helper, `completeUpdateUnderLock` (closes update_cycles row, increments update_count, writes update_completed metric, phase stays published); `completeUnpublishUnderLock` wired in via state.ts
+- `src/core/publish/steps-crud.ts` — every CRUD function gained trailing optional `cycleId: number = 0` and `publishMode: PublishMode = 'initial'` parameters; createPipelineSteps seeds step_number from tuple position per mode
+- `src/core/publish/site.ts` — createSitePR calls requireOriginMatch(expectedSiteCoords(config)); accepts SitePROverrides; checkPreviewGate also guards origin
+- `src/core/publish/site-update.ts` — `createSiteUpdate` wraps createSitePR with update-cycle-scoped branch/commit/PR strings derived from `update_cycles` row
+- `src/core/publish/devto.ts` — `updateDevToArticle` probe-then-PUT with POST fallthrough on probe miss
+- `src/core/publish/origin-guard.ts` — SHARED trust-boundary module: `parseGitHubRemoteUrl`, `getOriginState` (tolerant), `requireOriginMatch` (strict), `expectedSiteCoords` (config-driven coords resolver), `coordsMatch` case-insensitive helper, `readOriginUrl` with LC_ALL=C locale pin and narrowed stderr catch
+- `src/core/config/types.ts` — SiteConfig.github_repo optional, SiteUpdateMode, UnpublishConfig, extended UpdatesConfig (devto_update, refresh_paste_files, notice_template, require_summary, site_update_mode)
+- `src/core/config/loader.ts` — DEFAULT_UNPUBLISH, extended DEFAULT_UPDATES, github_repo shape validation (`owner/name`)
+- `src/core/update/cycles.ts` — `openUpdateCycle` / `getOpenUpdateCycle` / `closeUpdateCycle` / `listUpdateCycles` / `requirePublishedPost`; metrics writes inside transactions ('update_opened', 'update_aborted', 'update_completed')
+- `src/core/update/notice.ts` — `appendUpdateNotice` with cycle-keyed HTML comment regex, atomic temp+rename write
+- `src/cli/update.ts` — `runUpdateStart/Benchmark/Draft/Evaluate/Publish/Abort/Show` + `registerUpdate(program)`; slug validation + phase boundary + process.exitCode=1 pattern; passes `{ isUpdateReview: true }` to initEvaluation
+- `src/core/unpublish/state.ts` — `initUnpublish` with already-unpublished idempotency, `completeUnpublishUnderLock` via shared finalizePipelineUnderLock; writes 'unpublish_started' + 'unpublished' metrics
+- `src/core/unpublish/steps-crud.ts` — parallel to publish/steps-crud but no cycle_id (unpublish has only one pass per post)
+- `src/core/unpublish/steps-registry.ts` — UNPUBLISH_STEP_NAMES 7-tuple
+- `src/core/unpublish/runner.ts` — mirrors publish runner; uses acquirePublishLock for mutual exclusion; accepts optional lockTimeoutMs (test-only injection seam)
+- `src/core/unpublish/devto.ts` — PUT `{ article: { published: false } }` per spike, probe-then-mutate, probe-miss is skip not error
+- `src/core/unpublish/medium.ts` / `src/core/unpublish/substack.ts` — manual-removal instruction markdown generators (no API)
+- `src/core/unpublish/site.ts` — `createSiteRevertPR` (PR-only, no direct-push grep-verified); `flipPublishedToFalse`; `checkUnpublishPreviewGate`; calls requireOriginMatch(expectedSiteCoords(config)) before any push
+- `src/core/unpublish/readme.ts` — `revertProjectReadmeLink` with THREE explicit skip paths; assertIndexClean before git add + requireOriginMatch before git push origin main (Phase 6 symmetry documented in lifecycle.md)
+- `src/cli/unpublish.ts` — `runUnpublishStart --confirm / runUnpublishShow`, slug validation, --confirm required before any DB/network work
+- `src/cli/publish.ts` — publish guard: refuses on open update cycle, actionable error message
+- `src/core/draft/frontmatter.ts` — PostFrontmatter interface extended with `unpublished_at`, `updated_at`, `update_count`, `substack_url`; serializer + parser round-trip, with update_count normalized to number even when YAML emits string
+- `src/core/evaluate/state.ts` — `initEvaluation({ isUpdateReview: true })` option sets manifest `is_update_cycle=true`; recordReview reads the flag and sets `is_update_review=1` on every inserted row (explicit, not inferred from cycles.length)
+- `fixtures/frontmatter-phase7/*.mdx` — 6 canonical Phase 7 frontmatter shapes (legacy, initial-published, updated-once, updated-twice, unpublished, updated-then-unpublished) + README documenting the cross-repo contract between m0lz.01 and m0lz.00
+- `skills/blog-pipeline.md` / `skills/blog-update.md` / `skills/blog-unpublish.md` — orchestrator skills with exact H2 set {Preflight, Workflow, CLI Reference, Troubleshooting, Degraded Mode}; cross-checked mechanically against src/cli/index.ts registrations
+- `.claude/rules/lifecycle.md` — path-scoped rule doc: publishMode dispatch, first-class update_cycles rows, partial-unique-index constraint, explicit isUpdateReview flag, cycle-keyed notice marker, publish guard, shared per-slug lock, shared finalize helper, metrics audit log, unpublish trust boundaries, origin-guard tolerant/strict APIs, readme-revert direct-push policy clarification
+- `docs/spikes/forem-put-semantics.md` — canonical source for Forem PUT body shapes (unpublish + update), referenced by devto.ts implementations
 
 ### Expected results
 
@@ -401,7 +462,28 @@ Phase 6 — Publish:
   - Publish CLI handlers + ctx.urls hydration (15 tests): ✓ / ✗
   - updateFrontmatter + updateProjectReadme + index-clean + crash-replay (20 tests): ✓ / ✗
 
-Full Suite: X passing, Y failing  (baseline: 646 passing)
+Phase 7 — Lifecycle:
+  - Schema v3 canonical table-rebuild + partial-unique-index (12 tests): ✓ / ✗
+  - Update-cycle lifecycle (17 tests): ✓ / ✗
+  - Cycle-keyed update-notice marker (13 tests): ✓ / ✗
+  - Update CLI handlers (abort artifact preservation) (5 tests): ✓ / ✗
+  - Update Dev.to probe→PUT / miss→POST (4 tests): ✓ / ✗
+  - Update publish unit coverage: site-update + completeUpdateUnderLock (5 tests): ✓ / ✗
+  - Publish guard: refuses on open update cycle (2 tests): ✓ / ✗
+  - Unpublish state lifecycle (6 tests): ✓ / ✗
+  - Unpublish CLI + --confirm + fetch-spy (3 tests): ✓ / ✗
+  - Unpublish readme-revert trust boundaries (5 tests): ✓ / ✗
+  - Unpublish site revert PR-only (5 tests): ✓ / ✗
+  - Unpublish Dev.to PUT published:false (7 tests): ✓ / ✗
+  - Unpublish pipeline E2E (4 tests): ✓ / ✗
+  - Orchestrator skills cross-reference (2 tests): ✓ / ✗
+  - TRUE E2E update-mode runPipeline (3 tests): ✓ / ✗
+  - Cross-flow lock contention (same-slug + disjoint) (3 tests): ✓ / ✗
+  - PostFrontmatter Phase 7 round-trip + cross-repo fixtures (15 tests): ✓ / ✗
+  - Split origin-guard tolerant/strict APIs (16 tests): ✓ / ✗
+  - Pipeline registry ↔ step-tuple invariants (8 tests): ✓ / ✗
+
+Full Suite: X passing, Y failing  (baseline: 723 passing across 56 suites)
 Lint: {error count} errors  (baseline: 0)
 Build: PASS / FAIL
 ```
