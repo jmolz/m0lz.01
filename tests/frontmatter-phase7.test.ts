@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { dirname } from 'node:path';
@@ -131,6 +131,32 @@ Body.
   // PRODUCER side of the contract; the consumer side (m0lz.00) should
   // mirror them against its own parser.
   // -----------------------------------------------------------------
+
+  // Drift guard: every .mdx in the fixture directory must appear in
+  // REGISTERED_FIXTURES below. Adding a new .mdx without a dedicated
+  // test breaks this assertion instead of silently passing CI —
+  // closes Codex Pass 4 Minor #2.
+  const REGISTERED_FIXTURES = new Set<string>([
+    'legacy',
+    'initial-published',
+    'updated-once',
+    'updated-twice',
+    'unpublished',
+    'updated-then-unpublished',
+  ]);
+
+  it('fixture drift guard — every .mdx in fixtures/frontmatter-phase7/ has a registered test', () => {
+    const onDisk = readdirSync(FIXTURES_DIR)
+      .filter((f) => f.endsWith('.mdx'))
+      .map((f) => f.replace(/\.mdx$/, ''));
+    const onDiskSet = new Set(onDisk);
+
+    const orphanedOnDisk = onDisk.filter((name) => !REGISTERED_FIXTURES.has(name));
+    expect(orphanedOnDisk, `new fixture(s) without registered tests — add them to REGISTERED_FIXTURES and write a test: ${orphanedOnDisk.join(', ')}`).toEqual([]);
+
+    const orphanedRegistration = [...REGISTERED_FIXTURES].filter((name) => !onDiskSet.has(name));
+    expect(orphanedRegistration, `registered fixture(s) without a .mdx file on disk: ${orphanedRegistration.join(', ')}`).toEqual([]);
+  });
 
   it('fixture: legacy — parses cleanly; all Phase 7 fields undefined', () => {
     const parsed = parseFrontmatter(loadFixture('legacy'));

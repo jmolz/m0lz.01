@@ -287,7 +287,7 @@ npm test
 npm run build
 ```
 
-Expected baseline: **0 TypeScript errors, 721 tests passing across 56 suites, clean build** (as of feature/phase-7-lifecycle after Cluster K: LC_ALL=C locale pin on origin-guard, case-insensitive owner/name compare, lockTimeoutMs injection seam for true same-slug cross-flow runner contention, pipeline-registry integrity suite, cross-repo PostFrontmatter fixture set; closes every Codex Pass 3 Minor). Any drift from this baseline is a signal to investigate before merging.
+Expected baseline: **0 TypeScript errors, 723 tests passing across 56 suites, clean build** (as of feature/phase-7-lifecycle after Cluster L: fixture-directory drift guard + DB step_number ↔ tuple-position invariant test; closes Codex Pass 4 Minors #2 and #3). Any drift from this baseline is a signal to investigate before merging.
 
 ## Phase 3: Code Review of Current Changes
 
