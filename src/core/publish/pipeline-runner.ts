@@ -9,9 +9,11 @@ import {
   markStepRunning,
   markStepSkipped,
   reclaimStaleRunning,
+  reconcilePipelineSteps,
 } from './steps-crud.js';
 import { completePublishUnderLock, persistPublishUrls } from './phase.js';
 import { PUBLISH_STEP_NAMES } from './types.js';
+import { ContentType } from '../db/types.js';
 
 // Result of a full pipeline run. `completed` is true only when every step
 // has reached completed/skipped status and the post has been advanced to
@@ -69,6 +71,31 @@ export async function runPipeline(
       console.log(
         `Reclaimed ${reclaimed} stale 'running' step(s) from a prior interrupted run`,
       );
+    }
+
+    // Reconcile existing pending/failed rows against the CURRENT config
+    // so the operator can disable optional destinations (publish.devto /
+    // publish.medium / publish.substack) by editing .blogrc.yaml between
+    // runs. Without this, INSERT OR IGNORE in createPipelineSteps freezes
+    // the initial seed decision forever. Look up content_type here — the
+    // PipelineContext does not carry it directly because steps use
+    // different content-type signals and we want one authoritative read.
+    const postRow = ctx.db
+      .prepare('SELECT content_type FROM posts WHERE slug = ?')
+      .get(ctx.slug) as { content_type: ContentType | null } | undefined;
+    if (postRow?.content_type) {
+      const reconciled = reconcilePipelineSteps(
+        ctx.db,
+        ctx.slug,
+        postRow.content_type,
+        ctx.config,
+      );
+      if (reconciled > 0) {
+        console.log(
+          `Reconciled ${reconciled} pipeline step(s) against current config ` +
+          `(marked as skipped because the current config disables them)`,
+        );
+      }
     }
 
     let stepsRun = 0;

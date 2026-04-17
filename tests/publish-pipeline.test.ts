@@ -543,6 +543,57 @@ describe('runPipeline — crash-safety (Codex-Critical regressions)', () => {
     expect(post.phase).toBe('published');
   });
 
+  it('reconciles pending rows against current config so operators can disable optional destinations (Codex Pass 6 regression)', async () => {
+    // Seed the pipeline when Dev.to is ENABLED, then flip .blogrc.yaml
+    // to devto=false and re-run. The pending `crosspost-devto` row must
+    // be downgraded to `skipped` at resume time so the runner doesn't
+    // keep retrying a destination the operator explicitly turned off.
+    const f = setup();
+    seedPublishPost(f.db, 'toggle');
+    // Initial seed with devto ENABLED.
+    const seedConfig = {
+      ...f.config,
+      publish: { ...f.config.publish, devto: true },
+    };
+    createPipelineSteps(f.db, 'toggle', 'technical-deep-dive', seedConfig);
+    // Mark steps before crosspost-devto as already completed so the
+    // runner has a clear path to step 5 and we can observe reconciliation.
+    markStepCompleted(f.db, 'toggle', 'verify');
+    markStepCompleted(f.db, 'toggle', 'research-page');
+    markStepCompleted(f.db, 'toggle', 'site-pr');
+    markStepCompleted(f.db, 'toggle', 'preview-gate');
+    silenceConsole();
+
+    // Build a NEW context whose config has devto:false. This simulates
+    // the operator editing .blogrc.yaml between runs.
+    const resumedConfig = {
+      ...f.config,
+      publish: { ...f.config.publish, devto: false },
+    };
+    const resumedCtx: PipelineContext = {
+      ...makeContext(f, 'toggle'),
+      config: resumedConfig,
+    };
+
+    let devtoExecuted = false;
+    setSteps(
+      buildRegistry({
+        'crosspost-devto': async () => {
+          devtoExecuted = true;
+          return { outcome: 'completed', message: 'should NOT run' };
+        },
+      }),
+    );
+
+    await runPipeline(resumedCtx);
+
+    // Critical: the runner must NOT have executed crosspost-devto on
+    // resume because the reconciler downgraded its row to skipped.
+    expect(devtoExecuted).toBe(false);
+    const devtoRow = getPipelineSteps(f.db, 'toggle').find((r) => r.step_name === 'crosspost-devto')!;
+    expect(devtoRow.status).toBe('skipped');
+  });
+
   it('does not deadlock at completion — runner uses completePublishUnderLock (no release-then-reacquire)', async () => {
     // This is a regression test for the Cluster 6 deadlock fix that was
     // itself buggy: the earlier runner called release() then completePublish

@@ -5,7 +5,7 @@ import { dirname, join, resolve } from 'node:path';
 import Database from 'better-sqlite3';
 
 import { BlogConfig } from '../config/types.js';
-import { inspectAheadCommits } from './frontmatter.js';
+import { assertIndexClean, inspectAheadCommits } from './frontmatter.js';
 
 // Step 10 of the publish pipeline: update the project README in the site
 // repo with a link back to the published post. Only applies to posts that
@@ -78,6 +78,12 @@ export function updateProjectReadme(
   execFileSync('git', ['-C', projectDir, 'pull', '--ff-only'], {
     encoding: 'utf-8',
   });
+
+  // Index cleanness precheck — same rationale as updateFrontmatter.
+  // Operator-staged work in the project repo would get swept into our
+  // chore: commit and pushed to origin/main under the publish pipeline's
+  // name. Refuse to proceed until the index is empty.
+  assertIndexClean(projectDir, 'readme');
 
   const canonicalUrl = `${config.site.base_url}/writing/${slug}`;
   const title = post.title ?? slug;

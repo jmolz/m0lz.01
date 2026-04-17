@@ -211,6 +211,52 @@ export function getPipelineSteps(
   `).all(slug) as PipelineStepRow[];
 }
 
+// Reconcile existing `pending` / `failed` rows against the CURRENT config
+// and content type. Lets the operator disable an optional destination by
+// flipping `publish.devto`, `publish.medium`, or `publish.substack` to
+// `false` in `.blogrc.yaml` between invocations — without this pass, the
+// stale row stays `pending`/`failed` forever because INSERT OR IGNORE
+// keeps the original status on re-init (Codex Pass 6 High).
+//
+// We only downgrade (pending/failed -> skipped). We never UP-grade a
+// skipped row back to pending: that would risk re-running a destination
+// the operator deliberately disabled, and the initial seed already set
+// skip state deterministically. Re-enabling a skipped destination
+// requires rejecting the evaluation and starting a new publish cycle.
+export function reconcilePipelineSteps(
+  db: Database.Database,
+  slug: string,
+  contentType: ContentType,
+  config: BlogConfig,
+  options?: CreatePipelineStepsOptions,
+): number {
+  const expected = buildInitialSteps(contentType, config, options);
+  const expectedByName = new Map(expected.map((r) => [r.name, r]));
+  const existing = db.prepare(`
+    SELECT step_name, status FROM pipeline_steps WHERE post_slug = ?
+  `).all(slug) as Array<{ step_name: PublishStepName; status: string }>;
+  const update = db.prepare(`
+    UPDATE pipeline_steps
+    SET status = 'skipped',
+        completed_at = CURRENT_TIMESTAMP,
+        error_message = ?
+    WHERE post_slug = ? AND step_name = ?
+  `);
+  let changed = 0;
+  const tx = db.transaction(() => {
+    for (const row of existing) {
+      if (row.status !== 'pending' && row.status !== 'failed') continue;
+      const want = expectedByName.get(row.step_name);
+      if (want && want.status === 'skipped') {
+        update.run(want.reason ?? null, slug, row.step_name);
+        changed += 1;
+      }
+    }
+  });
+  tx();
+  return changed;
+}
+
 // Demote any `running` rows back to `pending` so the runner picks them up on
 // resume. A row is only `running` because a prior invocation was killed
 // mid-step (the success path transitions running -> completed atomically in

@@ -24,6 +24,7 @@ import {
   markStepRunning,
   markStepSkipped,
   reclaimStaleRunning,
+  reconcilePipelineSteps,
 } from '../src/core/publish/steps-crud.js';
 import { acquirePublishLock } from '../src/core/publish/lock.js';
 import { PUBLISH_STEP_NAMES, PostRow } from '../src/core/publish/types.js';
@@ -431,6 +432,77 @@ describe('pipeline step CRUD — next/mark/all-complete', () => {
     // Skipped counts as terminal.
     markStepSkipped(f.db, 'gate', 'verify', 'manual override');
     expect(allStepsComplete(f.db, 'gate')).toBe(true);
+  });
+});
+
+describe('reconcilePipelineSteps — toggle optional destinations at resume (Codex Pass 6 regression)', () => {
+  it('downgrades pending rows to skipped when current config disables the destination', () => {
+    const f = setup();
+    seedPublishPost(f.db, 'togglemedium');
+    // Initial seed with medium ENABLED: paste-medium starts pending.
+    createPipelineSteps(f.db, 'togglemedium', 'technical-deep-dive', makeConfig({ medium: true }));
+    let mediumRow = getPipelineSteps(f.db, 'togglemedium').find((r) => r.step_name === 'paste-medium')!;
+    expect(mediumRow.status).toBe('pending');
+
+    // Operator disables medium in config. Reconcile on resume.
+    const changed = reconcilePipelineSteps(
+      f.db,
+      'togglemedium',
+      'technical-deep-dive',
+      makeConfig({ medium: false }),
+    );
+    expect(changed).toBe(1);
+    mediumRow = getPipelineSteps(f.db, 'togglemedium').find((r) => r.step_name === 'paste-medium')!;
+    expect(mediumRow.status).toBe('skipped');
+    expect(mediumRow.error_message).toMatch(/publish\.medium=false/);
+  });
+
+  it('downgrades failed rows too — operator can disable a broken destination mid-pipeline', () => {
+    const f = setup();
+    seedPublishPost(f.db, 'togglefailed');
+    createPipelineSteps(f.db, 'togglefailed', 'technical-deep-dive', makeConfig({ devto: true }));
+    markStepFailed(f.db, 'togglefailed', 'crosspost-devto', 'network error');
+
+    const changed = reconcilePipelineSteps(
+      f.db,
+      'togglefailed',
+      'technical-deep-dive',
+      makeConfig({ devto: false }),
+    );
+    expect(changed).toBe(1);
+    const row = getPipelineSteps(f.db, 'togglefailed').find((r) => r.step_name === 'crosspost-devto')!;
+    expect(row.status).toBe('skipped');
+  });
+
+  it('does NOT upgrade skipped rows back to pending when config re-enables them', () => {
+    // Re-enabling a skipped destination risks re-running something the
+    // operator deliberately disabled in an earlier cycle. The current
+    // policy is "skips are sticky within a cycle"; re-enabling requires
+    // rejecting the evaluation and starting a new publish cycle.
+    const f = setup();
+    seedPublishPost(f.db, 'nowake');
+    createPipelineSteps(f.db, 'nowake', 'technical-deep-dive', makeConfig({ medium: false }));
+    const mediumBefore = getPipelineSteps(f.db, 'nowake').find((r) => r.step_name === 'paste-medium')!;
+    expect(mediumBefore.status).toBe('skipped');
+
+    // Operator flips medium back to true.
+    const changed = reconcilePipelineSteps(
+      f.db,
+      'nowake',
+      'technical-deep-dive',
+      makeConfig({ medium: true }),
+    );
+    expect(changed).toBe(0);
+    const mediumAfter = getPipelineSteps(f.db, 'nowake').find((r) => r.step_name === 'paste-medium')!;
+    expect(mediumAfter.status).toBe('skipped');
+  });
+
+  it('is a no-op when no rows need reconciliation', () => {
+    const f = setup();
+    seedPublishPost(f.db, 'unchanged');
+    createPipelineSteps(f.db, 'unchanged', 'technical-deep-dive', makeConfig());
+    const changed = reconcilePipelineSteps(f.db, 'unchanged', 'technical-deep-dive', makeConfig());
+    expect(changed).toBe(0);
   });
 });
 

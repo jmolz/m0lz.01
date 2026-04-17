@@ -329,6 +329,37 @@ describe('updateFrontmatter — direct push to main of site repo', () => {
       updateFrontmatter('noposts', makeConfig(f.siteRepoPath), {}, { configPath: f.configPath }),
     ).toThrow(/MDX file not found/);
   });
+
+  it('index-cleanness guardrail: throws when operator has staged unrelated files (Codex Pass 6 regression)', () => {
+    // After checkout + pull, before our own add, the index contains an
+    // operator-staged file. Without the guardrail, our subsequent
+    // `git commit` would sweep that file into the chore(post): commit
+    // and push it to origin/main — a class of bug identical to the
+    // earlier site.ts `git add .` hole.
+    const f = setup();
+    writeSampleDraftMdx(f.siteRepoPath, 'stagedOp');
+    mockExec.mockImplementation((cmd: string, args: string[]): Buffer => {
+      if (args.includes('diff') && args.includes('--cached') && args.includes('--name-only')) {
+        return Buffer.from('some/unrelated/file.ts\n');
+      }
+      return Buffer.from('');
+    });
+
+    expect(() =>
+      updateFrontmatter(
+        'stagedOp',
+        makeConfig(f.siteRepoPath),
+        { devto_url: 'https://dev.to/jmolz/stagedOp' },
+        { configPath: f.configPath },
+      ),
+    ).toThrow(/staged changes that would be included in the publish commit/);
+
+    // Critically: no commit or push happened.
+    const commitCall = mockExec.mock.calls.find((c) => c[1].includes('commit'));
+    expect(commitCall).toBeUndefined();
+    const pushCall = mockExec.mock.calls.find((c) => c[1].includes('push'));
+    expect(pushCall).toBeUndefined();
+  });
 });
 
 function seedProjectPost(
@@ -548,5 +579,25 @@ describe('updateProjectReadme — direct push to main of project repo', () => {
     expect(() =>
       updateProjectReadme('ghost', config, { configPath: f.configPath }, f.db),
     ).toThrow(/Post not found/);
+  });
+
+  it('index-cleanness guardrail: throws when operator has staged unrelated files in project repo (Codex Pass 6 regression)', () => {
+    const f = setup();
+    const projectDir = makeProjectRepo(f.tempDir, 'm0lz.02', '# m0lz.02\n\n## Writing\n\n');
+    seedProjectPost(f.db, 'staged-readme', 'm0lz.02');
+    mockExec.mockImplementation((cmd: string, args: string[]): Buffer => {
+      if (args.includes('diff') && args.includes('--cached') && args.includes('--name-only')) {
+        return Buffer.from('CHANGELOG.md\npackage.json\n');
+      }
+      return Buffer.from('');
+    });
+
+    const config = makeConfig(f.siteRepoPath, { 'm0lz.02': projectDir });
+    expect(() =>
+      updateProjectReadme('staged-readme', config, { configPath: f.configPath }, f.db),
+    ).toThrow(/staged changes that would be included in the publish commit/);
+
+    const pushCall = mockExec.mock.calls.find((c) => c[1].includes('push'));
+    expect(pushCall).toBeUndefined();
   });
 });

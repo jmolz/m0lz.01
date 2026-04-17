@@ -35,6 +35,37 @@ interface SubprocessError extends Error {
   stderr?: Buffer | string;
 }
 
+// Fail closed when the index has ANY staged changes, so the caller's
+// subsequent `git commit` doesn't sweep operator-staged work into a
+// direct-push-to-main commit. Shared by updateFrontmatter and
+// updateProjectReadme: both direct-push steps have identical exposure
+// to this class of bug (Codex Pass 6 High).
+//
+// The `context` argument is a short label included in the thrown error
+// so the operator can tell which step failed ("frontmatter" or "readme").
+export function assertIndexClean(repoPath: string, context: string): void {
+  // Use `diff --cached --name-only` (a DIFFERENT command shape than the
+  // subsequent `diff --cached --quiet` used to detect post-add changes)
+  // so test mocks can distinguish the two checks without false positives.
+  // Output is the list of staged file paths, empty when clean.
+  const stagedRaw = execFileSync(
+    'git',
+    ['-C', repoPath, 'diff', '--cached', '--name-only'],
+    { encoding: 'utf-8' },
+  );
+  const stagedList = String(stagedRaw).trim();
+  if (stagedList.length === 0) {
+    return; // index is clean, safe to proceed
+  }
+  throw new Error(
+    `Cannot ${context === 'frontmatter' ? 'update post frontmatter' : 'update project README'}: ` +
+    `repo at '${repoPath}' has staged changes that would be included in the publish commit:\n` +
+    stagedList.split(/\r?\n/).map((s) => `  ${s}`).join('\n') + '\n' +
+    `Commit, unstage, or discard them before retrying. The publish pipeline refuses ` +
+    `to push anything it did not stage itself.`,
+  );
+}
+
 // Describe the commits HEAD has ahead of origin/main, with a strict match
 // check so the crash-replay push-ahead only fires when the ahead commits
 // are unambiguously our pipeline's prior work.
@@ -143,6 +174,15 @@ export function updateFrontmatter(
   execFileSync('git', ['-C', siteRepoPath, 'pull', '--ff-only'], {
     encoding: 'utf-8',
   });
+
+  // Index cleanness precheck: after the checkout+pull, but BEFORE our
+  // read/write/add, verify the operator hasn't left anything staged that
+  // would get swept into our chore(post): commit. `git commit` takes
+  // everything in the index by default — so without this guard a
+  // pre-existing staged file would ride along and hit origin/main under
+  // the publish-pipeline commit. Staged work persists across branch
+  // switches, so the checkout above does not clear it.
+  assertIndexClean(siteRepoPath, 'frontmatter');
 
   const mdxRelative = `${config.site.content_dir}/${slug}/index.mdx`;
   const mdxPath = join(siteRepoPath, mdxRelative);
