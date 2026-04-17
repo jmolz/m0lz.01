@@ -191,6 +191,12 @@ export async function runPublishStart(
         templatesDir,
       },
       urls: hydratedUrls,
+      // Phase 7: `blog publish start` always drives the initial-publish
+      // flow. The update flow uses `blog update publish` (Cluster B) which
+      // constructs its own ctx with publishMode='update' and a non-zero
+      // cycleId from the open update_cycles row.
+      publishMode: 'initial',
+      cycleId: 0,
     };
 
     let result;

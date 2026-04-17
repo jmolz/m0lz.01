@@ -76,6 +76,59 @@ author:
     expect(config.projects).toBeUndefined();
   });
 
+  it('applies Phase 7 updates defaults including new fields', () => {
+    const config = validateConfig({
+      site: { repo_path: '../m0lz.00', base_url: 'https://m0lz.dev' },
+      author: { name: 'Test', github: 'test' },
+    });
+
+    // Existing Phase 1 fields
+    expect(config.updates.preserve_original_data).toBe(true);
+    expect(config.updates.update_notice).toBe(true);
+    expect(config.updates.update_crosspost).toBe(true);
+    // Phase 7 additions
+    expect(config.updates.devto_update).toBe(true);
+    expect(config.updates.refresh_paste_files).toBe(true);
+    expect(config.updates.notice_template).toBe('Updated {DATE}: {SUMMARY}');
+    expect(config.updates.require_summary).toBe(true);
+    expect(config.updates.site_update_mode).toBe('pr');
+  });
+
+  it('applies Phase 7 unpublish defaults', () => {
+    const config = validateConfig({
+      site: { repo_path: '../m0lz.00', base_url: 'https://m0lz.dev' },
+      author: { name: 'Test', github: 'test' },
+    });
+
+    expect(config.unpublish.devto).toBe(true);
+    expect(config.unpublish.medium).toBe(true);
+    expect(config.unpublish.substack).toBe(true);
+    expect(config.unpublish.readme).toBe(true);
+  });
+
+  it('honors partial overrides for updates and unpublish', () => {
+    const config = validateConfig({
+      site: { repo_path: '../m0lz.00', base_url: 'https://m0lz.dev' },
+      author: { name: 'Test', github: 'test' },
+      updates: {
+        site_update_mode: 'direct',
+        require_summary: false,
+      },
+      unpublish: {
+        readme: false,
+      },
+    });
+
+    expect(config.updates.site_update_mode).toBe('direct');
+    expect(config.updates.require_summary).toBe(false);
+    // Defaults preserved for non-overridden fields
+    expect(config.updates.devto_update).toBe(true);
+    expect(config.updates.notice_template).toBe('Updated {DATE}: {SUMMARY}');
+
+    expect(config.unpublish.readme).toBe(false);
+    expect(config.unpublish.devto).toBe(true);
+  });
+
   it('accepts site.research_dir override', () => {
     const config = validateConfig({
       site: { repo_path: '../m0lz.00', base_url: 'https://m0lz.dev', research_dir: 'content/notes' },

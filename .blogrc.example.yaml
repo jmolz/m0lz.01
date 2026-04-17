@@ -74,6 +74,18 @@ updates:
   preserve_original_data: true     # Keep original benchmark data alongside updates
   update_notice: true              # Append update notice with date and summary
   update_crosspost: true           # Attempt to update Dev.to cross-posts
+  devto_update: true               # Phase 7: PUT Dev.to article body on update publish
+  refresh_paste_files: true        # Phase 7: regenerate Medium/Substack paste with update framing
+  notice_template: "Updated {DATE}: {SUMMARY}"  # Phase 7: template with {DATE} / {SUMMARY} placeholders
+  require_summary: true            # Phase 7: enforce --summary flag on `blog update start`
+  site_update_mode: "pr"           # Phase 7: "pr" (default, reviewed) or "direct" (push straight to main)
+
+unpublish:
+  devto: true                      # PUT published:false on the Dev.to article
+  medium: true                     # Generate manual-removal instructions for Medium
+  substack: true                   # Generate manual-removal instructions for Substack
+  readme: true                     # Remove writing link from project README
+  # Site revert is deliberately PR-only — no `site_revert_mode` flag here.
 
 # Optional: companion project repo paths keyed by catalog ID (e.g. m0lz.02).
 # Used by the publish pipeline when a post's frontmatter `project:` field

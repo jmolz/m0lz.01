@@ -144,6 +144,37 @@ export function persistPublishUrls(
   );
 }
 
+// Shared lockfile PID-ownership check for every finalizer that must run
+// "under the lock" (Phase 7: publish complete, update complete, unpublish
+// complete). Callers pass the work as a closure; this helper asserts the
+// lockfile exists AND stores the current process's PID, then invokes the
+// body. Centralizing the check guarantees every finalizer has the same
+// crash-safe guardrail against silent racing with a concurrent pipeline
+// that forgot to acquire the lock.
+export function finalizePipelineUnderLock(
+  publishDir: string,
+  slug: string,
+  body: () => void,
+): void {
+  const lockPath = join(publishDir, slug, '.publish.lock');
+  if (!existsSync(lockPath)) {
+    throw new Error(
+      `finalizePipelineUnderLock requires the publish lock to be held for ` +
+      `'${slug}' at ${lockPath}, but the lockfile does not exist. Call the ` +
+      `public (non-UnderLock) wrapper from callers outside the pipeline runner.`,
+    );
+  }
+  const heldPid = parseInt(readFileSync(lockPath, 'utf-8').trim(), 10);
+  if (!Number.isFinite(heldPid) || heldPid !== process.pid) {
+    throw new Error(
+      `finalizePipelineUnderLock requires the slug-scoped lock to be held by ` +
+      `this process (pid=${process.pid}) but the lockfile stores pid=${heldPid}. ` +
+      `Call the public (non-UnderLock) wrapper instead.`,
+    );
+  }
+  body();
+}
+
 // Internal variant used by the pipeline runner, which already holds the
 // slug-scoped lock. Skips the lock acquisition to avoid a re-entry deadlock
 // (the lock is non-reentrant by design — `process.kill(pid, 0)` for the
@@ -154,85 +185,153 @@ export function persistPublishUrls(
 // `published`, this is a no-op. This makes the runner tolerant of the
 // benign race where two processes both reach completion under the same
 // lock handoff.
-//
-// Runtime guardrail: we READ the lockfile and assert it exists AND stores
-// the current process's PID. Callers that forgot to acquire the lock (or
-// acquired for a different slug) fail loudly with a descriptive error
-// instead of silently racing with a concurrent pipeline. This is why the
-// function takes `publishDir` — to locate the lockfile.
 export function completePublishUnderLock(
   db: Database.Database,
   slug: string,
   urls: PublishUrls,
   publishDir: string,
 ): void {
-  const lockPath = join(publishDir, slug, '.publish.lock');
-  if (!existsSync(lockPath)) {
-    throw new Error(
-      `completePublishUnderLock requires the publish lock to be held for '${slug}' ` +
-      `at ${lockPath}, but the lockfile does not exist. Call completePublish ` +
-      `(which acquires the lock) from callers outside the pipeline runner.`,
-    );
-  }
-  const heldPid = parseInt(readFileSync(lockPath, 'utf-8').trim(), 10);
-  if (!Number.isFinite(heldPid) || heldPid !== process.pid) {
-    throw new Error(
-      `completePublishUnderLock requires the slug-scoped lock to be held by ` +
-      `this process (pid=${process.pid}) but the lockfile stores pid=${heldPid}. ` +
-      `Call completePublish instead.`,
-    );
-  }
+  finalizePipelineUnderLock(publishDir, slug, () => {
+    const post = db.prepare('SELECT * FROM posts WHERE slug = ?').get(slug) as PostRow | undefined;
+    if (!post) {
+      throw new Error(`Post not found: ${slug}`);
+    }
+    if (post.phase === 'published') {
+      // Another runner already completed the phase transition — URLs were
+      // written per-step, so the row is already correct.
+      return;
+    }
+    if (post.phase !== 'publish') {
+      throw new Error(
+        `Post '${slug}' is in phase '${post.phase}', not 'publish'. ` +
+        `Publish commands only operate on posts in the publish phase.`,
+      );
+    }
+    if (!allStepsComplete(db, slug, 0)) {
+      throw new Error(
+        `Cannot complete publish for '${slug}': not every pipeline step is completed or skipped. ` +
+        `Run 'blog publish' to finish remaining steps, or inspect 'blog status ${slug}' for blocked steps.`,
+      );
+    }
 
-  const post = db.prepare('SELECT * FROM posts WHERE slug = ?').get(slug) as PostRow | undefined;
-  if (!post) {
-    throw new Error(`Post not found: ${slug}`);
-  }
-  if (post.phase === 'published') {
-    // Another runner already completed the phase transition — URLs were
-    // written per-step, so the row is already correct.
-    return;
-  }
-  if (post.phase !== 'publish') {
-    throw new Error(
-      `Post '${slug}' is in phase '${post.phase}', not 'publish'. ` +
-      `Publish commands only operate on posts in the publish phase.`,
-    );
-  }
-  if (!allStepsComplete(db, slug)) {
-    throw new Error(
-      `Cannot complete publish for '${slug}': not every pipeline step is completed or skipped. ` +
-      `Run 'blog publish' to finish remaining steps, or inspect 'blog status ${slug}' for blocked steps.`,
-    );
-  }
+    const tx = db.transaction(() => {
+      advancePhase(db, slug, 'published');
+      // Coalesce-style UPDATE: each column takes the supplied URL when
+      // present, otherwise keeps its current value. Combined with per-step
+      // persistence via `persistPublishUrls`, this means `urls` can be empty
+      // here without data loss — a concurrent runner that reaches this path
+      // with `ctx.urls = {}` still sees the correct row because prior steps
+      // already persisted their outputs.
+      db.prepare(`
+        UPDATE posts
+        SET published_at = CURRENT_TIMESTAMP,
+            site_url = COALESCE(?, site_url),
+            devto_url = COALESCE(?, devto_url),
+            medium_url = COALESCE(?, medium_url),
+            substack_url = COALESCE(?, substack_url),
+            repo_url = COALESCE(?, repo_url),
+            updated_at = CURRENT_TIMESTAMP
+        WHERE slug = ?
+      `).run(
+        urls.site_url ?? null,
+        urls.devto_url ?? null,
+        urls.medium_url ?? null,
+        urls.substack_url ?? null,
+        urls.repo_url ?? null,
+        slug,
+      );
 
-  const tx = db.transaction(() => {
-    advancePhase(db, slug, 'published');
-    // Coalesce-style UPDATE: each column takes the supplied URL when
-    // present, otherwise keeps its current value. Combined with per-step
-    // persistence via `persistPublishUrls`, this means `urls` can be empty
-    // here without data loss — a concurrent runner that reaches this path
-    // with `ctx.urls = {}` still sees the correct row because prior steps
-    // already persisted their outputs.
-    db.prepare(`
-      UPDATE posts
-      SET published_at = CURRENT_TIMESTAMP,
-          site_url = COALESCE(?, site_url),
-          devto_url = COALESCE(?, devto_url),
-          medium_url = COALESCE(?, medium_url),
-          substack_url = COALESCE(?, substack_url),
-          repo_url = COALESCE(?, repo_url),
-          updated_at = CURRENT_TIMESTAMP
-      WHERE slug = ?
-    `).run(
-      urls.site_url ?? null,
-      urls.devto_url ?? null,
-      urls.medium_url ?? null,
-      urls.substack_url ?? null,
-      urls.repo_url ?? null,
-      slug,
-    );
+      // Metrics audit — one row per cycle close, per Phase 7 adversarial
+      // review finding #7 ("every destructive/cycle action writes a row").
+      db.prepare(
+        `INSERT INTO metrics (post_slug, event, value) VALUES (?, 'published', ?)`,
+      ).run(slug, null);
+    });
+    tx();
   });
-  tx();
+}
+
+// Phase 7: update-mode finalizer. Called by the runner when every
+// pipeline_steps row for the cycle reaches completed/skipped. Closes the
+// open update_cycles row, increments `posts.update_count`, sets
+// `posts.last_updated_at`, persists URLs, writes a metrics row. Does NOT
+// change `posts.phase` — updates keep the post in `published`.
+//
+// Idempotent on an already-closed cycle: the UPDATE's WHERE closed_at IS
+// NULL clause makes a second invocation a no-op with info.changes=0. We
+// intentionally do NOT throw on the no-op branch because the runner may
+// legitimately re-invoke after a benign crash where the tx committed but
+// the runner couldn't observe it — idempotency is the contract.
+export function completeUpdateUnderLock(
+  db: Database.Database,
+  slug: string,
+  cycleId: number,
+  urls: PublishUrls,
+  publishDir: string,
+): void {
+  finalizePipelineUnderLock(publishDir, slug, () => {
+    const post = db.prepare('SELECT * FROM posts WHERE slug = ?').get(slug) as PostRow | undefined;
+    if (!post) {
+      throw new Error(`Post not found: ${slug}`);
+    }
+    if (post.phase !== 'published') {
+      throw new Error(
+        `Post '${slug}' is in phase '${post.phase}', not 'published'. ` +
+        `Update cycles only operate on published posts.`,
+      );
+    }
+    if (!allStepsComplete(db, slug, cycleId)) {
+      throw new Error(
+        `Cannot complete update cycle ${cycleId} for '${slug}': ` +
+        `not every pipeline step is completed or skipped.`,
+      );
+    }
+
+    const tx = db.transaction(() => {
+      // Close the cycle row. WHERE closed_at IS NULL makes the UPDATE a
+      // no-op for an already-closed cycle (idempotent).
+      const cycleInfo = db
+        .prepare(
+          `UPDATE update_cycles
+           SET closed_at = CURRENT_TIMESTAMP,
+               ended_reason = 'completed'
+           WHERE id = ? AND post_slug = ? AND closed_at IS NULL`,
+        )
+        .run(cycleId, slug);
+
+      if (cycleInfo.changes === 0) {
+        // Either the cycle doesn't exist (operator error — we'd throw
+        // earlier during step execution) OR it was already closed by a
+        // concurrent runner (benign). Treat as benign no-op.
+        return;
+      }
+
+      db.prepare(`
+        UPDATE posts
+        SET update_count = update_count + 1,
+            last_updated_at = CURRENT_TIMESTAMP,
+            site_url = COALESCE(?, site_url),
+            devto_url = COALESCE(?, devto_url),
+            medium_url = COALESCE(?, medium_url),
+            substack_url = COALESCE(?, substack_url),
+            repo_url = COALESCE(?, repo_url),
+            updated_at = CURRENT_TIMESTAMP
+        WHERE slug = ?
+      `).run(
+        urls.site_url ?? null,
+        urls.devto_url ?? null,
+        urls.medium_url ?? null,
+        urls.substack_url ?? null,
+        urls.repo_url ?? null,
+        slug,
+      );
+
+      db.prepare(
+        `INSERT INTO metrics (post_slug, event, value) VALUES (?, 'update_completed', ?)`,
+      ).run(slug, String(cycleId));
+    });
+    tx();
+  });
 }
 
 // Public wrapper that acquires the slug-scoped FS lock and calls the

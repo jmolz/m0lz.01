@@ -42,6 +42,18 @@ const DEFAULT_UPDATES: BlogConfig['updates'] = {
   preserve_original_data: true,
   update_notice: true,
   update_crosspost: true,
+  devto_update: true,
+  refresh_paste_files: true,
+  notice_template: 'Updated {DATE}: {SUMMARY}',
+  require_summary: true,
+  site_update_mode: 'pr',
+};
+
+const DEFAULT_UNPUBLISH: BlogConfig['unpublish'] = {
+  devto: true,
+  medium: true,
+  substack: true,
+  readme: true,
 };
 
 export function loadConfig(configPath: string): BlogConfig {
@@ -137,6 +149,7 @@ export function validateConfig(raw: unknown): BlogConfig {
     social: { ...DEFAULT_SOCIAL, ...(obj.social as Partial<BlogConfig['social']>) },
     evaluation: { ...DEFAULT_EVALUATION, ...(obj.evaluation as Partial<BlogConfig['evaluation']>) },
     updates: { ...DEFAULT_UPDATES, ...(obj.updates as Partial<BlogConfig['updates']>) },
+    unpublish: { ...DEFAULT_UNPUBLISH, ...(obj.unpublish as Partial<BlogConfig['unpublish']>) },
     projects,
   };
 }

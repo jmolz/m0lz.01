@@ -122,6 +122,11 @@ function makeContext(f: Fixture, slug: string): PipelineContext {
       templatesDir: join(f.tempDir, 'templates'),
     },
     urls: {},
+    // Phase 7: `PipelineContext` now carries mode + cycleId. Initial-publish
+    // tests use mode='initial', cycleId=0 — the same values `runPublishStart`
+    // seeds on the first-cycle case.
+    publishMode: 'initial',
+    cycleId: 0,
   };
 }
 

@@ -40,6 +40,11 @@ export type PublishStepStatus =
 // Row shape for a single entry in the pipeline_steps table. Narrower than the
 // DB-generic PipelineStepRow in db/types.ts — step_name is constrained to the
 // 11 known publish step names and status to the publish-specific enum.
+//
+// Phase 7: `cycle_id` disambiguates the same step name across publish cycles.
+// Initial publish uses cycle_id=0; each update cycle uses update_cycles.id.
+// The DB UNIQUE constraint on (post_slug, cycle_id, step_name) enforces
+// per-cycle uniqueness.
 export interface PipelineStepRow {
   id: number;
   post_slug: string;
@@ -49,6 +54,7 @@ export interface PipelineStepRow {
   started_at: string | null;
   completed_at: string | null;
   error_message: string | null;
+  cycle_id: number;
 }
 
 // URLs collected across the publish pipeline. Each field is populated by the
