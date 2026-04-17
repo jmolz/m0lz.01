@@ -188,7 +188,7 @@ export async function runPipeline(
     //      `published` row, so a concurrent runner that reaches this path
     //      after another completed is a harmless no-op.
     if (allStepsComplete(ctx.db, ctx.slug)) {
-      completePublishUnderLock(ctx.db, ctx.slug, ctx.urls);
+      completePublishUnderLock(ctx.db, ctx.slug, ctx.urls, ctx.paths.publishDir);
       console.log(`Pipeline complete: ${ctx.slug} is now published`);
       return { completed: true, stepsRun, totalSteps: TOTAL_STEPS };
     }

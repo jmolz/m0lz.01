@@ -121,6 +121,42 @@ export function createSitePR(
   }
   const title = post.title ?? slug;
 
+  // Fail fast if the site repo has uncommitted state that isn't ours.
+  // Later in this function we stage ONLY pipeline-owned paths (content/
+  // posts/<slug>, content/research/<slug>) — but any pre-existing dirty
+  // state would still be in the working tree when the operator reviews
+  // the PR, and prior implementations used `git add .` which would have
+  // swept it into the commit outright. Failing closed here surfaces the
+  // issue before it reaches the PR instead of relying on visual review.
+  //
+  // Do NOT .trim() the output: `git status --porcelain` lines start with
+  // two status chars followed by a space, and trimming strips the leading
+  // space of the " M path" form — corrupting the subsequent slice(3).
+  // Split, drop empty trailing lines, then parse each line preserving its
+  // column alignment.
+  const porcelain = execFileSync(
+    'git',
+    ['-C', siteRepoPath, 'status', '--porcelain'],
+    { encoding: 'utf-8' },
+  );
+  const porcelainLines = porcelain.split(/\r?\n/).filter((line) => line.length > 0);
+  if (porcelainLines.length > 0) {
+    const ownedPrefixes = [
+      `${config.site.content_dir}/${slug}/`,
+      `${config.site.research_dir}/${slug}/`,
+    ];
+    const unrelated = porcelainLines
+      .map((line) => line.slice(3)) // strip the 2-char status + space
+      .filter((path) => !ownedPrefixes.some((prefix) => path.startsWith(prefix)));
+    if (unrelated.length > 0) {
+      throw new Error(
+        `Site repo at '${siteRepoPath}' has uncommitted changes unrelated to this post:\n` +
+        unrelated.map((p) => `  ${p}`).join('\n') + '\n' +
+        `Commit, stash, or discard them before running 'blog publish start ${slug}'.`,
+      );
+    }
+  }
+
   // Determine repo coordinates from the site repo's origin remote.
   const remoteUrl = execFileSync(
     'git',
@@ -172,8 +208,21 @@ export function createSitePR(
     cpSync(sourceResearchMdx, join(targetResearchDir, 'index.mdx'));
   }
 
-  // Stage everything.
-  execFileSync('git', ['-C', siteRepoPath, 'add', '.'], { encoding: 'utf-8' });
+  // Stage ONLY pipeline-owned paths. The dirty-state check at the top of
+  // this function rejects unrelated modifications, but path-scoped staging
+  // is a defense-in-depth: even if the check were bypassed (e.g., a new
+  // file landed between the check and the add), only our owned paths get
+  // committed.
+  const contentPath = `${config.site.content_dir}/${slug}`;
+  execFileSync('git', ['-C', siteRepoPath, 'add', contentPath], {
+    encoding: 'utf-8',
+  });
+  const researchPath = `${config.site.research_dir}/${slug}`;
+  if (existsSync(join(siteRepoPath, researchPath))) {
+    execFileSync('git', ['-C', siteRepoPath, 'add', researchPath], {
+      encoding: 'utf-8',
+    });
+  }
 
   // `git diff --cached --quiet` exits 1 when there ARE staged changes and 0
   // when the index is clean. Translate the exit code into a boolean.

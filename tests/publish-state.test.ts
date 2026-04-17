@@ -519,7 +519,13 @@ describe('persistPublishUrls — per-step URL persistence with first-writer-wins
   });
 });
 
-describe('completePublishUnderLock — idempotent across concurrent runners', () => {
+describe('completePublishUnderLock — lock ownership guardrail + idempotency', () => {
+  function writeOwnLockfile(publishDir: string, slug: string): void {
+    const slugDir = join(publishDir, slug);
+    mkdirSync(slugDir, { recursive: true });
+    writeFileSync(join(slugDir, '.publish.lock'), String(process.pid), 'utf-8');
+  }
+
   it('is a no-op when the post is already in the published phase', () => {
     const f = setup();
     seedPublishPost(f.db, 'already', 'analysis-opinion');
@@ -527,21 +533,58 @@ describe('completePublishUnderLock — idempotent across concurrent runners', ()
     for (const step of getPipelineSteps(f.db, 'already')) {
       if (step.status === 'pending') markStepCompleted(f.db, 'already', step.step_name);
     }
+    // Simulate the caller holding the lock by writing a lockfile stamped
+    // with our PID (matching the runtime guardrail's contract).
+    writeOwnLockfile(f.publishDir, 'already');
     // First caller wins and sets URLs.
     completePublishUnderLock(f.db, 'already', {
       site_url: 'https://m0lz.dev/writing/already',
       devto_url: 'https://dev.to/jmolz/already',
-    });
+    }, f.publishDir);
     const firstPhase = f.db.prepare('SELECT phase FROM posts WHERE slug = ?').get('already') as { phase: string };
     expect(firstPhase.phase).toBe('published');
     // Second caller with empty URL bundle — must NOT throw, must NOT clobber the URLs.
-    expect(() => completePublishUnderLock(f.db, 'already', {})).not.toThrow();
+    expect(() => completePublishUnderLock(f.db, 'already', {}, f.publishDir)).not.toThrow();
     const post = f.db
       .prepare('SELECT phase, site_url, devto_url FROM posts WHERE slug = ?')
       .get('already') as { phase: string; site_url: string; devto_url: string };
     expect(post.phase).toBe('published');
     expect(post.site_url).toBe('https://m0lz.dev/writing/already');
     expect(post.devto_url).toBe('https://dev.to/jmolz/already');
+  });
+
+  it('throws when called without a lockfile present (caller did not acquire the lock)', () => {
+    const f = setup();
+    seedPublishPost(f.db, 'nolock', 'analysis-opinion');
+    createPipelineSteps(f.db, 'nolock', 'analysis-opinion', makeConfig(), { hasResearchArtifact: false });
+    for (const step of getPipelineSteps(f.db, 'nolock')) {
+      if (step.status === 'pending') markStepCompleted(f.db, 'nolock', step.step_name);
+    }
+    // No writeOwnLockfile — lockfile is absent.
+    expect(() => completePublishUnderLock(f.db, 'nolock', {}, f.publishDir)).toThrow(
+      /requires the publish lock to be held/,
+    );
+    // Phase was NOT advanced — the runtime guardrail fired before any UPDATE.
+    const phase = f.db.prepare('SELECT phase FROM posts WHERE slug = ?').get('nolock') as { phase: string };
+    expect(phase.phase).toBe('publish');
+  });
+
+  it('throws when the lockfile holds a different PID (another process owns the lock)', () => {
+    const f = setup();
+    seedPublishPost(f.db, 'otherpid', 'analysis-opinion');
+    createPipelineSteps(f.db, 'otherpid', 'analysis-opinion', makeConfig(), { hasResearchArtifact: false });
+    for (const step of getPipelineSteps(f.db, 'otherpid')) {
+      if (step.status === 'pending') markStepCompleted(f.db, 'otherpid', step.step_name);
+    }
+    // Write a lockfile with a PID that is NOT ours. The guardrail must
+    // refuse: this process did not acquire the lock, even though some
+    // other process apparently did.
+    const slugDir = join(f.publishDir, 'otherpid');
+    mkdirSync(slugDir, { recursive: true });
+    writeFileSync(join(slugDir, '.publish.lock'), String(process.pid + 1), 'utf-8');
+    expect(() => completePublishUnderLock(f.db, 'otherpid', {}, f.publishDir)).toThrow(
+      /lock to be held by this process/,
+    );
   });
 });
 

@@ -1,3 +1,6 @@
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
 import Database from 'better-sqlite3';
 
 import { BlogConfig } from '../config/types.js';
@@ -151,11 +154,35 @@ export function persistPublishUrls(
 // `published`, this is a no-op. This makes the runner tolerant of the
 // benign race where two processes both reach completion under the same
 // lock handoff.
+//
+// Runtime guardrail: we READ the lockfile and assert it exists AND stores
+// the current process's PID. Callers that forgot to acquire the lock (or
+// acquired for a different slug) fail loudly with a descriptive error
+// instead of silently racing with a concurrent pipeline. This is why the
+// function takes `publishDir` — to locate the lockfile.
 export function completePublishUnderLock(
   db: Database.Database,
   slug: string,
   urls: PublishUrls,
+  publishDir: string,
 ): void {
+  const lockPath = join(publishDir, slug, '.publish.lock');
+  if (!existsSync(lockPath)) {
+    throw new Error(
+      `completePublishUnderLock requires the publish lock to be held for '${slug}' ` +
+      `at ${lockPath}, but the lockfile does not exist. Call completePublish ` +
+      `(which acquires the lock) from callers outside the pipeline runner.`,
+    );
+  }
+  const heldPid = parseInt(readFileSync(lockPath, 'utf-8').trim(), 10);
+  if (!Number.isFinite(heldPid) || heldPid !== process.pid) {
+    throw new Error(
+      `completePublishUnderLock requires the slug-scoped lock to be held by ` +
+      `this process (pid=${process.pid}) but the lockfile stores pid=${heldPid}. ` +
+      `Call completePublish instead.`,
+    );
+  }
+
   const post = db.prepare('SELECT * FROM posts WHERE slug = ?').get(slug) as PostRow | undefined;
   if (!post) {
     throw new Error(`Post not found: ${slug}`);
@@ -219,7 +246,7 @@ export function completePublish(
 ): void {
   const release = acquirePublishLock(publishDir, slug);
   try {
-    completePublishUnderLock(db, slug, urls);
+    completePublishUnderLock(db, slug, urls, publishDir);
   } finally {
     release();
   }

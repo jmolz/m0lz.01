@@ -126,6 +126,14 @@ type ExecMatcher = (cmd: string, args: string[]) => string | Error | null;
 
 function installExec(matcher: ExecMatcher): void {
   mockExec.mockImplementation((cmd: string, args: string[]) => {
+    // Common prelude: dirty-state check runs at the top of createSitePR.
+    // Default to "clean repo" so tests not focused on dirty-state detection
+    // don't need to add boilerplate. Tests that DO want to simulate a
+    // dirty repo bypass this by calling mockExec.mockImplementation
+    // directly instead of installExec.
+    if (cmd === 'git' && args.includes('status') && args.includes('--porcelain')) {
+      return '';
+    }
     const result = matcher(cmd, args);
     if (result instanceof Error) throw result;
     if (result === null) {
@@ -420,6 +428,101 @@ describe('createSitePR — git remote parsing', () => {
     });
 
     expect(() => createSitePR('weirdremote', f.config, f.paths, f.db)).toThrow(/Could not parse git remote URL/);
+  });
+});
+
+describe('createSitePR — dirty-state guardrail (Codex Pass 4 regression)', () => {
+  it('throws when the site repo has uncommitted changes unrelated to this post', () => {
+    const f = setup();
+    seedPost(f.db, 'dirty');
+    seedDraftMdx(f.draftsDir, 'dirty');
+
+    // Bypass installExec — we want full control of the status --porcelain
+    // response. The simulated dirty state includes an UNRELATED file that
+    // doesn't live under content/posts/dirty or content/research/dirty.
+    mockExec.mockImplementation((cmd: string, args: string[]) => {
+      if (cmd === 'git' && args.includes('status') && args.includes('--porcelain')) {
+        return ' M src/components/unrelated.tsx\n?? tmp/notes.md\n';
+      }
+      throw new Error(`Unexpected exec call: ${cmd} ${args.join(' ')}`);
+    });
+
+    expect(() => createSitePR('dirty', f.config, f.paths, f.db)).toThrow(
+      /uncommitted changes unrelated to this post/,
+    );
+  });
+
+  it('tolerates dirty state that is entirely under content/posts/<slug>/ (pipeline-owned)', () => {
+    const f = setup();
+    seedPost(f.db, 'ownedonly');
+    seedDraftMdx(f.draftsDir, 'ownedonly');
+
+    // Dirty state touches ONLY pipeline-owned paths — this is allowed
+    // because the copy + add sequence will overwrite it deterministically.
+    mockExec.mockImplementation((cmd: string, args: string[]) => {
+      if (cmd === 'git' && args.includes('status') && args.includes('--porcelain')) {
+        return ' M content/posts/ownedonly/index.mdx\n';
+      }
+      if (cmd === 'git' && args.includes('config') && args.includes('--get')) {
+        return 'git@github.com:jmolz/m0lz.00.git\n';
+      }
+      if (cmd === 'git' && args.includes('branch') && args.includes('--list')) return '';
+      if (cmd === 'git' && args.includes('checkout') && args.includes('-b')) return '';
+      if (cmd === 'git' && args.includes('add')) return '';
+      if (cmd === 'git' && args.includes('diff') && args.includes('--cached')) {
+        throw makeExecError(1);
+      }
+      if (cmd === 'git' && args.includes('commit')) return '';
+      if (cmd === 'git' && args.includes('push')) return '';
+      if (cmd === 'gh' && args.includes('list')) return '[]';
+      if (cmd === 'gh' && args.includes('create')) return 'https://github.com/jmolz/m0lz.00/pull/99';
+      throw new Error(`Unexpected exec call: ${cmd} ${args.join(' ')}`);
+    });
+
+    expect(() => createSitePR('ownedonly', f.config, f.paths, f.db)).not.toThrow();
+  });
+
+  it('stages only pipeline-owned paths — not `git add .`', () => {
+    const f = setup();
+    seedPost(f.db, 'scoped');
+    seedDraftMdx(f.draftsDir, 'scoped');
+
+    installExec((cmd, args) => {
+      if (cmd === 'git' && args.includes('config') && args.includes('--get')) {
+        return 'git@github.com:jmolz/m0lz.00.git\n';
+      }
+      if (cmd === 'git' && args.includes('branch') && args.includes('--list')) return '';
+      if (cmd === 'git' && args.includes('checkout') && args.includes('-b')) return '';
+      if (cmd === 'git' && args.includes('add')) return '';
+      if (cmd === 'git' && args.includes('diff') && args.includes('--cached')) {
+        throw makeExecError(1);
+      }
+      if (cmd === 'git' && args.includes('commit')) return '';
+      if (cmd === 'git' && args.includes('push')) return '';
+      if (cmd === 'gh' && args.includes('list')) return '[]';
+      if (cmd === 'gh' && args.includes('create')) return 'https://github.com/jmolz/m0lz.00/pull/42';
+      return null;
+    });
+
+    createSitePR('scoped', f.config, f.paths, f.db);
+
+    // Critical: no `git add .` call — staging must be path-scoped.
+    const addCalls = mockExec.mock.calls.filter(
+      (call) => call[0] === 'git' && (call[1] as string[]).includes('add'),
+    );
+    expect(addCalls.length).toBeGreaterThan(0);
+    for (const call of addCalls) {
+      const args = call[1] as string[];
+      expect(args).not.toContain('.');
+      // The path arg must be the last element and match one of the owned
+      // prefixes. Research dir is optional (existsSync check); when present
+      // it's also owned. Accept either.
+      const pathArg = args[args.length - 1];
+      expect(
+        pathArg === 'content/posts/scoped' ||
+        pathArg === 'content/research/scoped',
+      ).toBe(true);
+    }
   });
 });
 

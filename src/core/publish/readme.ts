@@ -5,7 +5,7 @@ import { dirname, join, resolve } from 'node:path';
 import Database from 'better-sqlite3';
 
 import { BlogConfig } from '../config/types.js';
-import { getAheadCount } from './frontmatter.js';
+import { inspectAheadCommits } from './frontmatter.js';
 
 // Step 10 of the publish pipeline: update the project README in the site
 // repo with a link back to the published post. Only applies to posts that
@@ -68,6 +68,17 @@ export function updateProjectReadme(
     return { updated: false, skipped: true, reason: `README.md not found in ${projectDir}` };
   }
 
+  // CRITICAL ordering: switch to main BEFORE any file mutation. Mirrors
+  // updateFrontmatter. Even though the project repo is typically already
+  // on main (the pipeline never switches its branch), defense-in-depth
+  // against an operator who happened to have it on a feature branch.
+  execFileSync('git', ['-C', projectDir, 'checkout', 'main'], {
+    encoding: 'utf-8',
+  });
+  execFileSync('git', ['-C', projectDir, 'pull', '--ff-only'], {
+    encoding: 'utf-8',
+  });
+
   const canonicalUrl = `${config.site.base_url}/writing/${slug}`;
   const title = post.title ?? slug;
 
@@ -97,15 +108,6 @@ export function updateProjectReadme(
 
   writeFileSync(readmePath, updatedContent, 'utf-8');
 
-  // Git: checkout main, pull, add, check staged, commit, push.
-  execFileSync('git', ['-C', projectDir, 'checkout', 'main'], {
-    encoding: 'utf-8',
-  });
-
-  execFileSync('git', ['-C', projectDir, 'pull', '--ff-only'], {
-    encoding: 'utf-8',
-  });
-
   execFileSync('git', ['-C', projectDir, 'add', readmePath], {
     encoding: 'utf-8',
   });
@@ -126,29 +128,36 @@ export function updateProjectReadme(
     }
   }
 
+  const expectedSubject = `chore: add writing link for ${slug}`;
+
   if (!hasStaged) {
-    // Same crash-between-commit-and-push protection as updateFrontmatter.
-    // A prior run may have committed the README change locally, crashed
-    // before `git push`, and left the worktree clean. Without this check,
-    // the retry would silently skip the push — project README on GitHub
-    // would never receive the writing link even though the pipeline
-    // marked the step completed.
-    const ahead = getAheadCount(projectDir);
-    if (ahead > 0) {
-      execFileSync('git', ['-C', projectDir, 'push', 'origin', 'main'], {
-        encoding: 'utf-8',
-      });
-      return {
-        updated: true,
-        reason: `Pushed ${ahead} previously-committed change(s) that never reached origin`,
-      };
+    // Strict crash-replay push-ahead: only fires when there is exactly
+    // one ahead commit whose subject matches our expected chore: and
+    // whose only touched file is README.md. Anything else (2+ ahead,
+    // wrong subject, unrelated file) is refused so we do not auto-push
+    // the operator's unrelated local work.
+    const backlog = inspectAheadCommits(projectDir, expectedSubject, 'README.md');
+    if (backlog.ahead === 0) {
+      return { updated: false, reason: 'No README changes staged' };
     }
-    return { updated: false, reason: 'No README changes staged' };
+    if (!backlog.matches) {
+      throw new Error(
+        `updateProjectReadme refused to push: ${backlog.reason ?? 'unexpected ahead commits'}. ` +
+        `Inspect '${projectDir}' manually (git log origin/main..HEAD) before retrying.`,
+      );
+    }
+    execFileSync('git', ['-C', projectDir, 'push', 'origin', 'main'], {
+      encoding: 'utf-8',
+    });
+    return {
+      updated: true,
+      reason: 'Pushed previously-committed change that never reached origin',
+    };
   }
 
   execFileSync(
     'git',
-    ['-C', projectDir, 'commit', '-m', `chore: add writing link for ${slug}`],
+    ['-C', projectDir, 'commit', '-m', expectedSubject],
     { encoding: 'utf-8' },
   );
 
