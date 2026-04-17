@@ -71,6 +71,52 @@ author:
     expect(config.publish.devto).toBe(true);
     expect(config.evaluation.min_sources).toBe(3);
     expect(config.social.platforms).toEqual(['linkedin', 'hackernews']);
+    expect(config.site.content_dir).toBe('content/posts');
+    expect(config.site.research_dir).toBe('content/research');
+    expect(config.projects).toBeUndefined();
+  });
+
+  it('accepts site.research_dir override', () => {
+    const config = validateConfig({
+      site: { repo_path: '../m0lz.00', base_url: 'https://m0lz.dev', research_dir: 'content/notes' },
+      author: { name: 'Test', github: 'test' },
+    });
+    expect(config.site.research_dir).toBe('content/notes');
+  });
+
+  it('parses projects map when provided', () => {
+    const config = validateConfig({
+      site: { repo_path: '../m0lz.00', base_url: 'https://m0lz.dev' },
+      author: { name: 'Test', github: 'test' },
+      projects: {
+        'm0lz.02': '../m0lz.02',
+        'm0lz.03': '../m0lz.03',
+      },
+    });
+    expect(config.projects).toEqual({
+      'm0lz.02': '../m0lz.02',
+      'm0lz.03': '../m0lz.03',
+    });
+  });
+
+  it('throws when projects is not an object', () => {
+    expect(() => {
+      validateConfig({
+        site: { repo_path: '../m0lz.00', base_url: 'https://m0lz.dev' },
+        author: { name: 'Test', github: 'test' },
+        projects: 'not-an-object',
+      });
+    }).toThrow('projects');
+  });
+
+  it('throws when a projects value is not a string', () => {
+    expect(() => {
+      validateConfig({
+        site: { repo_path: '../m0lz.00', base_url: 'https://m0lz.dev' },
+        author: { name: 'Test', github: 'test' },
+        projects: { 'm0lz.02': 42 },
+      });
+    }).toThrow("projects['m0lz.02']");
   });
 
   it('throws on non-existent config file', () => {

@@ -90,11 +90,29 @@ export function validateConfig(raw: unknown): BlogConfig {
     throw new Error('Missing required config field: author.github');
   }
 
+  // Validate optional projects map. When present, every value must be a string
+  // (the path to the project repo). We do NOT resolve these paths here; that
+  // happens at use time in the publish pipeline where the config path is known.
+  let projects: Record<string, string> | undefined;
+  if (obj.projects !== undefined) {
+    if (typeof obj.projects !== 'object' || obj.projects === null || Array.isArray(obj.projects)) {
+      throw new Error('Config field projects must be a map of {projectId: repoPath}');
+    }
+    projects = {};
+    for (const [k, v] of Object.entries(obj.projects as Record<string, unknown>)) {
+      if (typeof v !== 'string' || v.length === 0) {
+        throw new Error(`Config field projects['${k}'] must be a non-empty string path`);
+      }
+      projects[k] = v;
+    }
+  }
+
   return {
     site: {
       repo_path: site.repo_path,
       base_url: site.base_url,
       content_dir: (site.content_dir as string) || 'content/posts',
+      research_dir: (site.research_dir as string) || 'content/research',
     },
     author: {
       name: author.name,
@@ -119,5 +137,6 @@ export function validateConfig(raw: unknown): BlogConfig {
     social: { ...DEFAULT_SOCIAL, ...(obj.social as Partial<BlogConfig['social']>) },
     evaluation: { ...DEFAULT_EVALUATION, ...(obj.evaluation as Partial<BlogConfig['evaluation']>) },
     updates: { ...DEFAULT_UPDATES, ...(obj.updates as Partial<BlogConfig['updates']>) },
+    projects,
   };
 }

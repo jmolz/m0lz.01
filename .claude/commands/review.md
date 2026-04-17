@@ -88,7 +88,17 @@ npx vitest run \
   tests/evaluate-synthesize.test.ts \
   tests/evaluate-report.test.ts \
   tests/evaluate-state.test.ts \
-  tests/evaluate-cli.test.ts
+  tests/evaluate-cli.test.ts \
+  tests/publish-state.test.ts \
+  tests/publish-pipeline.test.ts \
+  tests/publish-convert.test.ts \
+  tests/publish-site.test.ts \
+  tests/publish-crosspost.test.ts \
+  tests/publish-social.test.ts \
+  tests/publish-research-page.test.ts \
+  tests/publish-repo.test.ts \
+  tests/publish-cli.test.ts \
+  tests/publish-site-updates.test.ts
 ```
 
 ### What each test covers
@@ -98,7 +108,7 @@ npx vitest run \
 | Test File | Feature | What It Validates |
 | --------- | ------- | ----------------- |
 | `tests/db.test.ts` (7 tests) | SQLite schema + connection | All 8 tables created (posts, sources, benchmarks, pipeline_steps, assets, evaluations, evaluation_synthesis, metrics); `user_version` matches `SCHEMA_VERSION`; WAL mode enabled on file-backed DB; foreign keys enforced; CHECK constraints reject invalid phase values; insert/retrieve round-trip works |
-| `tests/config.test.ts` (6 tests) | `.blogrc.yaml` loader | Valid config parses with repo_path resolved relative to config dir; missing `site.repo_path` / `author.name` / `author.github` throw descriptive errors; optional sections get sensible defaults; non-existent config file throws |
+| `tests/config.test.ts` (10 tests) | `.blogrc.yaml` loader | Valid config parses with repo_path resolved relative to config dir; missing `site.repo_path` / `author.name` / `author.github` throw descriptive errors; optional sections get sensible defaults; non-existent config file throws; Phase 6 adds: `site.research_dir` defaults to `content/posts/research` when omitted; `projects` field accepted as optional map; `projects` validation rejects non-object entries; `projects` keys allowed to use dots (e.g., `m0lz.02`) |
 | `tests/import.test.ts` (5 tests) | m0lz.00 post import | Posts imported from fixture directory with correct frontmatter mapping (slug, title, phase=published, mode=imported, site_url pattern, project_id, repo_url); idempotent on re-run (INSERT OR IGNORE); throws on missing posts directory; skips posts with malformed YAML frontmatter and warns; skips posts missing required title field |
 | `tests/ideas.test.ts` (11 tests) | Editorial backlog CRUD | `loadIdeas` returns empty array for missing file; `saveIdeas` creates YAML and handles empty list; appends to existing file; priority sorting; `startIdea` creates DB row with phase=research and removes from YAML; `startIdea` throws on invalid index; `removeIdea` removes correct entry by priority-sorted index; `removeIdea` throws on invalid index; `saveIdeas` idempotent on identical content; `startIdea` honors INSERT OR IGNORE on slug collision |
 | `tests/content-types.test.ts` (6 tests) | Content type detection | Catalog project IDs (`m0lz.XX`) return `project-launch`; benchmark keywords return `technical-deep-dive`; generic prompts return `analysis-opinion`; project ID takes priority over benchmark keywords; empty prompt returns default; "test-driven development" does NOT false-positive as benchmark |
@@ -145,6 +155,21 @@ npx vitest run \
 | `tests/evaluate-state.test.ts` (78 tests) | Evaluation state lifecycle | `expectedReviewers` routes content types to 3 vs 2 reviewers; `getEvaluatePost` enforces phase boundary; `initEvaluation` creates manifest with correct reviewers, is idempotent, promotes from draft, rejects wrong phase, purges stale reviewer artifacts when rolling a new cycle; `recordReview` inserts row, rejects reviewer mismatch between arg and output, rejects reviewer not in expected list for `analysis-opinion`, allows re-record with dedupe on `listRecordedReviewers`, enforces phase boundary; `runSynthesis` throws on missing reviewers, writes row + report on success, updates `posts.evaluation_passed`, throws on corrupt `issues_json` without writing partial row, captures `MAX(id)` inside the synthesis transaction (race-free pin); `completeEvaluation` advances on pass, throws on fail, throws without synthesis, fail-closed when synthesis pin is missing; `rejectEvaluation` moves back to draft with `.rejected_at` marker, flags subsequent records with `is_update_review=1`, enforces phase; `readReviewerOutputFromFile` validates; `listRecordedReviewers` / `readManifest` return correct shape |
 | `tests/evaluate-cli.test.ts` (21 tests) | Evaluate CLI handlers | `runEvaluateInit` creates 3-reviewer manifest for technical-deep-dive, 2-reviewer for analysis-opinion, promotes draft-phase posts; all 7 handlers set `exitCode=1` for invalid slugs; `runEvaluateAutocheck` writes `structural.lint.json` that is byte-equal across reruns; `runEvaluateRecord` rejects malformed JSON with descriptive error, rejects reviewer not in expected list (methodology for analysis-opinion), rejects invalid reviewer enum; `runEvaluateShow` prints status table and verdict, cycle-scoped after reject+re-init (prior reviewers render as pending, old verdict not shown as current, historical cycles summarized); `runEvaluateSynthesize` refuses when reviewers missing, prints pass verdict after all recorded; `runEvaluateComplete` advances to publish on pass, `exitCode=1` on fail; `runEvaluateReject` moves to draft (verified via direct DB query), enforces phase boundary |
 
+**Phase 6 — Publish (feature/phase-6-publish)**
+
+| Test File | Feature | What It Validates |
+| --------- | ------- | ----------------- |
+| `tests/publish-state.test.ts` (43 tests) | Phase + steps-crud + lock + crash-safety helpers | `getPublishPost` phase boundary; `initPublishFromEvaluate` rejects non-evaluate phase, rejects `evaluation_passed=0`, idempotent when already in publish; `initPublish` acquires lock, advances phase, seeds 11 `pipeline_steps` rows via `INSERT OR IGNORE`; `createPipelineSteps` applies content-type + config pre-skips (analysis-opinion skips companion-repo + research-page, project-launch skips companion-repo, `publish.devto/medium/substack=false` skips corresponding steps); `getNextPendingStep` returns first pending OR failed in step_number order; `markStepRunning/Completed/Failed/Skipped` transitions work; `allStepsComplete` requires all 11 rows completed or skipped; `reclaimStaleRunning` demotes `running` → `pending` and returns count (Codex-Critical-1 regression); **`reconcilePipelineSteps` downgrades pending/failed rows to skipped when current config disables them — operator can toggle optional destinations (publish.devto/medium/substack) between runs (Codex Pass 6 regression); does NOT upgrade skipped rows back to pending (sticky-within-cycle policy)**; `persistPublishUrls` first-writer-wins via COALESCE (Codex-Critical-2 regression); `completePublishUnderLock` idempotent on already-published row; **runtime lock-ownership guardrail: throws when lockfile missing (Codex Pass 4 Suggestion); throws when lockfile holds different PID**; `completePublish` gates on `allStepsComplete`, COALESCE URL writes; `acquirePublishLock` stamps PID, blocks live-holder, reclaims dead-PID stale, reclaims empty/garbage lockfile; release is idempotent |
+| `tests/publish-pipeline.test.ts` (20 tests) | `runPipeline` orchestrator + crash-safety regressions | Runs steps in step_number order; skips already-completed on resume; re-runs failed steps; stops on `paused` outcome and reverts step to pending; stops on `failed` outcome and records `error_message`; stops on thrown exception; merges `urlUpdates` into `ctx.urls` in-memory AND persists to posts row per-step via transaction (crash-safety); completes pipeline when all steps terminal, advances phase via `completePublishUnderLock`; does NOT advance on failure/pause; releases lock after success + failure; returns `{completed, stepsRun, totalSteps, failedStep?, pausedStep?}`; defensive branch when pipeline_steps table is empty; **regression: reclaims stuck `running` step on resume and re-executes in order (Codex-Critical-1); persists URLs per-step even if process dies before completion (Codex-Critical-2); does not deadlock at completion (no release-then-reacquire); reconciles pending rows against current config so operators can disable optional destinations mid-pipeline (Codex Pass 6 regression)** |
+| `tests/publish-convert.test.ts` (12 tests) | MDX → Markdown converter | Strips YAML frontmatter; removes `import` statements outside fences; removes JSX self-closing tags; preserves text children of block JSX; resolves relative `./assets/x` and `assets/x` to absolute `{base}/writing/{slug}/assets/x`; **preserves code blocks verbatim — no JSX stripping / no URL resolution inside ``` fences, including nested backtick fences (```` vs ```)**; preserves tables, headings, lists; collapses 3+ blank lines to 2; passthrough for plain Markdown; handles empty input |
+| `tests/publish-site.test.ts` (18 tests) | `createSitePR` + `checkPreviewGate` (site repo PR management) | Copies draft MDX to `{siteRepoPath}/{config.site.content_dir}/{slug}/index.mdx`; copies assets directory recursively; copies research page to `config.site.research_dir`; creates branch `post/{slug}` from main; idempotent on existing branch (checkout vs create); commits with `feat(post):` prefix; pushes and opens PR via `gh pr create`; idempotent on existing PR (skips create); writes `pr-number.txt` for preview-gate lookup; `checkPreviewGate` polls `gh pr view --json state,mergedAt`, returns `merged=true` when MERGED, returns `merged=false` with guidance when open; all subprocess via `execFileSync` with argv arrays (no shell); **dirty-state guardrail: throws when repo has uncommitted unrelated changes (Codex Pass 4 regression); tolerates dirty state under pipeline-owned paths; stages only `content/posts/{slug}` and `content/research/{slug}` — no `git add .`**; **rename/copy porcelain parsing: rejects R/C records whose destination escapes owned prefixes (Codex Pass 5 regression); tolerates renames where both source and destination are owned** |
+| `tests/publish-crosspost.test.ts` (18 tests) | Dev.to probe-then-create + Medium + Substack paste | `mapDevToTags` lowercases, hyphenates spaces, strips non-alphanumeric, caps at 4, drops empty; `crosspostToDevTo` skips when `DEVTO_API_KEY` missing or empty; builds POST with api-key header, canonical_url, `published:false`, tags, description; throws on 422 with context; throws on 503+; **probe-then-create: GET `/api/articles/me/all` before POST, returns existing id/url if canonical_url matches (Codex Pass 2 regression); trailing-slash normalization; probe failure throws (no fall-through to POST); paginates beyond page 1 (match on page 2); stops on short page (no unnecessary page 2 fetch) — Codex Pass 3 regression**; `generateMediumPaste` writes file with H1 title, description, body, canonical footer, creates nested `socialDir/slug`; `generateSubstackPaste` same pattern with H1 title + H2 subtitle; both apply mdxToMarkdown preserving code blocks |
+| `tests/publish-social.test.ts` (14 tests) | LinkedIn + Hacker News text generation | `containsEmoji` detects U+1F300-1FAFF and U+2600-27BF ranges; `generateLinkedIn` fills template with title, description, takeaway, canonical_url, hashtags from tags; throws if output contains emojis; includes timing recommendation when `config.social.timing_recommendations=true`; writes to `{socialDir}/{slug}/linkedin.md`; `generateHackerNews` title ≤80 chars (truncates with ellipsis); `Show HN:` prefix ONLY for `project-launch`, no prefix for `technical-deep-dive` / `analysis-opinion`; includes first-comment, canonical_url, repo link; throws on emoji; writes `hackernews.md`; creates output dir |
+| `tests/publish-research-page.test.ts` (10 tests) | Research page MDX generator | Generates from research doc + benchmark results; includes thesis, key findings, bibliography; cross-links to post canonical URL and companion repo URL; skips for `analysis-opinion` when research doc absent with clear reason; generates for `analysis-opinion` WHEN research doc present; fills template placeholders (`{{title}}`, `{{thesis}}`, etc.); **reads description from draft MDX frontmatter, not from posts table (schema has no description column)**; idempotent (second run overwrites consistently); throws when template file missing; throws when post not in DB |
+| `tests/publish-repo.test.ts` (21 tests) | Companion repo probe-then-create + origin-URL guardrail | Skips for `analysis-opinion` with reason "No companion repo for analysis-opinion"; skips for `project-launch` with reason "Existing project repo"; for `technical-deep-dive`: probes with `gh repo view`, success → ensures remote and pushes to main; missing → runs `gh repo create --public --source=. --push` with description; race fallback on "already exists" stderr → adds remote + pushes; builds repo name as `{config.author.github}/{slug}` (not hardcoded); returns `repo_url` for frontmatter propagation; handles `reposDir/{slug}` missing as skip; subprocess via `execFileSync`; **origin-URL guardrail (Codex Pass 5 Critical regression): throws when origin points at a different GitHub repo (SSH or HTTPS form), throws for non-GitHub remotes, accepts when owner/name match; race-fallback branch enforces the same guardrail**; `parseGitHubRemoteUrl` helper validated across SSH-with/without-.git, HTTPS-with/without-.git, non-GitHub hosts, garbage input |
+| `tests/publish-cli.test.ts` (15 tests) | Publish CLI handlers (`blog publish start` / `show`) | Invalid slug → exitCode=1 before DB open; post not found → descriptive error; wrong phase (e.g., research) → exitCode=1 with valid-phases hint; evaluate phase → promotes + seeds 11 steps + runs pipeline; publish phase → resumes without duplicating rows; runner `completed:true` → success log; `pausedStep` → info log (NOT error); `failedStep` → exitCode=1; runner throws → "pipeline crashed" message; `runPublishShow` prints slug/phase/step table; empty table prints "No pipeline steps yet"; malformed config is best-effort (show still prints); **ctx.urls hydrated from posts row URL columns before runPipeline (Codex Pass 2 regression) — resumed runs see prior-invocation URLs**; fresh publish hydrates to empty object |
+| `tests/publish-site-updates.test.ts` (20 tests) | `updateFrontmatter` + `updateProjectReadme` (direct-push steps 9 & 10) | `updateFrontmatter`: **switches to main BEFORE any file mutation (Codex Pass 4 Critical regression — prior ordering made checkout fail on stale local main)**; writes `published:true`, `canonical`, `devto_url`, `companion_repo` to site MDX frontmatter; commits with `chore(post):` prefix; pushes to `origin main`; uses `execFileSync` with argv arrays; idempotent no-op when nothing staged AND HEAD not ahead of origin; **crash-replay push-ahead uses `inspectAheadCommits` with strict match: requires exactly 1 ahead commit, subject == `chore(post): {slug} add platform URLs`, touched file == `{content_dir}/{slug}/index.mdx` — throws on wrong subject, wrong file, or 2+ commits ahead (Codex Pass 4 High regression prevents shipping operator's unrelated local work)**; throws on missing site repo; throws on missing MDX; **index-cleanness guardrail via `assertIndexClean`: refuses to proceed when operator has staged unrelated files — otherwise the subsequent `git commit` would sweep them into the chore(post): commit and push to origin/main (Codex Pass 6 regression)**; `updateProjectReadme`: resolves `config.projects[id]` against `dirname(configPath)` (relative path works); switches to main before file mutation; same index-cleanness guardrail on project repo; inserts link under `## Writing` heading; creates heading when absent; **commits with `chore:` prefix (not `docs:`) per contract**; skips when no `project_id`, when no `projects` config entry, when project dir missing; idempotent when canonical URL already in README; crash-replay push-ahead uses same strict match; refuses to push unrelated local README commits; throws on missing post |
+
 ### Source files these tests protect
 
 - `src/core/db/schema.ts` — SQL schema for all 8 tables, SCHEMA_VERSION constant
@@ -182,6 +207,28 @@ npx vitest run \
 - `src/core/evaluate/report.ts` — `renderSynthesisReport`
 - `src/core/evaluate/state.ts` — `getEvaluatePost`, `expectedReviewers`, `initEvaluation`, `recordReview`, `runSynthesis`, `completeEvaluation`, `rejectEvaluation`, phase boundary enforcement
 - `skills/blog-evaluate.md` — three-reviewer workflow, Codex CLI invocation templates, degraded-mode fallback
+- `src/cli/publish.ts` — `runPublishStart`/`runPublishShow`, `PublishCliPaths`, slug validation, phase dispatch (evaluate→promote, publish→resume), ctx.urls hydration from posts row
+- `src/core/publish/types.ts` — `PUBLISH_STEP_NAMES` 11-tuple (authoritative ordering), `PublishStepName`/`PublishStepStatus` enums, `PipelineStepRow`, `PublishUrls`, `PublishPaths`, `PostRow` re-export
+- `src/core/publish/lock.ts` — `acquirePublishLock` (O_CREAT|O_EXCL + PID stamp, stale-PID reclaim via `process.kill(pid,0)`, empty/garbage lockfile reclaim, Atomics.wait spin, release is idempotent)
+- `src/core/publish/phase.ts` — `getPublishPost`, `initPublishFromEvaluate`, `initPublish`, `completePublish`, `completePublishUnderLock` (no lock re-entry, idempotent on `published`, runtime lock-ownership guardrail: reads lockfile + verifies PID matches process.pid), `persistPublishUrls` (COALESCE first-writer-wins)
+- `src/core/publish/steps-crud.ts` — `createPipelineSteps` (content-type + config pre-skips), `getNextPendingStep`, `markStepRunning/Completed/Failed/Skipped`, `getPipelineSteps`, `allStepsComplete`, `reclaimStaleRunning` (crash-safety), `reconcilePipelineSteps` (resume-time re-application of config-driven skips so optional destinations can be disabled between runs)
+- `src/core/publish/convert.ts` — `mdxToMarkdown`, `stripFrontmatter`, `removeImports`, `removeJsxComponents`, `resolveAssetUrls`, fence-aware state machine with nested-backtick handling
+- `src/core/publish/research-page.ts` — `generateResearchPage` (reads thesis/findings/bibliography from research doc + benchmark summary from results.json; description from draft frontmatter; skips analysis-opinion without artifacts)
+- `src/core/publish/site.ts` — `createSitePR` (dirty-state guardrail with rename/copy-aware porcelain parsing + path-scoped staging: `content/posts/{slug}` + optional `content/research/{slug}`, no `git add .`), `checkPreviewGate`, `resolveSiteRepoPath`, git/gh subprocess wrappers (execFileSync only)
+- `src/core/publish/devto.ts` — `crosspostToDevTo`, `probeDevToForCanonical` (paginated GET + canonical match + trailing-slash normalization), `mapDevToTags`
+- `src/core/publish/medium.ts` — `generateMediumPaste` (H1 title + canonical footer)
+- `src/core/publish/substack.ts` — `generateSubstackPaste` (H1 title + H2 subtitle layout)
+- `src/core/publish/repo.ts` — `pushCompanionRepo` (gh repo view probe → gh repo create --source=. --push, with "already exists" race fallback), `parseGitHubRemoteUrl` helper (SSH/HTTPS normalization), `assertOriginMatches` (trust-boundary guardrail: throws when local origin does not match expected `{author.github}/{slug}`)
+- `src/core/publish/frontmatter.ts` — `updateFrontmatter` (direct push to main, `chore(post):` prefix, checkout-before-mutation ordering, `assertIndexClean` precheck against operator-staged files, `inspectAheadCommits` helper with strict subject + file match for crash-replay push-ahead)
+- `src/core/publish/readme.ts` — `updateProjectReadme` (direct push to main, `chore:` prefix, `config.projects[id]` resolved against dirname(configPath), checkout-before-mutation ordering, shared `assertIndexClean` guardrail, strict crash-replay push-ahead via shared `inspectAheadCommits`)
+- `src/core/publish/social.ts` — `generateSocialText`, `generateLinkedIn`, `generateHackerNews`, `containsEmoji` (throws on emojis in generated output)
+- `src/core/publish/pipeline-types.ts` — `PipelineContext`, `StepOutcome`, `StepResult`, `StepDefinition`
+- `src/core/publish/pipeline-registry.ts` — `PIPELINE_STEPS` array (ordered 11 step-to-module bindings, translates module results to `StepResult`)
+- `src/core/publish/pipeline-runner.ts` — `runPipeline` (acquires lock, reclaims stale `running`, reconciles pending rows against current config, executes steps in order, per-step transactional URL persistence, calls `completePublishUnderLock` without lock re-entry)
+- `templates/research-page/template.mdx` — research page scaffold with `{{thesis}}`, `{{findings}}`, `{{bibliography}}`, `{{methodology_summary}}`, `{{open_questions}}`, `{{repo_link}}` placeholders
+- `templates/social/linkedin.md` — LinkedIn template with `{{title}}`, `{{description}}`, `{{takeaway}}`, `{{canonical_url}}`, `{{hashtags}}`, `{{timing}}` placeholders
+- `templates/social/hackernews.md` — HN template with `{{title}}`, `{{canonical_url}}`, `{{first_comment}}`, `{{repo_url}}`, `{{timing}}` placeholders
+- `skills/blog-publish.md` — publish workflow narration, 11-step descriptions, manual preview-gate at step 4, resume semantics, troubleshooting (missing DEVTO_API_KEY, gh auth, PR not merged)
 
 ### Expected results
 
@@ -221,7 +268,7 @@ npm test
 npm run build
 ```
 
-Expected baseline: **0 TypeScript errors, 388 tests passing across 27 suites, clean build** (as of feature/phase-5-evaluate). Any drift from this baseline is a signal to investigate before merging.
+Expected baseline: **0 TypeScript errors, 583 tests passing across 37 suites, clean build** (as of feature/phase-6-publish). Any drift from this baseline is a signal to investigate before merging.
 
 ## Phase 3: Code Review of Current Changes
 
@@ -288,7 +335,7 @@ Regression Suite: PASS / FAIL
 
 Phase 1 — Foundation:
   - Database schema + connection (7 tests): ✓ / ✗
-  - Config loader (6 tests): ✓ / ✗
+  - Config loader (10 tests): ✓ / ✗
   - Post import (5 tests): ✓ / ✗
   - Ideas backlog CRUD (11 tests): ✓ / ✗
   - Content type detection (6 tests): ✓ / ✗
@@ -308,14 +355,6 @@ Phase 3 — Benchmark:
   - Companion repo scaffolding (6 tests): ✓ / ✗
   - Benchmark CLI handlers (14 tests): ✓ / ✗
 
-Phase 5 — Evaluate:
-  - ReviewerOutput schema (18 tests): PASS / FAIL
-  - Structural autocheck lints (15 tests): PASS / FAIL
-  - Synthesis + matching (24 tests): PASS / FAIL
-  - Report renderer (4 tests): PASS / FAIL
-  - Evaluation state lifecycle (46 tests): PASS / FAIL
-  - Evaluate CLI handlers (19 tests): PASS / FAIL
-
 Phase 4 — Draft:
   - PostFrontmatter schema (24 tests): ✓ / ✗
   - Draft state lifecycle (16 tests): ✓ / ✗
@@ -323,7 +362,27 @@ Phase 4 — Draft:
   - Tag taxonomy reader (6 tests): ✓ / ✗
   - Draft CLI handlers (25 tests): ✓ / ✗
 
-Full Suite: X passing, Y failing  (baseline: 388 passing)
+Phase 5 — Evaluate:
+  - ReviewerOutput schema (21 tests): ✓ / ✗
+  - Structural autocheck lints (15 tests): ✓ / ✗
+  - Synthesis + matching (24 tests): ✓ / ✗
+  - Report renderer (4 tests): ✓ / ✗
+  - Evaluation state lifecycle (78 tests): ✓ / ✗
+  - Evaluate CLI handlers (21 tests): ✓ / ✗
+
+Phase 6 — Publish:
+  - Phase + steps-crud + lock + crash-safety + reconcile (43 tests): ✓ / ✗
+  - Pipeline runner + crash-safety + reconcile regressions (20 tests): ✓ / ✗
+  - MDX → Markdown converter (12 tests): ✓ / ✗
+  - Site PR + preview gate + dirty-state + rename/copy guardrail (18 tests): ✓ / ✗
+  - Dev.to probe-then-create + Medium + Substack paste (18 tests): ✓ / ✗
+  - Social text: LinkedIn + Hacker News (14 tests): ✓ / ✗
+  - Research page generator (10 tests): ✓ / ✗
+  - Companion repo probe-then-create + origin-URL guardrail (21 tests): ✓ / ✗
+  - Publish CLI handlers + ctx.urls hydration (15 tests): ✓ / ✗
+  - updateFrontmatter + updateProjectReadme + index-clean + crash-replay (20 tests): ✓ / ✗
+
+Full Suite: X passing, Y failing  (baseline: 583 passing)
 Lint: {error count} errors  (baseline: 0)
 Build: PASS / FAIL
 ```
