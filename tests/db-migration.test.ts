@@ -29,7 +29,10 @@ describe('schema migration v1 to v2', () => {
     db = getDatabase(':memory:');
     const version = db.pragma('user_version', { simple: true });
     expect(version).toBe(SCHEMA_VERSION);
-    expect(SCHEMA_VERSION).toBe(2);
+    // SCHEMA_VERSION itself is verified against the current expected value in
+    // db-migration-v3.test.ts; this test only enforces that the fresh DB
+    // always matches SCHEMA_VERSION, whatever its current integer is.
+    expect(SCHEMA_VERSION).toBeGreaterThanOrEqual(2);
     expect(indexExists(db, 'idx_sources_post_url')).toBe(true);
   });
 
@@ -53,9 +56,11 @@ describe('schema migration v1 to v2', () => {
     staging.pragma('user_version = 1');
     staging.close();
 
-    // Re-open via the library: it should migrate to v2
+    // Re-open via the library: it migrates past v1 to the current
+    // SCHEMA_VERSION. This test's original intent is the v1 -> v2 step; the
+    // v2 -> v3 step is exercised in db-migration-v3.test.ts.
     db = getDatabase(dbPath);
-    expect(db.pragma('user_version', { simple: true })).toBe(2);
+    expect(db.pragma('user_version', { simple: true })).toBe(SCHEMA_VERSION);
     expect(indexExists(db, 'idx_sources_post_url')).toBe(true);
 
     // Data preserved
@@ -72,16 +77,16 @@ describe('schema migration v1 to v2', () => {
     }).toThrow();
   });
 
-  it('re-opening a v2 DB does not re-run the migration', () => {
+  it('re-opening a DB does not re-run the migration', () => {
     tempDir = mkdtempSync(join(tmpdir(), 'db-mig-'));
     const dbPath = join(tempDir, 'test.db');
 
     db = getDatabase(dbPath);
-    expect(db.pragma('user_version', { simple: true })).toBe(2);
+    expect(db.pragma('user_version', { simple: true })).toBe(SCHEMA_VERSION);
     closeDatabase(db);
 
     db = getDatabase(dbPath);
-    expect(db.pragma('user_version', { simple: true })).toBe(2);
+    expect(db.pragma('user_version', { simple: true })).toBe(SCHEMA_VERSION);
     expect(indexExists(db, 'idx_sources_post_url')).toBe(true);
   });
 });

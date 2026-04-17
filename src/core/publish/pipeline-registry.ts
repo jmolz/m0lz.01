@@ -1,13 +1,15 @@
 import { StepDefinition, PipelineContext, StepResult } from './pipeline-types.js';
 import { generateResearchPage } from './research-page.js';
 import { createSitePR, checkPreviewGate } from './site.js';
-import { crosspostToDevTo } from './devto.js';
+import { createSiteUpdate } from './site-update.js';
+import { crosspostToDevTo, updateDevToArticle } from './devto.js';
 import { generateMediumPaste } from './medium.js';
 import { generateSubstackPaste } from './substack.js';
 import { pushCompanionRepo } from './repo.js';
 import { updateFrontmatter } from './frontmatter.js';
 import { updateProjectReadme } from './readme.js';
 import { generateSocialText } from './social.js';
+import { getOpenUpdateCycle } from '../update/cycles.js';
 
 // Ordered list of all 11 publish pipeline steps. Each step's execute
 // function translates the unified PipelineContext into the step-specific
@@ -21,11 +23,56 @@ import { generateSocialText } from './social.js';
 
 export const PIPELINE_STEPS: StepDefinition[] = [
   // Step 1: verify — inline check, no dedicated module.
-  // Confirms the post has passed evaluation before the pipeline proceeds.
+  //
+  // Phase 7 mode dispatch:
+  //   - initial: `posts.evaluation_passed = 1` gates the whole cycle.
+  //   - update:  the most recent synthesis in the CURRENT update-review
+  //     cycle must be verdict='pass'. Scoped by update cycle's opened_at
+  //     so a pre-update synthesis cannot authorize an update publish.
   {
     number: 1,
     name: 'verify',
     execute: (ctx: PipelineContext): StepResult => {
+      if (ctx.publishMode === 'update') {
+        const cycle = getOpenUpdateCycle(ctx.db, ctx.slug);
+        if (!cycle) {
+          return {
+            outcome: 'failed',
+            message: `verify (update mode): no open update cycle for '${ctx.slug}'.`,
+          };
+        }
+        const row = ctx.db
+          .prepare(
+            `SELECT s.verdict
+             FROM evaluation_synthesis s
+             WHERE s.post_slug = ?
+               AND s.synthesized_at >= ?
+               AND EXISTS (
+                 SELECT 1 FROM evaluations e
+                 WHERE e.post_slug = s.post_slug
+                   AND e.is_update_review = 1
+                   AND e.run_at >= ?
+               )
+             ORDER BY s.id DESC
+             LIMIT 1`,
+          )
+          .get(ctx.slug, cycle.opened_at, cycle.opened_at) as
+          | { verdict: string }
+          | undefined;
+        if (!row) {
+          return {
+            outcome: 'failed',
+            message: `verify (update mode): no evaluation synthesis found for the current update cycle.`,
+          };
+        }
+        if (row.verdict !== 'pass') {
+          return {
+            outcome: 'failed',
+            message: `verify (update mode): synthesis verdict is '${row.verdict}', not 'pass'.`,
+          };
+        }
+        return { outcome: 'completed', message: 'Update evaluation verified' };
+      }
       const post = ctx.db
         .prepare('SELECT evaluation_passed FROM posts WHERE slug = ?')
         .get(ctx.slug) as { evaluation_passed: number | null } | undefined;
@@ -59,6 +106,7 @@ export const PIPELINE_STEPS: StepDefinition[] = [
   },
 
   // Step 3: site-pr — copy content into site repo, commit, push, open PR.
+  // Phase 7: initial mode only (update mode uses site-update below).
   {
     number: 3,
     name: 'site-pr',
@@ -76,6 +124,36 @@ export const PIPELINE_STEPS: StepDefinition[] = [
           prNumber: result.prNumber,
           prUrl: result.prUrl,
           branchName: result.branchName,
+        },
+        urlUpdates: {
+          site_url: `${ctx.config.site.base_url}/writing/${ctx.slug}`,
+        },
+      };
+    },
+  },
+
+  // Phase 7: site-update — update-mode equivalent of site-pr. Commits the
+  // regenerated MDX body + assets on an update-cycle-scoped branch and
+  // opens a PR so preview-gate can wait for merge (mirrors initial
+  // publish's review gate).
+  {
+    number: 3,
+    name: 'site-update',
+    execute: (ctx: PipelineContext): StepResult => {
+      const result = createSiteUpdate(ctx.slug, ctx.config, {
+        draftsDir: ctx.paths.draftsDir,
+        researchPagesDir: ctx.paths.researchPagesDir,
+        publishDir: ctx.paths.publishDir,
+        configPath: ctx.paths.configPath,
+      }, ctx.db);
+      return {
+        outcome: 'completed',
+        message: `Update PR #${result.prNumber} opened (cycle ${result.cycleNumber}): ${result.prUrl}`,
+        data: {
+          prNumber: result.prNumber,
+          prUrl: result.prUrl,
+          branchName: result.branchName,
+          cycleNumber: result.cycleNumber,
         },
         urlUpdates: {
           site_url: `${ctx.config.site.base_url}/writing/${ctx.slug}`,
@@ -108,10 +186,30 @@ export const PIPELINE_STEPS: StepDefinition[] = [
   },
 
   // Step 5: crosspost-devto — async Dev.to API call.
+  //
+  // Phase 7 mode dispatch:
+  //   - initial: probe-then-create (Phase 6 behavior).
+  //   - update:  probe-then-PUT-body. On probe-miss, fall through to POST
+  //     to recover from manual deletion.
   {
     number: 5,
     name: 'crosspost-devto',
     execute: async (ctx: PipelineContext): Promise<StepResult> => {
+      if (ctx.publishMode === 'update' && ctx.config.updates.devto_update !== false) {
+        const result = await updateDevToArticle(ctx.slug, ctx.config, {
+          draftsDir: ctx.paths.draftsDir,
+        });
+        if (result.skipped) {
+          return { outcome: 'skipped', message: result.reason ?? 'Dev.to update skipped' };
+        }
+        return {
+          outcome: 'completed',
+          message: result.url
+            ? `Updated Dev.to article: ${result.url}`
+            : `Updated Dev.to article (ID: ${result.id})`,
+          urlUpdates: result.url ? { devto_url: result.url } : undefined,
+        };
+      }
       const result = await crosspostToDevTo(ctx.slug, ctx.config, {
         draftsDir: ctx.paths.draftsDir,
       });

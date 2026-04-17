@@ -74,19 +74,48 @@ node "$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/code
 
 For Tier 3, insert `--effort xhigh` before the focus text for maximum reasoning depth.
 
-If the script fails (e.g., Codex not configured), note the error and continue with Claude-only evaluation — do not block the entire evaluation.
+**Capture both stdout AND stderr AND the exit code** — the companion script can fail in several ways (crash, auth missing, rate limit, or simply emit nothing). The only reliable way to tell "success" from "failure" is the exit code. Prefer this shape:
+
+```bash
+node "$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" \
+  adversarial-review \
+  "..." > /tmp/codex-out.txt 2> /tmp/codex-err.txt
+CODEX_EXIT=$?
+echo "CODEX_EXIT=$CODEX_EXIT"
+```
+
+Downstream (Step 4) uses `CODEX_EXIT`, the size of `/tmp/codex-out.txt`, and the contents of `/tmp/codex-err.txt` to decide between "use Codex output directly" and "fall back".
+
+If Codex ultimately can't produce output (crashes, rate-limited, and no fallback key), note the error in the final report and continue with Claude-only evaluation — do not block the entire evaluation.
 
 The Codex review challenges the *approach* — was this the right design? What assumptions does it depend on? Where could it fail under real-world conditions? This is complementary to the Claude evaluator's formal contract grading.
 
-#### Rate-Limit Fallback (ChatGPT Team → OpenAI API key)
+#### Fallback to OpenAI Responses API
 
-The Codex CLI authenticates via the user's ChatGPT Team session by default. When that session hits its rate limit, fall back to a direct OpenAI Responses API call — do **not** run `codex login --api-key`, as that would overwrite the ChatGPT Team session (making recovery manual once the rate limit lifts).
+The Codex CLI authenticates via the user's ChatGPT Team session by default. It can fail for multiple reasons:
 
-**Fallback key location**: `~/.claude/.openai-fallback-key` — single line containing an OpenAI API key, `chmod 600`. If absent, skip fallback and report the rate-limit error verbatim.
+- **Rate limited**: ChatGPT Team quota exhausted.
+- **Auth missing**: no ChatGPT Team session configured.
+- **Script crash**: Node-level error in the companion script (e.g., `EISDIR`, `ENOENT`, undefined internals).
+- **Empty output**: script exits successfully but emits nothing useful.
 
-**Rate-limit detection** (in collected Codex output, case-insensitive): any of `rate limit`, `rate_limit_exceeded`, `429`, `too many requests`, `usage cap`, `quota exceeded`.
+In every case, fall back to a direct OpenAI Responses API call — do **not** run `codex login --api-key`, as that would overwrite the ChatGPT Team session (making recovery manual once upstream recovers).
 
-**Fallback invocation** (only on detection, only if the key file exists):
+**Fallback key location**: `~/.claude/.openai-fallback-key` — single line containing an OpenAI API key, `chmod 600`. If absent, skip fallback and report the Codex error verbatim.
+
+**Fallback trigger** — use fallback if ANY of these hold:
+
+1. `CODEX_EXIT != 0`, OR
+2. `/tmp/codex-out.txt` is ≤ 200 bytes (empty or trivially short), OR
+3. The output contains a known rate-limit marker (case-insensitive): `rate limit`, `rate_limit_exceeded`, `429`, `too many requests`, `usage cap`, `quota exceeded`, OR
+4. The output/stderr contains a known crash marker: `EISDIR`, `ENOENT`, `ECONNREFUSED`, `Cannot find module`, `Error [ERR_`, `TypeError:`, `SyntaxError:`, `UnhandledPromiseRejection`.
+
+Label the fallback output in the final report according to the reason:
+
+- Rate-limit: `Codex GPT-5.4 (OpenAI API fallback — ChatGPT Team rate-limited)`
+- Crash / auth / empty: `Codex GPT-5.4 (OpenAI API fallback — companion script failed: <reason>)`
+
+**Fallback invocation** (only on trigger, only if the key file exists):
 
 ```bash
 OPENAI_FALLBACK_KEY=$(cat "$HOME/.claude/.openai-fallback-key")
@@ -109,9 +138,9 @@ Reserve sufficient output budget (OpenAI recommends ≥25k tokens for reasoning 
 
 The `__PROMPT__` must include: the same focus text passed to `codex-companion adversarial-review`, the contract criteria JSON, the full diff, and CLAUDE.md — i.e., the same context Codex would have received. Construct the prompt string explicitly rather than relying on Codex's internal prompt templates (which are not accessible outside the CLI).
 
-Treat the extracted text as the adversarial review output. Label it clearly in the final report as `Codex GPT-5.4 (OpenAI API fallback — ChatGPT Team rate-limited)`.
+Treat the extracted text as the adversarial review output. Label it clearly in the final report per the "Fallback trigger" table above.
 
-Once the ChatGPT Team rate limit lifts, no action is required: the primary Codex path resumes on the next invocation, and the fallback triggers only on failure.
+Once the upstream issue resolves (rate limit lifts, companion script is fixed, etc.), no action is required: the primary Codex path resumes on the next invocation, and the fallback triggers only on failure.
 
 ### Step 3b: Run Claude Evaluator Pass(es)
 
@@ -216,11 +245,18 @@ If a Codex adversarial review was launched in Step 3a, collect its results now. 
 
 If the background task is still running after all Claude evaluation passes are complete, wait up to 5 minutes. If it times out or errored, note this in the final report and proceed with Claude-only results.
 
-**Before proceeding**, scan the collected Codex output for rate-limit markers (see Step 3a → Rate-Limit Fallback). If any are present:
+**Decision tree** (apply in order — first match wins):
 
-1. If `~/.claude/.openai-fallback-key` exists → run the fallback curl invocation from Step 3a and substitute the fallback output for the Codex output.
-2. If the key file is missing → report to the user:
-   `Codex adversarial review was rate-limited. Paste your OpenAI API key into ~/.claude/.openai-fallback-key (chmod 600) to enable fallback, then re-run /evaluate. Proceeding with Claude-only evaluation for now.`
+1. **`CODEX_EXIT == 0` AND output size > 200 bytes AND no rate-limit/crash markers** → Use Codex output directly. Skip fallback.
+2. **Any failure mode from the Step 3a trigger table** (non-zero exit, tiny output, rate-limit marker, crash marker) → Attempt fallback:
+   - If `~/.claude/.openai-fallback-key` exists → run the fallback curl invocation from Step 3a. Substitute the fallback text for the Codex output. Label it per the trigger reason.
+   - If the key file is missing → report to the user:
+     ```
+     Codex adversarial review unavailable: <reason> (exit=<CODEX_EXIT>, markers=<detected>).
+     To enable fallback: create ~/.claude/.openai-fallback-key (chmod 600) containing an
+     OpenAI API key, then re-run /evaluate. Proceeding with Claude-only evaluation for now.
+     ```
+3. **Fallback curl itself fails** (HTTP 5xx, invalid JSON, missing API key, `response.output` empty) → report the failure verbatim and proceed Claude-only. Do not swallow the error silently.
 
 The Codex review output challenges design decisions and assumptions — it does NOT score against the contract. Treat its findings as a separate evaluation dimension.
 

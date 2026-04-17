@@ -1,0 +1,31 @@
+---
+title: "Updated Then Unpublished"
+description: "Post with update history that was later unpublished."
+date: "2025-08-10"
+tags:
+  - retracted
+  - benchmark
+published: false
+canonical: "https://m0lz.dev/writing/updated-then-unpublished"
+medium_url: "https://medium.com/@jmolz/updated-then-unpublished-pqr"
+devto_url: "https://dev.to/jmolz/updated-then-unpublished-pqr"
+updated_at: "2026-02-14T12:00:00Z"
+update_count: 3
+unpublished_at: "2026-04-17T15:30:00Z"
+---
+
+# Updated Then Unpublished
+
+Body paragraph.
+
+The most contentious fixture: the post had three update cycles, then
+was unpublished. The final frontmatter shows:
+
+- `published: false` (unpublish flip)
+- `unpublished_at` set (unpublish finalization timestamp)
+- `updated_at` preserved from the LAST update cycle
+- `update_count: 3` preserved (update history is not erased by
+  unpublish)
+
+Parsers must accept this combination. The lifecycle events are
+additive, not exclusive.

@@ -172,14 +172,30 @@ it('is idempotent on re-run', () => {
 
 ## Regression suite
 
-Every test file must be registered in **both** `.windsurf/workflows/review.md` and `.claude/commands/review.md` under the current milestone. When shipping a feature:
+Every test file must be registered in **both** `.windsurf/workflows/review.md` and `.claude/commands/review.md` under the current milestone. When shipping a feature, update all **four** places in both files — not three, not two:
 
-1. Add the new `.test.ts` to the `npx vitest run` command
-2. Add a row to the "What each test covers" table
-3. Add protected source files to the "Source files these tests protect" list
-4. Update the baseline test count and output format template
+1. The `npx vitest run` bash block (makes the test run)
+2. The "What each test covers" table (documents what the test protects)
+3. The "Source files these tests protect" list (reverse index — `grep`-find the tests guarding a given file)
+4. The Phase-X checklist in the output-format template + the baseline test count
 
-If a test exists but isn't in both regression suites, it's invisible to future `/review` runs.
+If a test is missing from any one of these, `/review` silently drifts — the most common failure mode is registering in the bash block and forgetting the documentation, which means the test runs but nobody knows what it guards. Phase 7 /review caught exactly this gap (19 files in the bash block, 0 in the doc table).
+
+**Verify via diff before committing a Phase close-out:**
+
+```bash
+# List .test.ts files on disk
+ls tests/*.test.ts | sed 's|tests/||' | sort > /tmp/disk.txt
+
+# Extract test filenames from the review.md bash block
+grep -oE 'tests/[a-z0-9-]+\.test\.ts' .claude/commands/review.md | \
+  sed 's|tests/||' | sort -u > /tmp/block.txt
+
+# Zero diff in both directions = complete registration
+diff /tmp/disk.txt /tmp/block.txt
+```
+
+A non-empty diff means either (a) a test on disk isn't in the suite, or (b) a line in the suite references a deleted test. Fix before shipping.
 
 ## Testing content-type routing
 

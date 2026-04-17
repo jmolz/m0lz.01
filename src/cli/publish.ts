@@ -9,6 +9,7 @@ import { loadConfig } from '../core/config/loader.js';
 import { validateSlug } from '../core/research/document.js';
 import { initPublish } from '../core/publish/phase.js';
 import { getPipelineSteps } from '../core/publish/steps-crud.js';
+import { getOpenUpdateCycle } from '../core/update/cycles.js';
 import { runPipeline } from '../core/publish/pipeline-runner.js';
 import { PipelineContext } from '../core/publish/pipeline-types.js';
 import { PipelineStepRow, PublishUrls } from '../core/publish/types.js';
@@ -105,6 +106,24 @@ export async function runPublishStart(
 
   const db = getDatabase(dbPath);
   try {
+    // Phase 7: refuse to run initial publish while an update cycle is open.
+    // If we didn't guard here, a naive re-run of `blog publish start` on a
+    // published post with an open update cycle would either (a) try to
+    // promote from published to publish phase (impossible) or (b) with the
+    // update flow's phase-stays-published invariant, silently misroute
+    // update work into the initial-publish pipeline.
+    const openCycle = getOpenUpdateCycle(db, slug);
+    if (openCycle) {
+      console.error(
+        `Cannot run 'blog publish start' — an open update cycle exists for '${slug}' ` +
+        `(id=${openCycle.id}, cycle_number=${openCycle.cycle_number}).\n` +
+        `Use 'blog update publish ${slug}' to complete the update, ` +
+        `or 'blog update abort ${slug}' to cancel.`,
+      );
+      process.exitCode = 1;
+      return;
+    }
+
     const post = db
       .prepare('SELECT phase, content_type FROM posts WHERE slug = ?')
       .get(slug) as { phase: string; content_type: string | null } | undefined;
@@ -191,6 +210,12 @@ export async function runPublishStart(
         templatesDir,
       },
       urls: hydratedUrls,
+      // Phase 7: `blog publish start` always drives the initial-publish
+      // flow. The update flow uses `blog update publish` (Cluster B) which
+      // constructs its own ctx with publishMode='update' and a non-zero
+      // cycleId from the open update_cycles row.
+      publishMode: 'initial',
+      cycleId: 0,
     };
 
     let result;

@@ -97,3 +97,41 @@ export interface MetricRow {
   value: string | null;
   timestamp: string;
 }
+
+// Phase 7: update cycle lifecycle row. One row per opened cycle; `closed_at`
+// nullable so the partial unique index `idx_update_cycles_open` enforces at
+// most one open cycle per post at the DB level. `ended_reason` matches the
+// CHECK constraint from SCHEMA_V3_SQL — null while open, then 'completed' or
+// 'aborted' once closed.
+export type UpdateCycleEndedReason = 'completed' | 'aborted';
+
+export interface UpdateCycleRow {
+  id: number;
+  post_slug: string;
+  cycle_number: number;
+  summary: string | null;
+  opened_at: string;
+  closed_at: string | null;
+  ended_reason: UpdateCycleEndedReason | null;
+}
+
+// Phase 7: unpublish_steps shape. Parallel to pre-v3 pipeline_steps — no
+// cycle_id because unpublish is one-shot per post. Seven persisted step names
+// live in src/core/unpublish/steps-registry.ts.
+export type UnpublishStepStatus =
+  | 'pending'
+  | 'running'
+  | 'completed'
+  | 'failed'
+  | 'skipped';
+
+export interface UnpublishStepRow {
+  id: number;
+  post_slug: string;
+  step_number: number;
+  step_name: string;
+  status: UnpublishStepStatus;
+  started_at: string | null;
+  completed_at: string | null;
+  error_message: string | null;
+}

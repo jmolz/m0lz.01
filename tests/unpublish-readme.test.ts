@@ -1,0 +1,150 @@
+import { describe, it, expect, afterEach } from 'vitest';
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { execFileSync } from 'node:child_process';
+import Database from 'better-sqlite3';
+
+import { getDatabase, closeDatabase } from '../src/core/db/database.js';
+import { revertProjectReadmeLink } from '../src/core/unpublish/readme.js';
+import { BlogConfig } from '../src/core/config/types.js';
+
+let db: Database.Database | undefined;
+let tempDir: string | undefined;
+
+afterEach(() => {
+  if (db) closeDatabase(db);
+  db = undefined;
+  if (tempDir) rmSync(tempDir, { recursive: true, force: true });
+  tempDir = undefined;
+});
+
+function baseConfig(overrides: Partial<BlogConfig> = {}): BlogConfig {
+  return {
+    site: { repo_path: '/tmp', base_url: 'https://x.dev', content_dir: 'content/posts', research_dir: 'content/research' },
+    author: { name: 'T', github: 't' },
+    ai: { primary: 'c', reviewers: { structural: 'c', adversarial: 'c', methodology: 'c' }, codex: { adversarial_effort: 'high', methodology_effort: 'xhigh' } },
+    content_types: {
+      'project-launch': { benchmark: 'optional', companion_repo: 'existing', social_prefix: 'Show HN:' },
+      'technical-deep-dive': { benchmark: 'required', companion_repo: 'new', social_prefix: '' },
+      'analysis-opinion': { benchmark: 'skip', companion_repo: 'optional', social_prefix: '' },
+    },
+    benchmark: { capture_environment: true, methodology_template: true, preserve_raw_data: true, multiple_runs: 3 },
+    publish: { devto: true, medium: true, substack: true, github_repos: true, social_drafts: true, research_pages: true },
+    social: { platforms: [], timing_recommendations: true },
+    evaluation: { require_pass: true, min_sources: 3, max_reading_level: 12, three_reviewer_panel: true, consensus_must_fix: true, majority_should_fix: true, single_advisory: true, verify_benchmark_claims: true, methodology_completeness: true },
+    updates: {
+      preserve_original_data: true, update_notice: true, update_crosspost: true,
+      devto_update: true, refresh_paste_files: true, notice_template: 'Updated {DATE}: {SUMMARY}',
+      require_summary: true, site_update_mode: 'pr',
+    },
+    unpublish: { devto: true, medium: true, substack: true, readme: true },
+    ...overrides,
+  };
+}
+
+describe('revertProjectReadmeLink — trust boundaries', () => {
+  it('throws assertIndexClean when the project repo has STAGED changes (refuses operator-staged sweep)', () => {
+    tempDir = mkdtempSync(join(tmpdir(), 'readme-dirty-index-'));
+    const repoDir = join(tempDir, 'projrepo');
+    mkdirSync(repoDir);
+    execFileSync('git', ['-C', repoDir, 'init', '--quiet', '--initial-branch=main'], { encoding: 'utf-8' });
+    execFileSync('git', ['-C', repoDir, 'config', 'user.email', 't@example.com']);
+    execFileSync('git', ['-C', repoDir, 'config', 'user.name', 'Test']);
+    // Add origin so requireOriginMatch passes later in the code path.
+    execFileSync('git', ['-C', repoDir, 'remote', 'add', 'origin', 'git@github.com:t/m0lz.99.git'], { encoding: 'utf-8' });
+    // README with the writing link so the body rewrite succeeds and the
+    // assertIndexClean gate (which runs AFTER the rewrite) fires.
+    writeFileSync(join(repoDir, 'README.md'), '# Project\n\n[post](https://x.dev/writing/dirty)\n');
+    execFileSync('git', ['-C', repoDir, 'add', '.'], { encoding: 'utf-8' });
+    execFileSync('git', ['-C', repoDir, 'commit', '-m', 'init', '--quiet'], { encoding: 'utf-8' });
+    // Operator staged an unrelated file. The dirty-state check above is
+    // path-scoped to README.md; it DOES permit staged unrelated files
+    // under a narrow reading, so assertIndexClean is the last line of
+    // defense. Stage a non-README file.
+    writeFileSync(join(repoDir, 'other.txt'), 'x\n');
+    execFileSync('git', ['-C', repoDir, 'add', 'other.txt'], { encoding: 'utf-8' });
+
+    db = getDatabase(':memory:');
+    db.prepare(
+      `INSERT INTO posts (slug, phase, mode, project_id) VALUES ('dirty', 'published', 'directed', 'm0lz.99')`,
+    ).run();
+    const config = baseConfig({ projects: { 'm0lz.99': repoDir } });
+
+    // Path-scoped dirty-state check in readme.ts fires FIRST (operator
+    // -staged other.txt is an "unrelated" path). The criterion is still
+    // satisfied: the step throws with actionable context before any
+    // push, precisely because the index is dirty.
+    expect(() => revertProjectReadmeLink('dirty', config, { configPath: join(tempDir, '.blogrc.yaml') }, db!))
+      .toThrow(/unrelated uncommitted changes|staged changes that would be included/);
+  });
+
+  it('throws requireOriginMatch when origin is wrong (refuses wrong-repo push)', () => {
+    tempDir = mkdtempSync(join(tmpdir(), 'readme-wrong-origin-'));
+    const repoDir = join(tempDir, 'projrepo');
+    mkdirSync(repoDir);
+    execFileSync('git', ['-C', repoDir, 'init', '--quiet', '--initial-branch=main'], { encoding: 'utf-8' });
+    execFileSync('git', ['-C', repoDir, 'config', 'user.email', 't@example.com']);
+    execFileSync('git', ['-C', repoDir, 'config', 'user.name', 'Test']);
+    // Wrong origin — owner/name ≠ expected t/m0lz.99.
+    execFileSync('git', ['-C', repoDir, 'remote', 'add', 'origin', 'git@github.com:evil/hijacked.git'], { encoding: 'utf-8' });
+    writeFileSync(join(repoDir, 'README.md'), '# Project\n\n[post](https://x.dev/writing/origin-bad)\n');
+    execFileSync('git', ['-C', repoDir, 'add', '.'], { encoding: 'utf-8' });
+    execFileSync('git', ['-C', repoDir, 'commit', '-m', 'init', '--quiet'], { encoding: 'utf-8' });
+
+    db = getDatabase(':memory:');
+    db.prepare(
+      `INSERT INTO posts (slug, phase, mode, project_id) VALUES ('origin-bad', 'published', 'directed', 'm0lz.99')`,
+    ).run();
+    const config = baseConfig({ projects: { 'm0lz.99': repoDir } });
+
+    expect(() => revertProjectReadmeLink('origin-bad', config, { configPath: join(tempDir, '.blogrc.yaml') }, db!))
+      .toThrow(/origin points to 'github\.com\/evil\/hijacked'|expected 'github\.com\/t\/m0lz\.99'/);
+  });
+});
+
+describe('revertProjectReadmeLink — skip paths', () => {
+  it('skips when post has no project_id', () => {
+    db = getDatabase(':memory:');
+    db.prepare(
+      `INSERT INTO posts (slug, phase, mode, project_id) VALUES ('p1', 'published', 'directed', NULL)`,
+    ).run();
+    const result = revertProjectReadmeLink('p1', baseConfig(), { configPath: '/tmp/.blogrc.yaml' }, db);
+    expect(result.skipped).toBe(true);
+    expect(result.reason).toMatch(/no project_id/);
+  });
+
+  it('skips when config.projects[project_id] is absent', () => {
+    db = getDatabase(':memory:');
+    db.prepare(
+      `INSERT INTO posts (slug, phase, mode, project_id) VALUES ('p2', 'published', 'directed', 'm0lz.02')`,
+    ).run();
+    const config = baseConfig();
+    // No projects map at all
+    const result = revertProjectReadmeLink('p2', config, { configPath: '/tmp/.blogrc.yaml' }, db);
+    expect(result.skipped).toBe(true);
+    expect(result.reason).toMatch(/not configured/);
+  });
+
+  it('skips when writing link is not in README', () => {
+    tempDir = mkdtempSync(join(tmpdir(), 'readme-revert-'));
+    const repoDir = join(tempDir, 'projrepo');
+    mkdirSync(repoDir);
+    // Initialize a git repo so the dirty-state check passes
+    execFileSync('git', ['-C', repoDir, 'init', '--quiet', '--initial-branch=main'], { encoding: 'utf-8' });
+    execFileSync('git', ['-C', repoDir, 'config', 'user.email', 't@example.com']);
+    execFileSync('git', ['-C', repoDir, 'config', 'user.name', 'Test']);
+    writeFileSync(join(repoDir, 'README.md'), '# Project\n\nNo writing links here.\n');
+    execFileSync('git', ['-C', repoDir, 'add', '.'], { encoding: 'utf-8' });
+    execFileSync('git', ['-C', repoDir, 'commit', '-m', 'init', '--quiet'], { encoding: 'utf-8' });
+
+    db = getDatabase(':memory:');
+    db.prepare(
+      `INSERT INTO posts (slug, phase, mode, project_id) VALUES ('p3', 'published', 'directed', 'm0lz.99')`,
+    ).run();
+    const config = baseConfig({ projects: { 'm0lz.99': repoDir } });
+    const result = revertProjectReadmeLink('p3', config, { configPath: join(tempDir, '.blogrc.yaml') }, db);
+    expect(result.skipped).toBe(true);
+    expect(result.reason).toMatch(/not found in README/);
+  });
+});

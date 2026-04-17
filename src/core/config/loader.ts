@@ -42,6 +42,18 @@ const DEFAULT_UPDATES: BlogConfig['updates'] = {
   preserve_original_data: true,
   update_notice: true,
   update_crosspost: true,
+  devto_update: true,
+  refresh_paste_files: true,
+  notice_template: 'Updated {DATE}: {SUMMARY}',
+  require_summary: true,
+  site_update_mode: 'pr',
+};
+
+const DEFAULT_UNPUBLISH: BlogConfig['unpublish'] = {
+  devto: true,
+  medium: true,
+  substack: true,
+  readme: true,
 };
 
 export function loadConfig(configPath: string): BlogConfig {
@@ -107,12 +119,27 @@ export function validateConfig(raw: unknown): BlogConfig {
     }
   }
 
+  // `site.github_repo` is optional (shape: 'owner/name') and when set is
+  // the explicit source of truth for the origin-guard. Validate its shape
+  // here so a typo surfaces at load time rather than on the first
+  // repo-touching step hours into a publish run.
+  let siteGithubRepo: string | undefined;
+  if (site.github_repo !== undefined && site.github_repo !== null) {
+    if (typeof site.github_repo !== 'string' || !/^[^/\s]+\/[^/\s]+$/.test(site.github_repo)) {
+      throw new Error(
+        `Config field site.github_repo must be 'owner/name' if set. Got: ${JSON.stringify(site.github_repo)}`,
+      );
+    }
+    siteGithubRepo = site.github_repo;
+  }
+
   return {
     site: {
       repo_path: site.repo_path,
       base_url: site.base_url,
       content_dir: (site.content_dir as string) || 'content/posts',
       research_dir: (site.research_dir as string) || 'content/research',
+      github_repo: siteGithubRepo,
     },
     author: {
       name: author.name,
@@ -137,6 +164,7 @@ export function validateConfig(raw: unknown): BlogConfig {
     social: { ...DEFAULT_SOCIAL, ...(obj.social as Partial<BlogConfig['social']>) },
     evaluation: { ...DEFAULT_EVALUATION, ...(obj.evaluation as Partial<BlogConfig['evaluation']>) },
     updates: { ...DEFAULT_UPDATES, ...(obj.updates as Partial<BlogConfig['updates']>) },
+    unpublish: { ...DEFAULT_UNPUBLISH, ...(obj.unpublish as Partial<BlogConfig['unpublish']>) },
     projects,
   };
 }

@@ -86,17 +86,51 @@ export function skipBenchmark(
   advancePhase(db, slug, 'draft');
 }
 
+export interface CreateBenchmarkRunOptions {
+  // Phase 7: mark as an update-cycle benchmark. Paired with previous_run_id
+  // so a reader can trace `baseline → update1 → update2 → ...` via the
+  // benchmarks table alone.
+  isUpdate?: boolean;
+  previousRunId?: number;
+}
+
 export function createBenchmarkRun(
   db: Database.Database,
   slug: string,
   environmentJson: string,
   resultsPath: string,
+  options?: CreateBenchmarkRunOptions,
 ): number {
+  const isUpdate = options?.isUpdate === true ? 1 : 0;
   const info = db.prepare(
-    `INSERT INTO benchmarks (post_slug, environment_json, results_path, status)
-     VALUES (?, ?, ?, 'pending')`,
-  ).run(slug, environmentJson, resultsPath);
+    `INSERT INTO benchmarks
+       (post_slug, environment_json, results_path, status, is_update, previous_run_id)
+     VALUES (?, ?, ?, 'pending', ?, ?)`,
+  ).run(
+    slug,
+    environmentJson,
+    resultsPath,
+    isUpdate,
+    options?.previousRunId ?? null,
+  );
   return Number(info.lastInsertRowid);
+}
+
+// Phase 7 helper. Return the most recent baseline (is_update=0) benchmark
+// for a post, or null. `blog update benchmark` uses this to set
+// `previous_run_id` on the new update-cycle benchmark row.
+export function latestBaselineBenchmarkId(
+  db: Database.Database,
+  slug: string,
+): number | null {
+  const row = db
+    .prepare(
+      `SELECT id FROM benchmarks
+       WHERE post_slug = ? AND is_update = 0
+       ORDER BY id DESC LIMIT 1`,
+    )
+    .get(slug) as { id: number } | undefined;
+  return row?.id ?? null;
 }
 
 export function updateBenchmarkStatus(

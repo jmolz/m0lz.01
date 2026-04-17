@@ -5,6 +5,7 @@ import { dirname, isAbsolute, join, resolve } from 'node:path';
 import Database from 'better-sqlite3';
 
 import { BlogConfig } from '../config/types.js';
+import { expectedSiteCoords, requireOriginMatch } from './origin-guard.js';
 
 // Steps 3 + 4 of the publish pipeline.
 //
@@ -102,11 +103,23 @@ interface SubprocessError extends Error {
   stderr?: Buffer | string;
 }
 
+// Phase 7: optional overrides let the `site-update` step reuse this
+// function's robust dirty-state/origin-match/strict-ahead machinery while
+// emitting different branch names, commit messages, and PR titles. Default
+// values preserve the Phase 6 initial-publish strings.
+export interface SitePROverrides {
+  branchName?: string;
+  commitMessage?: string;
+  prTitle?: string;
+  prBodyPrefix?: string;
+}
+
 export function createSitePR(
   slug: string,
   config: BlogConfig,
   paths: SitePaths,
   db: Database.Database,
+  overrides?: SitePROverrides,
 ): SitePRResult {
   const siteRepoPath = resolveSiteRepoPath(paths.configPath, config.site.repo_path);
   if (!existsSync(siteRepoPath)) {
@@ -179,7 +192,22 @@ export function createSitePR(
     }
   }
 
-  // Determine repo coordinates from the site repo's origin remote.
+  // Origin trust-boundary check BEFORE any mutation. Expected coords
+  // come from `config.site.github_repo` when set, else
+  // `{author.github}/basename(repo_path)`. requireOriginMatch throws on
+  // absent/mismatch/unparseable — so `gh pr create --repo <flag>` below
+  // cannot silently PR into an unrelated repository (Codex Pass 2
+  // Major #1, Claude Pass 2 Critical #19). Applies to both initial
+  // publish (`post/<slug>` branch) and update-mode (via site-update.ts
+  // which passes `update/<slug>-cycle-<N>` as the branch override).
+  const expected = expectedSiteCoords(config);
+  requireOriginMatch(siteRepoPath, expected.owner, expected.name);
+
+  // Determine repo coordinates used for the `--repo` flag on `gh`
+  // commands. After requireOriginMatch above, origin is known to match
+  // the expected identity, so we use it directly — but fall back to
+  // parsing in case the config explicitly overrode to a different-cased
+  // form. Either way, both paths agree on the target.
   const remoteUrl = execFileSync(
     'git',
     ['-C', siteRepoPath, 'config', '--get', 'remote.origin.url'],
@@ -188,7 +216,7 @@ export function createSitePR(
   const coords = parseRepoCoords(remoteUrl);
   const repoFlag = `${coords.owner}/${coords.name}`;
 
-  const branchName = `post/${slug}`;
+  const branchName = overrides?.branchName ?? `post/${slug}`;
 
   // Branch detection: `git branch --list` returns 0 whether the branch
   // matches or not — empty stdout means no match.
@@ -265,9 +293,10 @@ export function createSitePR(
   }
 
   if (hasStaged) {
+    const commitMessage = overrides?.commitMessage ?? `feat(post): ${slug}`;
     execFileSync(
       'git',
-      ['-C', siteRepoPath, 'commit', '-m', `feat(post): ${slug}`],
+      ['-C', siteRepoPath, 'commit', '-m', commitMessage],
       { encoding: 'utf-8' },
     );
   }
@@ -311,7 +340,9 @@ export function createSitePR(
   }
 
   if (prUrl === null || prNumber === null) {
-    const body = `Automated PR for ${slug}\n\nSee ${paths.publishDir}/${slug} for context.`;
+    const prBodyPrefix = overrides?.prBodyPrefix ?? `Automated PR for ${slug}`;
+    const body = `${prBodyPrefix}\n\nSee ${paths.publishDir}/${slug} for context.`;
+    const prTitle = overrides?.prTitle ?? `Post: ${title}`;
     const createOut = execFileSync(
       'gh',
       [
@@ -320,7 +351,7 @@ export function createSitePR(
         '--repo',
         repoFlag,
         '--title',
-        `Post: ${title}`,
+        prTitle,
         '--body',
         body,
         '--base',
@@ -358,6 +389,12 @@ export function checkPreviewGate(
   if (!existsSync(siteRepoPath)) {
     throw new Error(`Site repo path does not exist: ${siteRepoPath}`);
   }
+  // Origin trust-boundary check even on a read-only `gh pr view` — a
+  // misconfigured remote would cause the status check to poll the wrong
+  // repo's PR number and block the pipeline forever on a merged PR that
+  // never actually exists.
+  const expected = expectedSiteCoords(config);
+  requireOriginMatch(siteRepoPath, expected.owner, expected.name);
   const remoteUrl = execFileSync(
     'git',
     ['-C', siteRepoPath, 'config', '--get', 'remote.origin.url'],

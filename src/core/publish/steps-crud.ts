@@ -6,13 +6,21 @@ import {
   PUBLISH_STEP_NAMES,
   PipelineStepRow,
   PublishStepName,
+  stepNamesForMode,
 } from './types.js';
+import { PublishMode } from './pipeline-types.js';
 
 // CRUD operations over the `pipeline_steps` table, scoped to the 11 publish
-// step names defined in ./types.ts. The table's UNIQUE(post_slug, step_name)
-// constraint makes creation idempotent via INSERT OR IGNORE; updates are
-// keyed by (post_slug, step_name) so re-runs of the same function converge
-// on the intended status.
+// step names defined in ./types.ts. The table's UNIQUE(post_slug, cycle_id,
+// step_name) constraint makes creation idempotent via INSERT OR IGNORE;
+// updates are keyed by (post_slug, cycle_id, step_name) so re-runs of the
+// same function converge on the intended status.
+//
+// Phase 7: every function accepts an optional trailing `cycleId` parameter
+// (default 0 for initial publish). Update cycles pass the open update
+// cycle's id so the same 11 step names can repeat per cycle without
+// colliding with prior runs. All queries filter on `cycle_id` so a given
+// cycle's state is cleanly isolated from other cycles on the same post.
 //
 // All SQL uses parameterized ? placeholders. Table name is a SQL literal;
 // SQLite does not support parameterized table names.
@@ -27,24 +35,23 @@ export interface CreatePipelineStepsOptions {
   hasResearchArtifact?: boolean;
 }
 
-// Build the full list of 11 step rows with content-type + config-driven
-// pre-skip decisions. Returns tuples so a single transactional insert sees
-// them in declaration order.
+// Build the list of step rows with content-type + config-driven pre-skip
+// decisions. Phase 7: the step set depends on `publishMode` (initial uses
+// PUBLISH_STEP_NAMES; update uses UPDATE_STEP_NAMES with site-update
+// substituted for site-pr and companion-repo/update-readme dropped).
 function buildInitialSteps(
   contentType: ContentType,
   config: BlogConfig,
   options?: CreatePipelineStepsOptions,
+  publishMode: PublishMode = 'initial',
 ): Array<{ name: PublishStepName; status: 'pending' | 'skipped'; reason?: string }> {
   const rows: Array<{ name: PublishStepName; status: 'pending' | 'skipped'; reason?: string }> = [];
-  for (const name of PUBLISH_STEP_NAMES) {
+  for (const name of stepNamesForMode(publishMode)) {
     let status: 'pending' | 'skipped' = 'pending';
     let reason: string | undefined;
 
     switch (name) {
       case 'research-page': {
-        // Pre-skip only when the caller affirmatively reports no research
-        // artifact AND content type is analysis-opinion. When unknown, defer
-        // to runtime.
         if (contentType === 'analysis-opinion' && options?.hasResearchArtifact === false) {
           status = 'skipped';
           reason = 'Analysis-opinion without research artifacts';
@@ -91,52 +98,54 @@ function buildInitialSteps(
   return rows;
 }
 
-// Idempotent creation of all 11 pipeline_steps rows for a post. UNIQUE on
-// (post_slug, step_name) makes INSERT OR IGNORE safe under repeated calls.
-// The first call establishes the pre-skip decisions; subsequent calls never
-// override an existing row's status (IGNORE keeps the prior content).
+// Idempotent creation of all pipeline_steps rows for a post + cycle.
+// UNIQUE on (post_slug, cycle_id, step_name) makes INSERT OR IGNORE safe
+// under repeated calls. The first call establishes the pre-skip decisions;
+// subsequent calls never override an existing row's status. Step count
+// is mode-dependent (11 for initial publish, 9 for update).
 export function createPipelineSteps(
   db: Database.Database,
   slug: string,
   contentType: ContentType,
   config: BlogConfig,
   options?: CreatePipelineStepsOptions,
+  cycleId: number = 0,
+  publishMode: PublishMode = 'initial',
 ): void {
-  const initial = buildInitialSteps(contentType, config, options);
+  const initial = buildInitialSteps(contentType, config, options, publishMode);
   const insert = db.prepare(`
     INSERT OR IGNORE INTO pipeline_steps
-      (post_slug, step_number, step_name, status, completed_at, error_message)
-    VALUES (?, ?, ?, ?, ?, ?)
+      (post_slug, step_number, step_name, status, completed_at, error_message, cycle_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
   `);
 
   const tx = db.transaction(() => {
     initial.forEach((row, idx) => {
       const stepNumber = idx + 1;
-      // For skipped rows, populate completed_at (skip is a terminal state)
-      // and put the reason into error_message so operators see why it was
-      // skipped without widening the schema with a dedicated reason column.
       const completedAt = row.status === 'skipped' ? new Date().toISOString() : null;
       const reason = row.status === 'skipped' ? (row.reason ?? null) : null;
-      insert.run(slug, stepNumber, row.name, row.status, completedAt, reason);
+      insert.run(slug, stepNumber, row.name, row.status, completedAt, reason, cycleId);
     });
   });
   tx();
 }
 
-// Return the first row eligible for execution, by step order. A failed step
-// qualifies too — it means the previous attempt raised and the runner should
-// retry before advancing.
+// Return the first row eligible for execution for the given cycle, by step
+// order. A failed step qualifies too — it means the previous attempt raised
+// and the runner should retry before advancing.
 export function getNextPendingStep(
   db: Database.Database,
   slug: string,
+  cycleId: number = 0,
 ): PipelineStepRow | null {
   const row = db.prepare(`
-    SELECT id, post_slug, step_number, step_name, status, started_at, completed_at, error_message
+    SELECT id, post_slug, step_number, step_name, status,
+           started_at, completed_at, error_message, cycle_id
     FROM pipeline_steps
-    WHERE post_slug = ? AND status IN ('pending', 'failed')
+    WHERE post_slug = ? AND cycle_id = ? AND status IN ('pending', 'failed')
     ORDER BY step_number ASC
     LIMIT 1
-  `).get(slug) as PipelineStepRow | undefined;
+  `).get(slug, cycleId) as PipelineStepRow | undefined;
   return row ?? null;
 }
 
@@ -144,6 +153,7 @@ export function markStepRunning(
   db: Database.Database,
   slug: string,
   stepName: PublishStepName,
+  cycleId: number = 0,
 ): void {
   db.prepare(`
     UPDATE pipeline_steps
@@ -151,22 +161,23 @@ export function markStepRunning(
         started_at = CURRENT_TIMESTAMP,
         completed_at = NULL,
         error_message = NULL
-    WHERE post_slug = ? AND step_name = ?
-  `).run(slug, stepName);
+    WHERE post_slug = ? AND cycle_id = ? AND step_name = ?
+  `).run(slug, cycleId, stepName);
 }
 
 export function markStepCompleted(
   db: Database.Database,
   slug: string,
   stepName: PublishStepName,
+  cycleId: number = 0,
 ): void {
   db.prepare(`
     UPDATE pipeline_steps
     SET status = 'completed',
         completed_at = CURRENT_TIMESTAMP,
         error_message = NULL
-    WHERE post_slug = ? AND step_name = ?
-  `).run(slug, stepName);
+    WHERE post_slug = ? AND cycle_id = ? AND step_name = ?
+  `).run(slug, cycleId, stepName);
 }
 
 export function markStepFailed(
@@ -174,14 +185,15 @@ export function markStepFailed(
   slug: string,
   stepName: PublishStepName,
   errorMessage: string,
+  cycleId: number = 0,
 ): void {
   db.prepare(`
     UPDATE pipeline_steps
     SET status = 'failed',
         completed_at = CURRENT_TIMESTAMP,
         error_message = ?
-    WHERE post_slug = ? AND step_name = ?
-  `).run(errorMessage, slug, stepName);
+    WHERE post_slug = ? AND cycle_id = ? AND step_name = ?
+  `).run(errorMessage, slug, cycleId, stepName);
 }
 
 export function markStepSkipped(
@@ -189,26 +201,29 @@ export function markStepSkipped(
   slug: string,
   stepName: PublishStepName,
   reason?: string,
+  cycleId: number = 0,
 ): void {
   db.prepare(`
     UPDATE pipeline_steps
     SET status = 'skipped',
         completed_at = CURRENT_TIMESTAMP,
         error_message = ?
-    WHERE post_slug = ? AND step_name = ?
-  `).run(reason ?? null, slug, stepName);
+    WHERE post_slug = ? AND cycle_id = ? AND step_name = ?
+  `).run(reason ?? null, slug, cycleId, stepName);
 }
 
 export function getPipelineSteps(
   db: Database.Database,
   slug: string,
+  cycleId: number = 0,
 ): PipelineStepRow[] {
   return db.prepare(`
-    SELECT id, post_slug, step_number, step_name, status, started_at, completed_at, error_message
+    SELECT id, post_slug, step_number, step_name, status,
+           started_at, completed_at, error_message, cycle_id
     FROM pipeline_steps
-    WHERE post_slug = ?
+    WHERE post_slug = ? AND cycle_id = ?
     ORDER BY step_number ASC
-  `).all(slug) as PipelineStepRow[];
+  `).all(slug, cycleId) as PipelineStepRow[];
 }
 
 // Reconcile existing `pending` / `failed` rows against the CURRENT config
@@ -229,18 +244,21 @@ export function reconcilePipelineSteps(
   contentType: ContentType,
   config: BlogConfig,
   options?: CreatePipelineStepsOptions,
+  cycleId: number = 0,
+  publishMode: PublishMode = 'initial',
 ): number {
-  const expected = buildInitialSteps(contentType, config, options);
+  const expected = buildInitialSteps(contentType, config, options, publishMode);
   const expectedByName = new Map(expected.map((r) => [r.name, r]));
   const existing = db.prepare(`
-    SELECT step_name, status FROM pipeline_steps WHERE post_slug = ?
-  `).all(slug) as Array<{ step_name: PublishStepName; status: string }>;
+    SELECT step_name, status FROM pipeline_steps
+    WHERE post_slug = ? AND cycle_id = ?
+  `).all(slug, cycleId) as Array<{ step_name: PublishStepName; status: string }>;
   const update = db.prepare(`
     UPDATE pipeline_steps
     SET status = 'skipped',
         completed_at = CURRENT_TIMESTAMP,
         error_message = ?
-    WHERE post_slug = ? AND step_name = ?
+    WHERE post_slug = ? AND cycle_id = ? AND step_name = ?
   `);
   let changed = 0;
   const tx = db.transaction(() => {
@@ -248,7 +266,7 @@ export function reconcilePipelineSteps(
       if (row.status !== 'pending' && row.status !== 'failed') continue;
       const want = expectedByName.get(row.step_name);
       if (want && want.status === 'skipped') {
-        update.run(want.reason ?? null, slug, row.step_name);
+        update.run(want.reason ?? null, slug, cycleId, row.step_name);
         changed += 1;
       }
     }
@@ -259,40 +277,37 @@ export function reconcilePipelineSteps(
 
 // Demote any `running` rows back to `pending` so the runner picks them up on
 // resume. A row is only `running` because a prior invocation was killed
-// mid-step (the success path transitions running -> completed atomically in
-// the same process, and the failure path transitions running -> failed in
-// the same process's error handler). The caller MUST hold the slug-scoped
-// publish lock before calling this — the lock is the proof that no other
-// live runner owns those rows.
-//
-// Without this reclaim, `getNextPendingStep` would skip over the interrupted
-// step (status='running' is neither 'pending' nor 'failed') and execute the
-// next step out of order — violating the sequential/resume guarantee.
+// mid-step. Callers MUST hold the slug-scoped publish lock — the lock is
+// the proof that no other live runner owns those rows.
 export function reclaimStaleRunning(
   db: Database.Database,
   slug: string,
+  cycleId: number = 0,
 ): number {
   const info = db.prepare(`
     UPDATE pipeline_steps
     SET status = 'pending',
         started_at = NULL
-    WHERE post_slug = ? AND status = 'running'
-  `).run(slug);
+    WHERE post_slug = ? AND cycle_id = ? AND status = 'running'
+  `).run(slug, cycleId);
   return info.changes;
 }
 
-// True iff every pipeline_steps row is completed or skipped AND there are
-// exactly 11 rows (sanity check: catches a partial createPipelineSteps that
-// was interrupted before all rows landed).
+// True iff every pipeline_steps row for the given cycle is completed or
+// skipped AND the row count matches the expected set for the mode (11 for
+// initial, 9 for update). The length check catches a partial
+// createPipelineSteps that was interrupted before all rows landed.
 export function allStepsComplete(
   db: Database.Database,
   slug: string,
+  cycleId: number = 0,
+  publishMode: PublishMode = 'initial',
 ): boolean {
   const rows = db.prepare(`
     SELECT status
     FROM pipeline_steps
-    WHERE post_slug = ?
-  `).all(slug) as Array<{ status: string }>;
-  if (rows.length !== PUBLISH_STEP_NAMES.length) return false;
+    WHERE post_slug = ? AND cycle_id = ?
+  `).all(slug, cycleId) as Array<{ status: string }>;
+  if (rows.length !== stepNamesForMode(publishMode).length) return false;
   return rows.every((r) => r.status === 'completed' || r.status === 'skipped');
 }

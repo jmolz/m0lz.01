@@ -231,7 +231,7 @@ const resolvedPath = resolve(dirname(configPath), rawPath);
 - **Framework**: Vitest
 - **Location**: `tests/*.test.ts`
 - **Run**: `npm test`
-- **Baseline**: 388 tests across 27 suites (Phase 1: 48, Phase 2: 54, Phase 3: 44, Phase 4: 79, Phase 5: 163)
+- **Baseline**: 723 tests across 56 suites (Phase 1: 48, Phase 2: 54, Phase 3: 44, Phase 4: 79, Phase 5: 163, Phase 6: 195, Phase 7: 140)
 - **Minimum**: Each module needs: 1 happy path, 1 edge case, 1 error case
 - **DB tests**: Use in-memory SQLite (`getDatabase(':memory:')`)
 - **File tests**: Use `mkdtemp` for temporary directories, clean up in `afterEach`
@@ -274,6 +274,7 @@ These load automatically when editing files in their scope:
 | `.claude/rules/testing.md` | `tests/**`, `*.test.ts` | Temp dirs, `:memory:` DBs, mocking console/exit, fixtures, regression suite |
 | `.claude/rules/drafting.md` | `src/core/draft/**`, `src/cli/draft.ts`, `templates/draft/**` | PostFrontmatter contract, MDX parsing, placeholder tokens, content-type routing, asset safety |
 | `.claude/rules/evaluation.md` | `src/core/evaluate/**`, `src/cli/evaluate.ts` | Deterministic-CLI/judgment-skill split, autocheck determinism, JACCARD_THRESHOLD, mandatory artifact_hashes provenance, DB-authoritative re-derivation with cluster-identity, slug-scoped FS lock, readManifest single-choke-point validation, synthesis receipt, reject sentinel ordering, cycle isolation |
+| `.claude/rules/lifecycle.md` | `src/core/update/**`, `src/core/unpublish/**`, `src/cli/update.ts`, `src/cli/unpublish.ts` | publishMode dispatch, update_cycles first-class rows, partial-unique-index constraint, explicit isUpdateReview flag, cycle-keyed notice marker, publish guard, shared per-slug lock, shared finalize helper, metrics audit log, unpublish trust boundaries |
 
 ### Read on demand
 
@@ -285,6 +286,8 @@ These load automatically when editing files in their scope:
 | Phase 3 plan | `.claude/plans/phase-3-benchmark.md` | Benchmark test harness + contract |
 | Phase 4 plan | `.claude/plans/phase-4-draft.md` | Draft + visuals + contract |
 | Phase 5 plan | `.claude/plans/phase-5-evaluate.md` | Three-reviewer adversarial evaluation + contract |
+| Phase 6 plan | `.claude/plans/phase-6-publish.md` | Initial-publish 11-step pipeline + contract |
+| Phase 7 plan | `.claude/plans/phase-7-lifecycle.md` | Unpublish + update + orchestration + contract |
 | Drafting rules | `.claude/rules/drafting.md` | MDX parsing pitfalls, PostFrontmatter contract, placeholder tokens |
 | Original brainstorm | `.claude/plans/blog-agent-prd.md` | Historical context |
 | PICE workflow | `.claude/docs/PLAYBOOK.md` | Plan/Implement/Evaluate loop |
@@ -325,7 +328,18 @@ interface PostFrontmatter {
   companion_repo?: string
   project?: string        // Catalog ID (e.g., "m0lz.02")
   medium_url?: string     // Populated after cross-post
+  substack_url?: string   // Populated after cross-post
   devto_url?: string      // Populated after cross-post
+  // Phase 7 additions — optional, appear after `published` when present.
+  // The site repo's frontmatter parser must accept these without erroring.
+  // Round-trip proof (serialize → parse preserves every field) lives in
+  // tests/frontmatter-phase7.test.ts (8 tests, incl. legacy-tolerance and
+  // a Phase 7 shape fixture that matches what the site ingestion pipeline
+  // sees in production). That test IS the in-repo artifact for the
+  // "site accepts these fields" half of contract criterion #21.
+  unpublished_at?: string // ISO 8601, set when `blog unpublish` advances phase
+  updated_at?: string     // ISO 8601, set by each update-publish cycle's site-update step
+  update_count?: number   // Incremented on each successful update cycle
 }
 ```
 
