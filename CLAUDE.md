@@ -231,7 +231,7 @@ const resolvedPath = resolve(dirname(configPath), rawPath);
 - **Framework**: Vitest
 - **Location**: `tests/*.test.ts`
 - **Run**: `npm test`
-- **Baseline**: 676 tests across 51 suites (Phase 1: 48, Phase 2: 54, Phase 3: 44, Phase 4: 79, Phase 5: 163, Phase 6: 195, Phase 7: 93)
+- **Baseline**: 691 tests across 54 suites (Phase 1: 48, Phase 2: 54, Phase 3: 44, Phase 4: 79, Phase 5: 163, Phase 6: 195, Phase 7: 108)
 - **Minimum**: Each module needs: 1 happy path, 1 edge case, 1 error case
 - **DB tests**: Use in-memory SQLite (`getDatabase(':memory:')`)
 - **File tests**: Use `mkdtemp` for temporary directories, clean up in `afterEach`
@@ -328,9 +328,15 @@ interface PostFrontmatter {
   companion_repo?: string
   project?: string        // Catalog ID (e.g., "m0lz.02")
   medium_url?: string     // Populated after cross-post
+  substack_url?: string   // Populated after cross-post
   devto_url?: string      // Populated after cross-post
   // Phase 7 additions — optional, appear after `published` when present.
   // The site repo's frontmatter parser must accept these without erroring.
+  // Round-trip proof (serialize → parse preserves every field) lives in
+  // tests/frontmatter-phase7.test.ts (8 tests, incl. legacy-tolerance and
+  // a Phase 7 shape fixture that matches what the site ingestion pipeline
+  // sees in production). That test IS the in-repo artifact for the
+  // "site accepts these fields" half of contract criterion #21.
   unpublished_at?: string // ISO 8601, set when `blog unpublish` advances phase
   updated_at?: string     // ISO 8601, set by each update-publish cycle's site-update step
   update_count?: number   // Incremented on each successful update cycle

@@ -1,9 +1,9 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 
 import { BlogConfig } from '../config/types.js';
-import { assertOriginMatches } from '../publish/origin-guard.js';
+import { expectedSiteCoords, requireOriginMatch } from '../publish/origin-guard.js';
 
 // Phase 7: site-revert PR. Creates a PR that flips `published: false` in
 // the post's MDX frontmatter. PR-only by design (no direct-push flag) —
@@ -114,11 +114,11 @@ export function createSiteRevertPR(
   }
 
   // Origin trust-boundary check BEFORE we stage/commit/push anything.
-  // Expected site repo target = {author.github}/{basename(site.repo_path)}.
-  // Mirrors the companion-repo guard in publish/repo.ts — a misconfigured
-  // origin here would silently PR into an unrelated repository.
-  const expectedSiteRepoName = basename(config.site.repo_path.replace(/\/+$/, ''));
-  assertOriginMatches(siteRepoPath, config.author.github, expectedSiteRepoName);
+  // Expected site repo target comes from config.site.github_repo when
+  // set, else `{author.github}/basename(repo_path)`. Strict variant:
+  // unpublish never creates origin, so "no origin" must fail loudly.
+  const expected = expectedSiteCoords(config);
+  requireOriginMatch(siteRepoPath, expected.owner, expected.name);
 
   const remoteUrl = execFileSync(
     'git', ['-C', siteRepoPath, 'config', '--get', 'remote.origin.url'],
@@ -237,8 +237,8 @@ export function checkUnpublishPreviewGate(
   paths: SiteRevertPRPaths,
 ): UnpublishPreviewGateResult {
   const siteRepoPath = resolveSiteRepoPath(paths.configPath, config.site.repo_path);
-  const expectedSiteRepoName = basename(config.site.repo_path.replace(/\/+$/, ''));
-  assertOriginMatches(siteRepoPath, config.author.github, expectedSiteRepoName);
+  const expected = expectedSiteCoords(config);
+  requireOriginMatch(siteRepoPath, expected.owner, expected.name);
   const remoteUrl = execFileSync(
     'git', ['-C', siteRepoPath, 'config', '--get', 'remote.origin.url'],
     { encoding: 'utf-8' },

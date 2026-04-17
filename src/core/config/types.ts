@@ -3,6 +3,14 @@ export interface SiteConfig {
   base_url: string;
   content_dir: string;
   research_dir: string;
+  // Optional explicit GitHub remote coordinates (`owner/name`). When set,
+  // the origin-guard compares against this verbatim. When unset, falls
+  // back to `{author.github}/basename(repo_path)` — the Phase 6 implicit
+  // convention. Setting this explicitly is the documented path for
+  // operators whose local clone directory name differs from the remote
+  // repo name (renamed clones) or whose site repo is org-owned rather
+  // than under `author.github`.
+  github_repo?: string;
 }
 
 export interface AuthorConfig {

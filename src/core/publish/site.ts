@@ -5,6 +5,7 @@ import { dirname, isAbsolute, join, resolve } from 'node:path';
 import Database from 'better-sqlite3';
 
 import { BlogConfig } from '../config/types.js';
+import { expectedSiteCoords, requireOriginMatch } from './origin-guard.js';
 
 // Steps 3 + 4 of the publish pipeline.
 //
@@ -191,7 +192,22 @@ export function createSitePR(
     }
   }
 
-  // Determine repo coordinates from the site repo's origin remote.
+  // Origin trust-boundary check BEFORE any mutation. Expected coords
+  // come from `config.site.github_repo` when set, else
+  // `{author.github}/basename(repo_path)`. requireOriginMatch throws on
+  // absent/mismatch/unparseable — so `gh pr create --repo <flag>` below
+  // cannot silently PR into an unrelated repository (Codex Pass 2
+  // Major #1, Claude Pass 2 Critical #19). Applies to both initial
+  // publish (`post/<slug>` branch) and update-mode (via site-update.ts
+  // which passes `update/<slug>-cycle-<N>` as the branch override).
+  const expected = expectedSiteCoords(config);
+  requireOriginMatch(siteRepoPath, expected.owner, expected.name);
+
+  // Determine repo coordinates used for the `--repo` flag on `gh`
+  // commands. After requireOriginMatch above, origin is known to match
+  // the expected identity, so we use it directly — but fall back to
+  // parsing in case the config explicitly overrode to a different-cased
+  // form. Either way, both paths agree on the target.
   const remoteUrl = execFileSync(
     'git',
     ['-C', siteRepoPath, 'config', '--get', 'remote.origin.url'],
@@ -373,6 +389,12 @@ export function checkPreviewGate(
   if (!existsSync(siteRepoPath)) {
     throw new Error(`Site repo path does not exist: ${siteRepoPath}`);
   }
+  // Origin trust-boundary check even on a read-only `gh pr view` — a
+  // misconfigured remote would cause the status check to poll the wrong
+  // repo's PR number and block the pipeline forever on a merged PR that
+  // never actually exists.
+  const expected = expectedSiteCoords(config);
+  requireOriginMatch(siteRepoPath, expected.owner, expected.name);
   const remoteUrl = execFileSync(
     'git',
     ['-C', siteRepoPath, 'config', '--get', 'remote.origin.url'],

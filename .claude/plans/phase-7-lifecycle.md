@@ -1181,9 +1181,9 @@ concurrency constraints (shared lock, DB-enforced cycle uniqueness).
       "validation": "tests/unpublish-devto.test.ts mocks Forem API: PUT success on match, skip on 404, throw on 500. PUT body matches the shape pinned in docs/spikes/forem-put-semantics.md"
     },
     {
-      "name": "Unpublish site revert is PR-only; there is no direct-push code path anywhere in src/core/unpublish/",
+      "name": "Unpublish site revert is PR-only; there is no direct-push code path in src/core/unpublish/site.ts. (Phase 7 Pass 3 clarification: readme-revert in src/core/unpublish/readme.ts direct-pushes by design, symmetric with Phase 6's updateProjectReadme — guarded by assertIndexClean + requireOriginMatch + path-scoped dirty-state. See .claude/rules/lifecycle.md.)",
       "threshold": 9,
-      "validation": "grep-based: src/core/unpublish/ contains no 'push origin main' or site_revert_mode references; tests/unpublish-site.test.ts asserts PR opened via gh"
+      "validation": "grep-based: src/core/unpublish/site.ts contains no 'push origin main' or site_revert_mode references; tests/unpublish-site.test.ts asserts PR opened via gh"
     },
     {
       "name": "Unpublish README-revert skips with descriptive reasons when post lacks project_id, config has no projects[id], or link is already absent",

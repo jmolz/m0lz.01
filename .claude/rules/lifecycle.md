@@ -131,9 +131,52 @@ Every Phase 6 invariant carries through Phase 7:
 
 ## Shared origin-guard module
 
-`src/core/publish/origin-guard.ts` exports `parseGitHubRemoteUrl` and
-`assertOriginMatches`. Phase 6's publish/repo.ts previously inlined the
-helper; Phase 7 extracted it so unpublish/site and unpublish/readme can
-reuse the same trust boundary instead of duplicating (and eventually
-diverging from) it. Any new repo-touching code path — Phase 8 or later
-— MUST import from this module rather than re-parsing origin inline.
+`src/core/publish/origin-guard.ts` exports three APIs:
+
+- `getOriginState(repoPath, owner, name)` — **tolerant**. Returns
+  `'absent'` when origin is unconfigured (operator may legitimately
+  add it during the publish scaffold flow); returns `'matches'` on a
+  clean match; THROWS on wrong-target or unparseable URL. Used by
+  `pushCompanionRepo` where the scaffold is created before origin.
+- `requireOriginMatch(repoPath, owner, name)` — **strict**. Throws on
+  absent, mismatch, or unparseable. Used by every unpublish path,
+  update-publish site/preview-gate, and the initial site PR. "No
+  origin" is an operator error here — the flows never create it.
+- `expectedSiteCoords(config)` — resolves expected GitHub coordinates
+  for the site repo. Prefers explicit `config.site.github_repo` when
+  set; falls back to `{author.github}/basename(repo_path)` — the
+  Phase 6 implicit convention. Phase 7 Pass 3 made the fallback
+  explicit-in-config for operators whose local clone directory name
+  differs from the remote repo name (renamed clones, org-owned repos).
+
+Both guards **narrow the catch** of `git remote get-url origin` failures
+to stderr containing `"No such remote"`. Any other subprocess failure
+(missing git binary, not a git repo, permission error) is re-thrown
+with context so the caller cannot mistake an environment problem for
+an intentional scaffold state (Codex Pass 2 Major #2).
+
+Any new repo-touching code path — Phase 8 or later — MUST import from
+this module rather than re-parsing origin inline. There is no
+re-export from `publish/repo.ts` in Pass 3 forward; direct import is
+the only supported surface.
+
+## Unpublish readme-revert policy (direct-push is intentional)
+
+`revertProjectReadmeLink` in `src/core/unpublish/readme.ts` performs
+`git push origin main` directly. This is **symmetric with Phase 6's
+`updateProjectReadme`** (which also direct-pushes the writing-link
+addition) — an unpublish flow that opened a PR for a one-line link
+removal would be unproportionately heavyweight for the operator.
+
+The direct-push is guarded by THREE pre-push invariants:
+
+1. Path-scoped dirty-state check — unrelated working-tree changes throw.
+2. `assertIndexClean` — any staged changes throw.
+3. `requireOriginMatch(config.author.github, post.project_id)` —
+   wrong or missing origin throws.
+
+The **contract criterion #5** ("site revert is PR-only") applies
+specifically to `src/core/unpublish/site.ts`, not the directory-wide
+grep that an earlier draft of the criterion implied. Grep-verifiable:
+no `push origin main` in `src/core/unpublish/site.ts`. The readme
+path's policy is documented here and cross-referenced in the contract.

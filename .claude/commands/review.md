@@ -112,7 +112,10 @@ npx vitest run \
   tests/unpublish-site.test.ts \
   tests/unpublish-devto.test.ts \
   tests/unpublish-pipeline.test.ts \
-  tests/skills-crossref.test.ts
+  tests/skills-crossref.test.ts \
+  tests/update-runner-pipeline.test.ts \
+  tests/cross-flow-lock.test.ts \
+  tests/frontmatter-phase7.test.ts
 ```
 
 ### What each test covers
@@ -282,7 +285,7 @@ npm test
 npm run build
 ```
 
-Expected baseline: **0 TypeScript errors, 676 tests passing across 51 suites, clean build** (as of feature/phase-7-lifecycle after Cluster I hardening: origin-guard + index-clean extensions into unpublish + 30 new tests for the contract-named files that were absent in Pass 1). Any drift from this baseline is a signal to investigate before merging.
+Expected baseline: **0 TypeScript errors, 691 tests passing across 54 suites, clean build** (as of feature/phase-7-lifecycle after Cluster J: split origin-guard into tolerant/strict APIs, added site.github_repo config, applied guards to publish/site.ts, added E2E update-mode runner test + true cross-flow lock contention test + PostFrontmatter Phase 7 round-trip proof; closes the last 4 Pass 2 failing criteria). Any drift from this baseline is a signal to investigate before merging.
 
 ## Phase 3: Code Review of Current Changes
 

@@ -119,12 +119,27 @@ export function validateConfig(raw: unknown): BlogConfig {
     }
   }
 
+  // `site.github_repo` is optional (shape: 'owner/name') and when set is
+  // the explicit source of truth for the origin-guard. Validate its shape
+  // here so a typo surfaces at load time rather than on the first
+  // repo-touching step hours into a publish run.
+  let siteGithubRepo: string | undefined;
+  if (site.github_repo !== undefined && site.github_repo !== null) {
+    if (typeof site.github_repo !== 'string' || !/^[^/\s]+\/[^/\s]+$/.test(site.github_repo)) {
+      throw new Error(
+        `Config field site.github_repo must be 'owner/name' if set. Got: ${JSON.stringify(site.github_repo)}`,
+      );
+    }
+    siteGithubRepo = site.github_repo;
+  }
+
   return {
     site: {
       repo_path: site.repo_path,
       base_url: site.base_url,
       content_dir: (site.content_dir as string) || 'content/posts',
       research_dir: (site.research_dir as string) || 'content/research',
+      github_repo: siteGithubRepo,
     },
     author: {
       name: author.name,

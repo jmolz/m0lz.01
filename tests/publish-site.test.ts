@@ -46,6 +46,10 @@ function makeConfig(siteRepoPath: string): BlogConfig {
       base_url: 'https://m0lz.dev',
       content_dir: 'content/posts',
       research_dir: 'content/research',
+      // Explicit coords — the local test tempdir basename is 'site' which
+      // would otherwise make origin-guard expect 'jmolz/site'. Setting
+      // `github_repo` overrides the basename fallback.
+      github_repo: 'jmolz/m0lz.00',
     },
     author: { name: 'Tester', github: 'jmolz' },
     ai: {
@@ -133,6 +137,12 @@ function installExec(matcher: ExecMatcher): void {
     // directly instead of installExec.
     if (cmd === 'git' && args.includes('status') && args.includes('--porcelain')) {
       return '';
+    }
+    // Default: origin-guard reads via `git remote get-url origin`. Return
+    // the expected m0lz.00 origin so requireOriginMatch passes. Tests
+    // focused on wrong-origin behavior override via direct mockImplementation.
+    if (cmd === 'git' && args.includes('remote') && args.includes('get-url')) {
+      return 'git@github.com:jmolz/m0lz.00.git\n';
     }
     const result = matcher(cmd, args);
     if (result instanceof Error) throw result;
@@ -463,6 +473,9 @@ describe('createSitePR — dirty-state guardrail (Codex Pass 4 regression)', () 
       if (cmd === 'git' && args.includes('status') && args.includes('--porcelain')) {
         return ' M content/posts/ownedonly/index.mdx\n';
       }
+      if (cmd === 'git' && args.includes('remote') && args.includes('get-url')) {
+        return 'git@github.com:jmolz/m0lz.00.git\n';
+      }
       if (cmd === 'git' && args.includes('config') && args.includes('--get')) {
         return 'git@github.com:jmolz/m0lz.00.git\n';
       }
@@ -515,6 +528,9 @@ describe('createSitePR — dirty-state guardrail (Codex Pass 4 regression)', () 
     mockExec.mockImplementation((cmd: string, args: string[]) => {
       if (cmd === 'git' && args.includes('status') && args.includes('--porcelain')) {
         return 'R  content/posts/owned-rename/old.mdx -> content/posts/owned-rename/index.mdx\n';
+      }
+      if (cmd === 'git' && args.includes('remote') && args.includes('get-url')) {
+        return 'git@github.com:jmolz/m0lz.00.git\n';
       }
       if (cmd === 'git' && args.includes('config') && args.includes('--get')) {
         return 'git@github.com:jmolz/m0lz.00.git\n';

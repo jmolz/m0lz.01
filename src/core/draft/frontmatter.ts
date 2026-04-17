@@ -13,7 +13,21 @@ export interface PostFrontmatter {
   companion_repo?: string;
   project?: string;
   medium_url?: string;
+  substack_url?: string;
   devto_url?: string;
+  // Phase 7 additions. All optional — present only after the
+  // corresponding lifecycle event:
+  // - `unpublished_at` set by `blog unpublish` when the site-revert PR
+  //   flips `published: false`.
+  // - `updated_at` set by each update-publish cycle's site-update step.
+  // - `update_count` incremented on each successful update cycle close.
+  // The m0lz.00 frontmatter parser must accept these fields without
+  // erroring. The in-repo proof that the parser is tolerant lives in
+  // tests/frontmatter-phase7.test.ts — a round-trip test that
+  // serializes + parses MDX containing all three fields.
+  unpublished_at?: string;
+  updated_at?: string;
+  update_count?: number;
 }
 
 export function generateFrontmatter(post: PostRow, config: BlogConfig): PostFrontmatter {
@@ -91,7 +105,14 @@ export function serializeFrontmatter(fm: PostFrontmatter): string {
   if (fm.companion_repo !== undefined) obj.companion_repo = fm.companion_repo;
   if (fm.project !== undefined) obj.project = fm.project;
   if (fm.medium_url !== undefined) obj.medium_url = fm.medium_url;
+  if (fm.substack_url !== undefined) obj.substack_url = fm.substack_url;
   if (fm.devto_url !== undefined) obj.devto_url = fm.devto_url;
+  // Phase 7 additions — only emitted when present. The m0lz.00 site
+  // parser must tolerate their absence (legacy posts) and their
+  // presence (updated/unpublished posts).
+  if (fm.unpublished_at !== undefined) obj.unpublished_at = fm.unpublished_at;
+  if (fm.updated_at !== undefined) obj.updated_at = fm.updated_at;
+  if (fm.update_count !== undefined) obj.update_count = fm.update_count;
 
   const dumped = yaml.dump(obj, { lineWidth: -1, quotingType: '"', forceQuotes: false });
   return `---\n${dumped}---`;
@@ -116,6 +137,15 @@ export function parseFrontmatter(mdxContent: string): PostFrontmatter {
     ? dateRaw.toISOString().slice(0, 10)
     : String(dateRaw ?? '');
 
+  // Normalize Phase 7 additions. `update_count` is numeric; everything
+  // else is string-coerced with undefined preservation.
+  const updateCountRaw = obj.update_count;
+  const updateCount = typeof updateCountRaw === 'number'
+    ? updateCountRaw
+    : typeof updateCountRaw === 'string' && /^\d+$/.test(updateCountRaw)
+      ? Number(updateCountRaw)
+      : undefined;
+
   return {
     title: String(obj.title ?? ''),
     description: String(obj.description ?? ''),
@@ -126,6 +156,10 @@ export function parseFrontmatter(mdxContent: string): PostFrontmatter {
     companion_repo: obj.companion_repo !== undefined ? String(obj.companion_repo) : undefined,
     project: obj.project !== undefined ? String(obj.project) : undefined,
     medium_url: obj.medium_url !== undefined ? String(obj.medium_url) : undefined,
+    substack_url: obj.substack_url !== undefined ? String(obj.substack_url) : undefined,
     devto_url: obj.devto_url !== undefined ? String(obj.devto_url) : undefined,
+    unpublished_at: obj.unpublished_at !== undefined ? String(obj.unpublished_at) : undefined,
+    updated_at: obj.updated_at !== undefined ? String(obj.updated_at) : undefined,
+    update_count: updateCount,
   };
 }

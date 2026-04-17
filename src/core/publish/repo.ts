@@ -6,8 +6,11 @@ import Database from 'better-sqlite3';
 
 import { BlogConfig } from '../config/types.js';
 import { ContentType } from '../db/types.js';
-import { assertOriginMatches, parseGitHubRemoteUrl } from './origin-guard.js';
-export { assertOriginMatches, parseGitHubRemoteUrl } from './origin-guard.js';
+// Import directly from the shared guard module. The prior re-export was
+// kept during Cluster I for back-compat; Pass 3 consolidates on a single
+// import surface to avoid split-brain between `repo.ts` and the canonical
+// `origin-guard.ts` (Codex Pass 2 Minor #5).
+import { getOriginState } from './origin-guard.js';
 
 // Step 8 of the publish pipeline: push or create the companion repo on
 // GitHub via the `gh` CLI. Content-type routing determines behaviour:
@@ -89,7 +92,7 @@ export function pushCompanionRepo(
     // target. assertOriginMatches throws if origin points somewhere else
     // — silently pushing would mutate an unrelated repository and report
     // success (Codex Pass 5 Critical).
-    const state = assertOriginMatches(repoPath, config.author.github, slug);
+    const state = getOriginState(repoPath, config.author.github, slug);
     if (state === 'absent') {
       execFileSync(
         'git',
@@ -127,7 +130,7 @@ export function pushCompanionRepo(
       if (stderr.includes('already exists')) {
         // Same origin-URL guardrail as the remoteExists branch — the
         // race fallback must not push to an unrelated remote either.
-        const state = assertOriginMatches(repoPath, config.author.github, slug);
+        const state = getOriginState(repoPath, config.author.github, slug);
         if (state === 'absent') {
           execFileSync(
             'git',

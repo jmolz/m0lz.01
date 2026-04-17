@@ -6,7 +6,7 @@ import Database from 'better-sqlite3';
 
 import { BlogConfig } from '../config/types.js';
 import { assertIndexClean } from '../publish/frontmatter.js';
-import { assertOriginMatches } from '../publish/origin-guard.js';
+import { requireOriginMatch } from '../publish/origin-guard.js';
 
 // Phase 7: readme-revert. Removes the writing link added by the initial
 // `update-readme` step. Direct-push to main (matches the Phase 6 readme
@@ -17,10 +17,12 @@ import { assertOriginMatches } from '../publish/origin-guard.js';
 //
 // Trust-boundary guards (Codex Phase 7 Pass 1 Critical):
 //   - assertIndexClean BEFORE `git add` to refuse operator-staged sweeps.
-//   - assertOriginMatches(config.author.github, post.project_id) BEFORE
+//   - requireOriginMatch(config.author.github, post.project_id) BEFORE
 //     `git push`. Direct push to an unrelated repository because origin
 //     was misconfigured would look indistinguishable from success — the
-//     guard forces a loud failure instead.
+//     guard forces a loud failure instead. Strict variant (vs. tolerant
+//     getOriginState) because unpublish never creates origin — "no
+//     origin" is always an operator error here.
 
 export interface ReadmeRevertPaths {
   configPath: string;
@@ -120,7 +122,7 @@ export function revertProjectReadmeLink(
   // Origin-matches precondition BEFORE push. Expected target is
   // {author.github}/{project_id} — symmetric to the companion-repo
   // guard in publish/repo.ts.
-  assertOriginMatches(repo, config.author.github, post.project_id);
+  requireOriginMatch(repo, config.author.github, post.project_id);
   execFileSync('git', ['-C', repo, 'push', 'origin', 'main'], { encoding: 'utf-8' });
   return { reverted: true };
 }

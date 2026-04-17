@@ -16,7 +16,9 @@ import { closeDatabase, getDatabase } from '../src/core/db/database.js';
 // eslint-disable-next-line import/first
 import { initResearchPost, advancePhase } from '../src/core/research/state.js';
 // eslint-disable-next-line import/first
-import { parseGitHubRemoteUrl, pushCompanionRepo, RepoPaths } from '../src/core/publish/repo.js';
+import { pushCompanionRepo, RepoPaths } from '../src/core/publish/repo.js';
+// eslint-disable-next-line import/first
+import { parseGitHubRemoteUrl } from '../src/core/publish/origin-guard.js';
 // eslint-disable-next-line import/first
 import { BlogConfig } from '../src/core/config/types.js';
 
@@ -228,7 +230,13 @@ describe('pushCompanionRepo — technical-deep-dive paths', () => {
     installExec((cmd, args) => {
       calls.push({ cmd, args });
       if (cmd === 'gh' && args[1] === 'view') return '';
-      if (cmd === 'git' && args.includes('get-url')) throw makeExecError(1);
+      // Realistic git error shape: exit 128 with stderr including
+      // "No such remote 'origin'". The origin-guard narrows its "absent"
+      // detection to this specific stderr marker in Pass 3 (previously
+      // any error = absent, which masked environment bugs).
+      if (cmd === 'git' && args.includes('get-url')) {
+        throw makeExecError(128, "fatal: No such remote 'origin'\n");
+      }
       if (cmd === 'git' && args.includes('add') && args.includes('origin')) return '';
       if (cmd === 'git' && args.includes('push')) return '';
       return null;

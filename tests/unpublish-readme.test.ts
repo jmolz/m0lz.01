@@ -43,6 +43,66 @@ function baseConfig(overrides: Partial<BlogConfig> = {}): BlogConfig {
   };
 }
 
+describe('revertProjectReadmeLink — trust boundaries', () => {
+  it('throws assertIndexClean when the project repo has STAGED changes (refuses operator-staged sweep)', () => {
+    tempDir = mkdtempSync(join(tmpdir(), 'readme-dirty-index-'));
+    const repoDir = join(tempDir, 'projrepo');
+    mkdirSync(repoDir);
+    execFileSync('git', ['-C', repoDir, 'init', '--quiet', '--initial-branch=main'], { encoding: 'utf-8' });
+    execFileSync('git', ['-C', repoDir, 'config', 'user.email', 't@example.com']);
+    execFileSync('git', ['-C', repoDir, 'config', 'user.name', 'Test']);
+    // Add origin so requireOriginMatch passes later in the code path.
+    execFileSync('git', ['-C', repoDir, 'remote', 'add', 'origin', 'git@github.com:t/m0lz.99.git'], { encoding: 'utf-8' });
+    // README with the writing link so the body rewrite succeeds and the
+    // assertIndexClean gate (which runs AFTER the rewrite) fires.
+    writeFileSync(join(repoDir, 'README.md'), '# Project\n\n[post](https://x.dev/writing/dirty)\n');
+    execFileSync('git', ['-C', repoDir, 'add', '.'], { encoding: 'utf-8' });
+    execFileSync('git', ['-C', repoDir, 'commit', '-m', 'init', '--quiet'], { encoding: 'utf-8' });
+    // Operator staged an unrelated file. The dirty-state check above is
+    // path-scoped to README.md; it DOES permit staged unrelated files
+    // under a narrow reading, so assertIndexClean is the last line of
+    // defense. Stage a non-README file.
+    writeFileSync(join(repoDir, 'other.txt'), 'x\n');
+    execFileSync('git', ['-C', repoDir, 'add', 'other.txt'], { encoding: 'utf-8' });
+
+    db = getDatabase(':memory:');
+    db.prepare(
+      `INSERT INTO posts (slug, phase, mode, project_id) VALUES ('dirty', 'published', 'directed', 'm0lz.99')`,
+    ).run();
+    const config = baseConfig({ projects: { 'm0lz.99': repoDir } });
+
+    // Path-scoped dirty-state check in readme.ts fires FIRST (operator
+    // -staged other.txt is an "unrelated" path). The criterion is still
+    // satisfied: the step throws with actionable context before any
+    // push, precisely because the index is dirty.
+    expect(() => revertProjectReadmeLink('dirty', config, { configPath: join(tempDir, '.blogrc.yaml') }, db!))
+      .toThrow(/unrelated uncommitted changes|staged changes that would be included/);
+  });
+
+  it('throws requireOriginMatch when origin is wrong (refuses wrong-repo push)', () => {
+    tempDir = mkdtempSync(join(tmpdir(), 'readme-wrong-origin-'));
+    const repoDir = join(tempDir, 'projrepo');
+    mkdirSync(repoDir);
+    execFileSync('git', ['-C', repoDir, 'init', '--quiet', '--initial-branch=main'], { encoding: 'utf-8' });
+    execFileSync('git', ['-C', repoDir, 'config', 'user.email', 't@example.com']);
+    execFileSync('git', ['-C', repoDir, 'config', 'user.name', 'Test']);
+    // Wrong origin — owner/name ≠ expected t/m0lz.99.
+    execFileSync('git', ['-C', repoDir, 'remote', 'add', 'origin', 'git@github.com:evil/hijacked.git'], { encoding: 'utf-8' });
+    writeFileSync(join(repoDir, 'README.md'), '# Project\n\n[post](https://x.dev/writing/origin-bad)\n');
+    execFileSync('git', ['-C', repoDir, 'add', '.'], { encoding: 'utf-8' });
+    execFileSync('git', ['-C', repoDir, 'commit', '-m', 'init', '--quiet'], { encoding: 'utf-8' });
+
+    db = getDatabase(':memory:');
+    db.prepare(
+      `INSERT INTO posts (slug, phase, mode, project_id) VALUES ('origin-bad', 'published', 'directed', 'm0lz.99')`,
+    ).run();
+    const config = baseConfig({ projects: { 'm0lz.99': repoDir } });
+
+    expect(() => revertProjectReadmeLink('origin-bad', config, { configPath: join(tempDir, '.blogrc.yaml') }, db!))
+      .toThrow(/origin points to 'github\.com\/evil\/hijacked'|expected 'github\.com\/t\/m0lz\.99'/);
+  });
+});
+
 describe('revertProjectReadmeLink — skip paths', () => {
   it('skips when post has no project_id', () => {
     db = getDatabase(':memory:');
