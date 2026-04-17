@@ -51,12 +51,20 @@ export type OriginState = 'absent' | 'matches';
 // Read the origin remote's URL and either return it as a string or
 // signal "no remote configured" via `null`. Re-throws every other
 // subprocess failure (bad repo, missing git binary, permission error).
+//
+// Forces `LC_ALL=C` / `LANG=C` so git emits its C-locale messages
+// regardless of the operator's environment (Codex Pass 3 Minor #1). The
+// stderr marker check below depends on the English "No such remote"
+// wording — without the locale pin, a French/German/Japanese git would
+// emit a translated message and the guard would mis-classify
+// "origin not configured yet" as an environment failure.
 function readOriginUrl(repoPath: string): string | null {
   try {
     return String(
       execFileSync('git', ['-C', repoPath, 'remote', 'get-url', 'origin'], {
         encoding: 'utf-8',
         stdio: ['pipe', 'pipe', 'pipe'],
+        env: { ...process.env, LC_ALL: 'C', LANG: 'C' },
       }),
     );
   } catch (e) {
@@ -64,8 +72,8 @@ function readOriginUrl(repoPath: string): string | null {
     const stderr = String(err.stderr ?? '').toLowerCase();
     // git returns exit 128 with "fatal: No such remote 'origin'" on stderr
     // when origin isn't configured. That's the ONLY case we treat as the
-    // tolerant "absent" outcome.
-    if (stderr.includes("no such remote") || stderr.includes("no such remote 'origin'")) {
+    // tolerant "absent" outcome. LC_ALL=C pins the message to English.
+    if (stderr.includes("no such remote")) {
       return null;
     }
     // "fatal: not a git repository" and friends are environment errors —
@@ -75,6 +83,21 @@ function readOriginUrl(repoPath: string): string | null {
       `(exit ${err.status ?? '?'}): ${String(err.stderr ?? err.message).trim()}`,
     );
   }
+}
+
+// GitHub treats owner/name as case-insensitive (github.com/Jmolz/M0lz.00 and
+// github.com/jmolz/m0lz.00 resolve to the same repo). Exact-case comparison
+// would false-fail on operator configs that don't match the casing of the
+// actual remote. Normalize both sides before comparing (Codex Pass 3 Minor #2).
+function coordsMatch(
+  parsed: { owner: string; name: string },
+  expectedOwner: string,
+  expectedName: string,
+): boolean {
+  return (
+    parsed.owner.toLowerCase() === expectedOwner.toLowerCase() &&
+    parsed.name.toLowerCase() === expectedName.toLowerCase()
+  );
 }
 
 function throwMismatch(repoPath: string, parsed: { owner: string; name: string }, expectedOwner: string, expectedName: string): never {
@@ -108,7 +131,7 @@ export function getOriginState(
   if (raw === null) return 'absent';
   const parsed = parseGitHubRemoteUrl(raw);
   if (!parsed) throwUnrecognized(repoPath, raw, expectedOwner, expectedName);
-  if (parsed.owner !== expectedOwner || parsed.name !== expectedName) {
+  if (!coordsMatch(parsed, expectedOwner, expectedName)) {
     throwMismatch(repoPath, parsed, expectedOwner, expectedName);
   }
   return 'matches';
@@ -132,7 +155,7 @@ export function requireOriginMatch(
   }
   const parsed = parseGitHubRemoteUrl(raw);
   if (!parsed) throwUnrecognized(repoPath, raw, expectedOwner, expectedName);
-  if (parsed.owner !== expectedOwner || parsed.name !== expectedName) {
+  if (!coordsMatch(parsed, expectedOwner, expectedName)) {
     throwMismatch(repoPath, parsed, expectedOwner, expectedName);
   }
 }

@@ -28,6 +28,12 @@ export interface PipelineContext {
   urls: PublishUrls;
   publishMode: PublishMode;
   cycleId: number;
+  // Optional override for the slug-scoped FS lock timeout. Tests use a
+  // short timeout to fail fast on a held lock when asserting cross-flow
+  // mutual exclusion. Production callers should omit this and accept
+  // the 10s default from acquirePublishLock. Documented as test-only
+  // in .claude/rules/lifecycle.md.
+  lockTimeoutMs?: number;
 }
 
 export type StepOutcome = 'completed' | 'failed' | 'skipped' | 'paused';

@@ -1,6 +1,21 @@
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { dirname } from 'node:path';
 
 import { parseFrontmatter, serializeFrontmatter, PostFrontmatter } from '../src/core/draft/frontmatter.js';
+
+const FIXTURES_DIR = join(
+  dirname(fileURLToPath(import.meta.url)),
+  '..',
+  'fixtures',
+  'frontmatter-phase7',
+);
+
+function loadFixture(name: string): string {
+  return readFileSync(join(FIXTURES_DIR, `${name}.mdx`), 'utf-8');
+}
 
 // Phase 7 PostFrontmatter contract test. The three new optional fields
 // (`unpublished_at`, `updated_at`, `update_count`) must round-trip
@@ -108,6 +123,65 @@ Body.
     expect(parsed.unpublished_at).toBe('2026-04-17T12:00:00Z');
     expect(parsed.updated_at).toBe('2026-04-17T11:59:00Z');
     expect(parsed.update_count).toBe(4);
+  });
+
+  // -----------------------------------------------------------------
+  // Cross-repo fixture suite — every file in fixtures/frontmatter-phase7
+  // is a shape m0lz.00's parser must accept. These tests are the
+  // PRODUCER side of the contract; the consumer side (m0lz.00) should
+  // mirror them against its own parser.
+  // -----------------------------------------------------------------
+
+  it('fixture: legacy — parses cleanly; all Phase 7 fields undefined', () => {
+    const parsed = parseFrontmatter(loadFixture('legacy'));
+    expect(parsed.title).toBe('Legacy Post');
+    expect(parsed.published).toBe(true);
+    expect(parsed.unpublished_at).toBeUndefined();
+    expect(parsed.updated_at).toBeUndefined();
+    expect(parsed.update_count).toBeUndefined();
+  });
+
+  it('fixture: initial-published — Phase 7 fields all undefined on first publish', () => {
+    const parsed = parseFrontmatter(loadFixture('initial-published'));
+    expect(parsed.title).toBe('Initial Publish');
+    expect(parsed.published).toBe(true);
+    expect(parsed.companion_repo).toBe('https://github.com/jmolz/initial-publish');
+    expect(parsed.unpublished_at).toBeUndefined();
+    expect(parsed.updated_at).toBeUndefined();
+    expect(parsed.update_count).toBeUndefined();
+  });
+
+  it('fixture: updated-once — updated_at + update_count=1, no unpublished_at', () => {
+    const parsed = parseFrontmatter(loadFixture('updated-once'));
+    expect(parsed.published).toBe(true);
+    expect(parsed.updated_at).toBe('2026-04-17T18:30:00Z');
+    expect(parsed.update_count).toBe(1);
+    expect(parsed.unpublished_at).toBeUndefined();
+  });
+
+  it('fixture: updated-twice — update_count=2 preserved across cycles', () => {
+    const parsed = parseFrontmatter(loadFixture('updated-twice'));
+    expect(parsed.update_count).toBe(2);
+    expect(parsed.updated_at).toBe('2026-04-17T19:45:00Z');
+  });
+
+  it('fixture: unpublished — published=false + unpublished_at, no update fields', () => {
+    const parsed = parseFrontmatter(loadFixture('unpublished'));
+    expect(parsed.published).toBe(false);
+    expect(parsed.unpublished_at).toBe('2026-04-17T14:00:00Z');
+    expect(parsed.updated_at).toBeUndefined();
+    expect(parsed.update_count).toBeUndefined();
+  });
+
+  it('fixture: updated-then-unpublished — ALL Phase 7 fields set (most contentious shape)', () => {
+    const parsed = parseFrontmatter(loadFixture('updated-then-unpublished'));
+    expect(parsed.published).toBe(false);
+    expect(parsed.unpublished_at).toBe('2026-04-17T15:30:00Z');
+    expect(parsed.updated_at).toBe('2026-02-14T12:00:00Z');
+    expect(parsed.update_count).toBe(3);
+    // Platform URLs preserved even after unpublish.
+    expect(parsed.medium_url).toBe('https://medium.com/@jmolz/updated-then-unpublished-pqr');
+    expect(parsed.devto_url).toBe('https://dev.to/jmolz/updated-then-unpublished-pqr');
   });
 
   it('tolerates update_count written as a string (YAML ambiguity resilience)', () => {

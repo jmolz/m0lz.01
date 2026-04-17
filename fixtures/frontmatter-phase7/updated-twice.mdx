@@ -1,0 +1,28 @@
+---
+title: "Updated Twice"
+description: "After two update cycles — update_count increments monotonically."
+date: "2026-01-15"
+tags:
+  - analysis
+published: true
+canonical: "https://m0lz.dev/writing/updated-twice"
+devto_url: "https://dev.to/jmolz/updated-twice-jkl"
+updated_at: "2026-04-17T19:45:00Z"
+update_count: 2
+---
+
+# Updated Twice
+
+Body paragraph.
+
+<!-- update-notice cycle=1 date=2026-03-05 -->
+**Updated 2026-03-05**: Correction on the middleware memory footprint.
+<!-- /update-notice -->
+
+<!-- update-notice cycle=2 date=2026-04-17 -->
+**Updated 2026-04-17**: Added a Node 22 column to the comparison table.
+<!-- /update-notice -->
+
+Both update-notice blocks are preserved across cycles; `update_count`
+increments monotonically; `updated_at` always reflects the MOST RECENT
+cycle's finalization.

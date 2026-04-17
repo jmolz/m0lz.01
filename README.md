@@ -113,7 +113,7 @@ blog publish show <slug>                   # Display per-step status table
 
 Crash-safety invariants: stale `running` rows reclaimed on resume; URLs persisted per-step (first-writer-wins via COALESCE); lock held continuously through completion (no release-then-reacquire race); every direct-push step verifies index cleanness + strict ahead-commit matching before any `git push`; companion repo push verifies origin URL matches the expected GitHub target.
 
-Test suite: **691 tests across 54 suites**. Phase breakdown: Phase 1 foundation 48 · Phase 2 research 54 · Phase 3 benchmark 44 · Phase 4 draft 79 · Phase 5 evaluate 163 · Phase 6 publish 195 · Phase 7 lifecycle 108.
+Test suite: **721 tests across 56 suites**. Phase breakdown: Phase 1 foundation 48 · Phase 2 research 54 · Phase 3 benchmark 44 · Phase 4 draft 79 · Phase 5 evaluate 163 · Phase 6 publish 195 · Phase 7 lifecycle 138.
 
 Three-reviewer adversarial evaluation (Claude structural + Codex GPT-5.4 high adversarial + Codex GPT-5.4 xhigh methodology) implemented in Phase 5, used to harden Phase 6 across 7 iteration passes, and designed into Phase 7 via explicit `is_update_review` flagging (no inference from cycle count).
 

@@ -69,7 +69,7 @@ function revertStepToPending(
 export async function runPipeline(
   ctx: PipelineContext,
 ): Promise<PipelineRunResult> {
-  const release = acquirePublishLock(ctx.paths.publishDir, ctx.slug);
+  const release = acquirePublishLock(ctx.paths.publishDir, ctx.slug, ctx.lockTimeoutMs);
   try {
     // Reclaim stale `running` rows from a crashed prior runner. We hold the
     // lock, so anything in `running` can't have a live owner. If we didn't

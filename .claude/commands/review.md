@@ -115,7 +115,9 @@ npx vitest run \
   tests/skills-crossref.test.ts \
   tests/update-runner-pipeline.test.ts \
   tests/cross-flow-lock.test.ts \
-  tests/frontmatter-phase7.test.ts
+  tests/frontmatter-phase7.test.ts \
+  tests/origin-guard.test.ts \
+  tests/pipeline-registry-integrity.test.ts
 ```
 
 ### What each test covers
@@ -285,7 +287,7 @@ npm test
 npm run build
 ```
 
-Expected baseline: **0 TypeScript errors, 691 tests passing across 54 suites, clean build** (as of feature/phase-7-lifecycle after Cluster J: split origin-guard into tolerant/strict APIs, added site.github_repo config, applied guards to publish/site.ts, added E2E update-mode runner test + true cross-flow lock contention test + PostFrontmatter Phase 7 round-trip proof; closes the last 4 Pass 2 failing criteria). Any drift from this baseline is a signal to investigate before merging.
+Expected baseline: **0 TypeScript errors, 721 tests passing across 56 suites, clean build** (as of feature/phase-7-lifecycle after Cluster K: LC_ALL=C locale pin on origin-guard, case-insensitive owner/name compare, lockTimeoutMs injection seam for true same-slug cross-flow runner contention, pipeline-registry integrity suite, cross-repo PostFrontmatter fixture set; closes every Codex Pass 3 Minor). Any drift from this baseline is a signal to investigate before merging.
 
 ## Phase 3: Code Review of Current Changes
 

@@ -28,6 +28,11 @@ export interface UnpublishContext {
     publishDir: string;
     socialDir: string;
   };
+  // Optional override for the slug-scoped FS lock timeout. Tests use a
+  // short timeout to fail fast on a held lock; production callers should
+  // always omit this and accept the 10s default from acquirePublishLock.
+  // Documented as test-only in .claude/rules/lifecycle.md.
+  lockTimeoutMs?: number;
 }
 
 export interface UnpublishRunResult {
@@ -131,7 +136,7 @@ function revertStepToPending(ctx: UnpublishContext, name: string): void {
 export async function runUnpublishPipeline(
   ctx: UnpublishContext,
 ): Promise<UnpublishRunResult> {
-  const release = acquirePublishLock(ctx.paths.publishDir, ctx.slug);
+  const release = acquirePublishLock(ctx.paths.publishDir, ctx.slug, ctx.lockTimeoutMs);
   try {
     const reclaimed = reclaimStaleRunning(ctx.db, ctx.slug);
     if (reclaimed > 0) {

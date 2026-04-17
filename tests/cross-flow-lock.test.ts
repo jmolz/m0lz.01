@@ -294,6 +294,85 @@ describe('cross-flow lock contention (publish ↔ unpublish on same slug)', () =
     release2();
   });
 
+  it('runUnpublishPipeline(alpha) vs held runPipeline(alpha) — true same-slug cross-flow contention via lockTimeoutMs injection', async () => {
+    // Closes Codex Pass 3 Minor #4: Pass 2's test only proved the lock
+    // primitive. Pass 3 adds a `lockTimeoutMs` injection seam on both
+    // runners so this test can ACTUALLY call runUnpublishPipeline on
+    // the same slug while publish holds the lock and assert the runner
+    // surfaces contention as a thrown error.
+    const f = setup();
+    seedPublishPhasePost(f.db, 'samelane');
+    createPipelineSteps(f.db, 'samelane', 'technical-deep-dive', mkConfig(), undefined, 0, 'initial');
+
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const publishCtx = {
+      db: f.db,
+      slug: 'samelane',
+      config: mkConfig(),
+      paths: {
+        dbPath: join(f.tempDir, 'state.db'),
+        configPath: f.configPath,
+        draftsDir: join(f.tempDir, 'drafts'),
+        benchmarkDir: join(f.tempDir, 'benchmarks'),
+        evaluationsDir: join(f.tempDir, 'evaluations'),
+        researchDir: join(f.tempDir, 'research'),
+        reposDir: join(f.tempDir, 'repos'),
+        socialDir: f.socialDir,
+        researchPagesDir: join(f.tempDir, 'research-pages'),
+        publishDir: f.publishDir,
+        templatesDir: join(f.tempDir, 'templates'),
+      },
+      urls: {},
+      publishMode: 'initial' as const,
+      cycleId: 0,
+    };
+
+    const publishPromise = runPipeline(publishCtx);
+    const deadline = Date.now() + 2000;
+    while (!blockStarted.value && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    expect(blockStarted.value).toBe(true);
+
+    // Seed published state + unpublish steps for the SAME slug so the
+    // runUnpublishPipeline call passes its own initUnpublish gate
+    // (which we simulate by calling initUnpublish even though phase is
+    // actually 'publish' — override the phase via direct UPDATE since
+    // the lock test is only about the acquire path, not the step
+    // execution below it).
+    f.db.prepare(`UPDATE posts SET phase = 'published' WHERE slug = ?`).run('samelane');
+    const { initUnpublish } = await import('../src/core/unpublish/state.js');
+    initUnpublish(f.db, 'samelane', mkConfig());
+
+    // TRUE cross-flow: call runUnpublishPipeline on the SAME slug with a
+    // short lockTimeoutMs. The runner MUST surface the contention as a
+    // thrown error (acquirePublishLock throws on timeout).
+    await expect(runUnpublishPipeline({
+      db: f.db,
+      slug: 'samelane',
+      config: mkConfig(),
+      paths: { configPath: f.configPath, publishDir: f.publishDir, socialDir: f.socialDir },
+      lockTimeoutMs: 100,
+    })).rejects.toThrow(/Could not acquire publish lock for 'samelane'/);
+
+    // Release publish, verify cleanup; now unpublish can acquire.
+    if (blockResolve) blockResolve();
+    const publishResult = await publishPromise;
+    expect(publishResult.completed).toBe(true);
+
+    // After release, unpublish on the same slug completes cleanly.
+    const afterResult = await runUnpublishPipeline({
+      db: f.db,
+      slug: 'samelane',
+      config: mkConfig(),
+      paths: { configPath: f.configPath, publishDir: f.publishDir, socialDir: f.socialDir },
+      lockTimeoutMs: 500,
+    });
+    expect(afterResult.completed).toBe(true);
+  });
+
   it('different slugs are NOT contended: publish(alpha) + unpublish(beta) both progress', async () => {
     const f = setup();
     seedPublishPhasePost(f.db, 'alpha');
