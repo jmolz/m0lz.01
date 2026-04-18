@@ -7,12 +7,46 @@
     "blog": "./dist/cli/index.js"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "node scripts/clean-dist.mjs && tsc",
     "dev": "tsc --watch",
     "test": "vitest run",
     "test:watch": "vitest",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "verify-pack": "node scripts/verify-pack.mjs",
+    "prepublishOnly": "npm run lint && npm run build && npm test && npm run verify-pack"
   },
+  "author": "Jacob Molz",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jmolz/m0lz.01.git"
+  },
+  "homepage": "https://m0lz.dev",
+  "bugs": {
+    "url": "https://github.com/jmolz/m0lz.01/issues"
+  },
+  "keywords": [
+    "claude-code",
+    "cli",
+    "content-pipeline",
+    "mdx",
+    "ai-agents",
+    "codex",
+    "adversarial-evaluation",
+    "benchmarking",
+    "static-site-generator",
+    "typescript"
+  ],
+  "files": [
+    "dist/**/*.js",
+    "dist/**/*.d.ts",
+    "templates/**",
+    ".blogrc.example.yaml",
+    ".env.example",
+    "branch-mark.svg",
+    "LICENSE",
+    "README.md"
+  ],
   "dependencies": {
     "better-sqlite3": "^11.0.0",
     "commander": "^13.0.0",
@@ -27,7 +61,6 @@
     "vitest": "^3.0.0"
   },
   "engines": {
-    "node": ">=20.0.0"
-  },
-  "license": "MIT"
+    "node": ">=20.1.0"
+  }
 }
