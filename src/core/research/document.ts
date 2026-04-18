@@ -1,10 +1,10 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join, dirname, resolve, relative, isAbsolute } from 'node:path';
-import { fileURLToPath } from 'node:url';
 
 import yaml from 'js-yaml';
 
 import { Mode, ContentType } from '../db/types.js';
+import { TEMPLATES_ROOT } from '../paths.js';
 
 export interface ResearchDocument {
   slug: string;
@@ -32,8 +32,7 @@ export const REQUIRED_SECTIONS = [
 ] as const;
 
 function getTemplatePath(): string {
-  const here = fileURLToPath(import.meta.url);
-  return resolve(dirname(here), '../../../templates/research/template.md');
+  return resolve(TEMPLATES_ROOT, 'research/template.md');
 }
 
 const SAFE_SLUG_RE = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
