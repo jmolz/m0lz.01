@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- README rewritten to be forward-looking for new users: added Prerequisites (required/optional tools, accounts), six-step Quick Start grounded in a working setup, Configuration reference (annotated `.blogrc.yaml` + `.env` tables), Troubleshooting (pipeline lock, resume, import path, Dev.to 429/401, reviewer schema, index-dirty push failures). Backward-looking Phase 6/7 status details removed — they belong in the changelog, not the front door.
+
 ## [0.1.0] — 2026-04-18
 
 ### Added

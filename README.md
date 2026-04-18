@@ -17,44 +17,196 @@
 
 m0lz.01 orchestrates the full lifecycle of technical content. A single prompt can trigger deep research, scaffold a benchmark test suite, run it, draft an MDX post with the original data, adversarially evaluate the result against three reviewers, and distribute across platforms.
 
-Content goes to [m0lz.dev](https://m0lz.dev) as the canonical hub, with Dev.to (cross-post), Medium/Substack (paste-ready fallback), GitHub (companion repos), LinkedIn, and Hacker News as spokes.
+Content goes to a hub site (canonical URL, your choice of domain) with Dev.to (cross-post), Medium/Substack (paste-ready fallback), GitHub (companion repos), LinkedIn, and Hacker News as spokes.
 
-Runs locally. No server, no SaaS. Uses Claude Max 20x and OpenAI Codex CLI subscriptions — no separate API billing.
+Runs locally. No server, no SaaS. AI-heavy steps use your Claude Code and OpenAI Codex CLI subscriptions — no separate API billing for the interactive work.
 
-## Architecture
+---
 
-Dual-layer:
+## Prerequisites
 
-- **Claude Code skills** (interactive, subscription-backed): `/blog-research`, `/blog-benchmark`, `/blog-draft`, `/blog-evaluate`, `/blog-pipeline`, `/blog-update`
-- **Standalone CLI** (mechanical, no AI): `blog init`, `blog publish`, `blog status`, `blog metrics`, `blog ideas`, `blog research`
+### Required
 
-Both layers share state via SQLite (`.blog-agent/state.db`) and file artifacts (`.blog-agent/`).
+- **Node.js ≥ 20.1** — `readdirSync` recursive mode is used in packaging. Check: `node --version`.
+- **git** — publish/update/unpublish steps invoke git directly.
+- **GitHub CLI (`gh`)** — PR creation, companion-repo scaffolding, release verification. Install from [cli.github.com](https://cli.github.com/). Run `gh auth login` once before first publish.
+- **A hub site repo** — somewhere on GitHub to commit canonical MDX. Must have a posts directory (default `content/posts/`) and optionally a research directory (default `content/research/`). See [Configuration](#configuration) for the full shape.
 
-Three-reviewer adversarial evaluation: Claude (structural) + GPT-5.4 high (adversarial) + GPT-5.4 xhigh (methodology).
+### Optional — required for AI-heavy commands
+
+- **Claude Code** (`claude` CLI) — used as the structural reviewer and for interactive drafting/research. Falls back to `ANTHROPIC_API_KEY` if not installed.
+- **OpenAI Codex CLI** (`codex`) — used as the adversarial + methodology reviewer (GPT-5.4 high / xhigh). No fallback; evaluate step requires it unless you record reviewer outputs manually.
+
+Both CLIs authenticate against your subscription — no per-call API keys.
+
+### Accounts you'll need
+
+| Service | Purpose | How to get credentials |
+|---------|---------|----------------------|
+| GitHub | Hub site, companion project repos, releases | `gh auth login` |
+| Dev.to | Cross-post target | API key from [dev.to/settings/extensions](https://dev.to/settings/extensions) → `.env` |
+| Medium / Substack | Paste-ready fallback (manual publish) | Account only — no API keys |
+| LinkedIn / Hacker News | Social distribution (manual paste) | Account only |
+
+---
 
 ## Install
 
 ```bash
-npx m0lz-01 init --import
+npm install -g m0lz-01
+blog --help    # verify installation
 ```
 
-Or install globally:
+---
+
+## Quick Start
+
+From install to first imported post in five minutes.
+
+### 1. Choose a work directory
+
+`blog init` creates `.blog-agent/` (SQLite state + pipeline artifacts) in the current directory. Pick a dedicated location — **not** inside a project repo:
 
 ```bash
-npm install -g m0lz-01
+mkdir -p ~/blog && cd ~/blog
+```
+
+### 2. Scaffold the workspace
+
+```bash
+blog init
+```
+
+This creates three things in `~/blog/`:
+
+- `.blogrc.yaml` — config template (edit next)
+- `.env` — secrets template (edit next)
+- `.blog-agent/` — SQLite state + subdirs for each phase
+
+### 3. Edit `.blogrc.yaml`
+
+At minimum, set `site.repo_path` and `author`:
+
+```yaml
+site:
+  repo_path: "../code/m0lz.00"        # ← relative to THIS file, not CWD
+  base_url: "https://your-domain.dev" # canonical URL root for all posts
+  content_dir: "content/posts"        # posts location within the hub repo
+  research_dir: "content/research"    # research companion pages
+
+author:
+  name: "Your Name"
+  github: "your-gh-handle"
+  devto: "your-devto-handle"
+  # medium, substack, linkedin as applicable
+```
+
+**Watch out:** `repo_path` is resolved relative to `.blogrc.yaml`, not CWD. From `~/blog/.blogrc.yaml`, the path `../code/m0lz.00` correctly resolves to `~/code/m0lz.00`.
+
+Full schema reference in [Configuration](#configuration).
+
+### 4. Fill in `.env`
+
+```env
+DEVTO_API_KEY=             # required only if publish.devto = true
+ANTHROPIC_API_KEY=         # optional — Claude API fallback when Claude Code unavailable
+```
+
+`.env` is gitignored by default.
+
+### 5. Import existing posts (optional)
+
+If your hub repo already has posts, ingest them into state:
+
+```bash
 blog init --import
 ```
 
-## Commands
+Expected output: `Imported N posts from <hub-repo-name>`. Verify:
 
 ```bash
-blog init                                  # Create .blog-agent/ workspace + state DB
-blog init --import                         # Import existing posts from m0lz.00
-blog status                                # Table of all posts + current phase
-blog metrics                               # Aggregate stats (published, platforms, repos)
-blog ideas                                 # List editorial backlog
-blog ideas add "topic" --priority high --type technical-deep-dive
-blog ideas start 1                         # Promote idea 1 to the research phase
+blog status
+```
+
+### 6. Create your first new post
+
+Queue an idea, promote it to research, walk it through six phases:
+
+```bash
+blog ideas add "Show HN: my topic" --type technical-deep-dive --priority high
+blog ideas start 1                              # → research phase
+blog research init <slug> --topic "..."         # gather sources
+# ... benchmark → draft → evaluate → publish
+blog status                                     # track progress
+```
+
+See [CLI Reference](#cli-reference) below for every subcommand.
+
+---
+
+## Configuration
+
+### `.blogrc.yaml`
+
+Lives alongside `.blog-agent/`. All path fields resolve **relative to this file**, not CWD.
+
+| Section | Required fields | Purpose |
+|---------|----------------|---------|
+| `site` | `repo_path`, `base_url`, `content_dir` | Hub site repo location + canonical URL |
+| `author` | `name`, `github` | Frontmatter, repo URLs, social handles |
+| `ai` | — | Reviewer panel assignment (Claude / Codex) |
+| `content_types` | (3 type keys) | Per-content-type pipeline behavior |
+| `benchmark` | — | Environment capture, methodology template, run count |
+| `publish` | — | Per-platform crossposting toggles |
+| `evaluation` | — | Reviewer panel thresholds + policies |
+| `updates`, `unpublish` | — | Lifecycle flow options |
+| `projects` (optional) | map | Catalog-ID → companion project repo path |
+
+**Content types:**
+
+| Type | Benchmark | Companion repo | HN prefix |
+|------|-----------|---------------|-----------|
+| `technical-deep-dive` | required | scaffold new | (none) |
+| `project-launch` | optional | link existing | `Show HN:` |
+| `analysis-opinion` | skip | optional | (none) |
+
+Full annotated defaults ship in `.blogrc.example.yaml`. Minimum viable config:
+
+```yaml
+site:
+  repo_path: "../your-hub-repo"
+  base_url: "https://your-domain.dev"
+  content_dir: "content/posts"
+
+author:
+  name: "Your Name"
+  github: "your-gh-handle"
+```
+
+### `.env`
+
+| Variable | Required | Purpose |
+|----------|----------|---------|
+| `DEVTO_API_KEY` | if `publish.devto: true` | Dev.to Forem API auth |
+| `ANTHROPIC_API_KEY` | no | Claude API fallback when Claude Code CLI isn't used |
+
+`.env` is loaded via `dotenv` from the directory where you run `blog`. Keep it in your work directory (same place as `.blogrc.yaml`).
+
+---
+
+## CLI Reference
+
+```bash
+# Workspace
+blog init                        # create .blog-agent/ + templates
+blog init --import               # also import existing posts from hub
+blog status                      # table of all posts + phase
+blog metrics                     # aggregate stats
+
+# Editorial backlog
+blog ideas                       # list ideas.yaml
+blog ideas add "title" --priority high --type technical-deep-dive
+blog ideas start <index>         # promote to research phase
 
 # Research phase
 blog research init <slug> --topic "..."
@@ -64,81 +216,107 @@ blog research finalize <slug>
 
 # Benchmark phase
 blog benchmark init <slug>
-blog benchmark env <slug>                  # Capture environment snapshot
-blog benchmark run <slug> --results <file> # Store results, mark completed
+blog benchmark env <slug>                       # capture environment
+blog benchmark run <slug> --results <file>
 blog benchmark show <slug>
-blog benchmark skip <slug>                 # Analysis-opinion path
-blog benchmark complete <slug>             # Advance to draft phase
+blog benchmark skip <slug>                      # analysis-opinion only
+blog benchmark complete <slug>                  # → draft phase
 
 # Draft phase
 blog draft init <slug>
 blog draft show <slug>
 blog draft validate <slug>
 blog draft add-asset <slug> --path <file> --type excalidraw|chart|image
-blog draft complete <slug>                 # Advance to evaluate phase
+blog draft complete <slug>                      # → evaluate phase
 
 # Evaluate phase (three-reviewer adversarial panel)
-blog evaluate init <slug>                  # Seed reviewer manifest
-blog evaluate structural-autocheck <slug>  # Deterministic structural lints
+blog evaluate init <slug>
+blog evaluate structural-autocheck <slug>       # deterministic lints
 blog evaluate record <slug> --reviewer <id> --file <reviewer.json>
 blog evaluate show <slug>
-blog evaluate synthesize <slug>            # Compute consensus / majority / single
-blog evaluate complete <slug>              # Advance to publish phase
-blog evaluate reject <slug>                # Kick back to draft for revision
+blog evaluate synthesize <slug>                 # consensus/majority/single
+blog evaluate complete <slug>                   # → publish phase
+blog evaluate reject <slug>                     # → draft phase
 
-# Publish phase (11-step pipeline with resume)
-blog publish start <slug>                  # Initialize or resume the pipeline
-blog publish show <slug>                   # Display per-step status table
+# Publish phase (11-step resumable pipeline)
+blog publish start <slug>                       # initialize OR resume
+blog publish show <slug>                        # per-step status table
+
+# Update an already-published post
+blog update start <slug> --summary "what changed"
+blog update benchmark <slug>
+blog update draft <slug>
+blog update evaluate <slug>
+blog update publish <slug>
+blog update show <slug>
+blog update abort <slug>
+
+# Unpublish
+blog unpublish start <slug> --confirm
+blog unpublish show <slug>
 ```
 
-## Tech Stack
+---
 
-- TypeScript + Node.js 20+ (ESM)
-- Commander.js — CLI
-- better-sqlite3 — state management (synchronous, WAL mode)
-- js-yaml — `.blogrc.yaml` config
-- Vitest — tests
-- Claude Code skills (Phase 2+) — AI-heavy work
+## Troubleshooting
 
-## Status
+### `blog init --import` says "Posts directory not found"
 
-**Phase 7 — Lifecycle** complete: unpublish pipeline, update flow, orchestrator skills. Two new lifecycle flows on top of Phase 6's initial-publish.
+`site.repo_path` resolved to the wrong location. Paths are relative to `.blogrc.yaml`, **not** CWD. Open the file and fix the path to what your hub repo actually lives at — then re-run.
 
-**Phase 6 — Publish** (baseline): 11-step sequential pipeline with resume via SQLite `pipeline_steps` + slug-scoped filesystem lock. Pipeline covers:
+### Publish pipeline stopped mid-run
 
-1. `verify` — evaluation-passed gate
-2. `research-page` — generate m0lz.00 research companion MDX
-3. `site-pr` — copy MDX + assets + research page to site repo, open PR
-4. `preview-gate` — pause until PR merged (manual gate)
-5. `crosspost-devto` — Dev.to draft via Forem API (probe-then-create)
-6. `paste-medium` — paste-ready Markdown for Medium editor
-7. `paste-substack` — paste-ready Markdown for Substack editor
-8. `companion-repo` — `gh repo view` probe → `gh repo create --source=. --push`
-9. `update-frontmatter` — add platform URLs, direct push to site repo main
-10. `update-readme` — add writing link to project repo, direct push to main
-11. `social-text` — LinkedIn + Hacker News paste text
+Re-run `blog publish start <slug>` — the pipeline picks up at the first non-completed step. State lives in `.blog-agent/state.db` (`pipeline_steps` table). Every step is idempotent.
 
-Crash-safety invariants: stale `running` rows reclaimed on resume; URLs persisted per-step (first-writer-wins via COALESCE); lock held continuously through completion (no release-then-reacquire race); every direct-push step verifies index cleanness + strict ahead-commit matching before any `git push`; companion repo push verifies origin URL matches the expected GitHub target.
+### "Lock held by PID N" on publish / update / unpublish
 
-Test suite: **723 tests across 56 suites**. Phase breakdown: Phase 1 foundation 48 · Phase 2 research 54 · Phase 3 benchmark 44 · Phase 4 draft 79 · Phase 5 evaluate 163 · Phase 6 publish 195 · Phase 7 lifecycle 140.
+Another process is running, OR a previous run crashed without releasing the lock. Check `ps -p N` — if the PID is dead, remove `.blog-agent/locks/<slug>.lock` and retry. (The CLI reclaims stale `running` rows automatically on resume; only the lockfile may need manual cleanup after a hard crash.)
 
-Three-reviewer adversarial evaluation (Claude structural + Codex GPT-5.4 high adversarial + Codex GPT-5.4 xhigh methodology) implemented in Phase 5, used to harden Phase 6 across 7 iteration passes, and designed into Phase 7 via explicit `is_update_review` flagging (no inference from cycle count).
+### Dev.to cross-post fails with 429 / 401
 
-### Phase 7 adds
+- 429 = rate-limited; wait and re-run `blog publish start <slug>` to retry just that step.
+- 401 = `DEVTO_API_KEY` missing or invalid; verify at [dev.to/settings/extensions](https://dev.to/settings/extensions).
 
-- **Schema v3** — `pipeline_steps.cycle_id` (table rebuild), `update_cycles` (partial-unique open-cycle constraint), `unpublish_steps`.
-- **`blog update start|benchmark|draft|evaluate|publish|abort|show`** — in-place update flow. `posts.phase` stays `published`; update state is a first-class `update_cycles` row.
-- **`blog unpublish start --confirm` / `show`** — seven-step inverse pipeline: phase verify, Dev.to PUT `published: false`, Medium/Substack manual-removal instructions, site-revert PR, preview-gate pause, README link removal. Shares the per-slug lock with publish for mutual exclusion.
-- **`publishMode` dispatch** on the publish pipeline runner — update mode substitutes `site-update` for `site-pr`, drops `companion-repo` + `update-readme`, routes `crosspost-devto` through probe-then-PUT, and keeps `posts.phase` fixed.
-- **`/blog-pipeline`, `/blog-update`, `/blog-unpublish`** orchestrator skills with `Preflight` / `Workflow` / `CLI Reference` / `Troubleshooting` / `Degraded Mode` sections (cross-referenced mechanically against the CLI registry in `tests/skills-crossref.test.ts`).
+### `blog evaluate record` rejects reviewer file
 
-Phase 7 preserves every Phase 6 crash-safety invariant: lock held through finalization, per-step URL persistence via COALESCE, index-clean guards before direct-push, origin-URL verification, stale-running reclaim, config-driven step reconciliation on resume.
+Every reviewer output must conform to the `ReviewerOutput` schema: `reviewer`, `passed`, `issues[]`. Run `blog evaluate structural-autocheck <slug>` first to produce a valid example, then pattern-match.
 
-See `.claude/PRD.md` for the full scope and `.claude/plans/` for phase plans.
+### `git push` failures during publish
+
+The pipeline runs `assertIndexClean` + strict ahead-commit match before any push. If this fails, an unrelated file in your hub / project repo has uncommitted changes. Clean the tree (commit, stash, or revert), then `blog publish start <slug>` to resume.
+
+### Reset a post back to draft for rework
+
+`blog evaluate reject <slug>` — moves back to draft, tags the next evaluation cycle as an update review.
+
+---
+
+## Architecture
+
+Dual-layer:
+
+- **Standalone CLI** (what `npm install -g m0lz-01` gives you) — mechanical operations: state management, pipeline execution, git/GitHub/Dev.to API calls. No AI dependency.
+- **Claude Code skills** (installed separately as a plugin) — interactive AI-heavy work: research, drafting, structural review. Skills call the CLI for all state mutations.
+
+Both layers share state via SQLite (`.blog-agent/state.db`) and file artifacts (`.blog-agent/`). Every publish/update/unpublish step is **idempotent** and **checkpointed** — failures resume from the last good step.
+
+Three-reviewer adversarial evaluation:
+
+| Reviewer | Model | Role |
+|----------|-------|------|
+| Structural | Claude Code | Content quality, MDX schema, sources |
+| Adversarial | GPT-5.4 high (Codex) | Thesis challenge, bias, argument gaps |
+| Methodology | GPT-5.4 xhigh (Codex) | Benchmark validity, statistics, reproducibility |
+
+Issues categorize as consensus (all 3 = must fix), majority (2/3 = should fix), single (1/3 = advisory).
+
+Full product scope: `.claude/PRD.md`. Per-phase implementation plans: `.claude/plans/`.
+
+---
 
 ## Development
 
-Clone the repo and work from source:
+Contribute or work from source:
 
 ```bash
 git clone https://github.com/jmolz/m0lz.01.git
@@ -148,18 +326,22 @@ npm run build
 node dist/cli/index.js init --import
 ```
 
-Run tests, lint, and packaging checks:
+Validate:
 
 ```bash
-npm run lint
-npm test
-npm run build
-npm run verify-pack
+npm run lint          # tsc --noEmit
+npm test              # vitest run (730+ tests)
+npm run build         # clean + tsc
+npm run verify-pack   # four-layer packaging gate
 ```
+
+Release workflow: [RELEASING.md](./RELEASING.md) — adversarially-reviewed runbook for `npm publish` + `gh release create`.
+
+---
 
 ## Changelog
 
-See [CHANGELOG.md](./CHANGELOG.md).
+[CHANGELOG.md](./CHANGELOG.md).
 
 ## Project Status
 
