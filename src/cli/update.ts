@@ -5,6 +5,7 @@ import { Command } from 'commander';
 
 import { getDatabase, closeDatabase } from '../core/db/database.js';
 import { loadConfig } from '../core/config/loader.js';
+import { TEMPLATES_ROOT } from '../core/paths.js';
 import { validateSlug } from '../core/research/document.js';
 import {
   openUpdateCycle,
@@ -48,7 +49,7 @@ const REPOS_DIR = resolve('.blog-agent/repos');
 const SOCIAL_DIR = resolve('.blog-agent/social');
 const RESEARCH_PAGES_DIR = resolve('.blog-agent/research-pages');
 const PUBLISH_DIR = resolve('.blog-agent/publish');
-const TEMPLATES_DIR = resolve('templates');
+const TEMPLATES_DIR = TEMPLATES_ROOT;
 
 export interface UpdateCliPaths {
   dbPath?: string;

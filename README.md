@@ -9,6 +9,8 @@
   Research, benchmark, draft, evaluate, publish, and distribute — all from one prompt.
 </p>
 
+![CI](https://github.com/jmolz/m0lz.01/actions/workflows/ci.yml/badge.svg)
+
 ---
 
 ## Overview
@@ -33,9 +35,14 @@ Three-reviewer adversarial evaluation: Claude (structural) + GPT-5.4 high (adver
 ## Install
 
 ```bash
-npm install
-npm run build
-node dist/cli/index.js init --import
+npx m0lz-01 init --import
+```
+
+Or install globally:
+
+```bash
+npm install -g m0lz-01
+blog init --import
 ```
 
 ## Commands
@@ -128,6 +135,35 @@ Three-reviewer adversarial evaluation (Claude structural + Codex GPT-5.4 high ad
 Phase 7 preserves every Phase 6 crash-safety invariant: lock held through finalization, per-step URL persistence via COALESCE, index-clean guards before direct-push, origin-URL verification, stale-running reclaim, config-driven step reconciliation on resume.
 
 See `.claude/PRD.md` for the full scope and `.claude/plans/` for phase plans.
+
+## Development
+
+Clone the repo and work from source:
+
+```bash
+git clone https://github.com/jmolz/m0lz.01.git
+cd m0lz.01
+npm install
+npm run build
+node dist/cli/index.js init --import
+```
+
+Run tests, lint, and packaging checks:
+
+```bash
+npm run lint
+npm test
+npm run build
+npm run verify-pack
+```
+
+## Changelog
+
+See [CHANGELOG.md](./CHANGELOG.md).
+
+## Project Status
+
+v0.1 — public API is unstable until v1.0. Per [SemVer 0.y.z](https://semver.org/spec/v2.0.0.html#spec-item-4), minor and patch releases before 1.0 MAY contain breaking changes.
 
 ## License
 

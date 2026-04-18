@@ -1,8 +1,8 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
 
 import { validateSlug } from '../research/document.js';
+import { TEMPLATES_ROOT } from '../paths.js';
 import { EnvironmentSnapshot } from './environment.js';
 import { formatEnvironmentMarkdown } from './environment.js';
 
@@ -15,8 +15,7 @@ export interface CompanionOptions {
 }
 
 function getMethodologyTemplatePath(): string {
-  const here = fileURLToPath(import.meta.url);
-  return resolve(dirname(here), '../../../templates/benchmark/methodology.md');
+  return resolve(TEMPLATES_ROOT, 'benchmark/methodology.md');
 }
 
 export function scaffoldCompanion(

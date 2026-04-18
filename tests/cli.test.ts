@@ -177,6 +177,67 @@ describe('runInit', () => {
     }
   });
 
+  it('hard-fails with a diagnostic when the shipped config template is missing', () => {
+    // Simulate a broken install: point packageRoot at a tmpdir that lacks
+    // .blogrc.example.yaml. Pre-fix, runInit silently skipped the copy and
+    // left the operator with an empty workspace (Codex Pass 1 Finding #4).
+    tempDir = mkdtempSync(join(tmpdir(), 'blog-init-'));
+    const fakePkg = mkdtempSync(join(tmpdir(), 'blog-init-pkg-'));
+
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    const errors: string[] = [];
+    vi.spyOn(console, 'error').mockImplementation((msg: string) => {
+      errors.push(msg);
+    });
+
+    const savedExitCode = process.exitCode;
+    try {
+      runInit(false, tempDir, fakePkg);
+      expect(process.exitCode).toBe(1);
+      expect(
+        errors.some((e) => e.includes('Missing shipped config template')),
+      ).toBe(true);
+      // The write target must NOT have been created when the read source
+      // is missing — that is the regression this test locks in.
+      expect(existsSync(join(tempDir, '.blogrc.yaml'))).toBe(false);
+    } finally {
+      process.exitCode = savedExitCode;
+      rmSync(fakePkg, { recursive: true, force: true });
+    }
+  });
+
+  it('hard-fails with a diagnostic when the shipped env template is missing', () => {
+    // Same pattern, but put .blogrc.example.yaml in the fake pkg so the
+    // config copy succeeds and the throw fires on .env.example instead.
+    tempDir = mkdtempSync(join(tmpdir(), 'blog-init-'));
+    const fakePkg = mkdtempSync(join(tmpdir(), 'blog-init-pkg-'));
+    writeFileSync(
+      join(fakePkg, '.blogrc.example.yaml'),
+      '# minimal example\nsite:\n  repo_path: ./\n',
+    );
+
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    const errors: string[] = [];
+    vi.spyOn(console, 'error').mockImplementation((msg: string) => {
+      errors.push(msg);
+    });
+
+    const savedExitCode = process.exitCode;
+    try {
+      runInit(false, tempDir, fakePkg);
+      expect(process.exitCode).toBe(1);
+      expect(
+        errors.some((e) => e.includes('Missing shipped env template')),
+      ).toBe(true);
+      // The config DID copy (pre-throw), but .env did not.
+      expect(existsSync(join(tempDir, '.blogrc.yaml'))).toBe(true);
+      expect(existsSync(join(tempDir, '.env'))).toBe(false);
+    } finally {
+      process.exitCode = savedExitCode;
+      rmSync(fakePkg, { recursive: true, force: true });
+    }
+  });
+
   it('is idempotent on re-run', () => {
     tempDir = mkdtempSync(join(tmpdir(), 'blog-init-'));
     vi.spyOn(console, 'log').mockImplementation(() => {});
