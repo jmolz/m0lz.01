@@ -117,7 +117,9 @@ npx vitest run \
   tests/cross-flow-lock.test.ts \
   tests/frontmatter-phase7.test.ts \
   tests/origin-guard.test.ts \
-  tests/pipeline-registry-integrity.test.ts
+  tests/pipeline-registry-integrity.test.ts \
+  tests/paths.test.ts \
+  tests/cli-templates-cwd-independence.test.ts
 ```
 
 ### What each test covers
@@ -131,7 +133,7 @@ npx vitest run \
 | `tests/import.test.ts` (5 tests) | m0lz.00 post import | Posts imported from fixture directory with correct frontmatter mapping (slug, title, phase=published, mode=imported, site_url pattern, project_id, repo_url); idempotent on re-run (INSERT OR IGNORE); throws on missing posts directory; skips posts with malformed YAML frontmatter and warns; skips posts missing required title field |
 | `tests/ideas.test.ts` (11 tests) | Editorial backlog CRUD | `loadIdeas` returns empty array for missing file; `saveIdeas` creates YAML and handles empty list; appends to existing file; priority sorting; `startIdea` creates DB row with phase=research and removes from YAML; `startIdea` throws on invalid index; `removeIdea` removes correct entry by priority-sorted index; `removeIdea` throws on invalid index; `saveIdeas` idempotent on identical content; `startIdea` honors INSERT OR IGNORE on slug collision |
 | `tests/content-types.test.ts` (6 tests) | Content type detection | Catalog project IDs (`m0lz.XX`) return `project-launch`; benchmark keywords return `technical-deep-dive`; generic prompts return `analysis-opinion`; project ID takes priority over benchmark keywords; empty prompt returns default; "test-driven development" does NOT false-positive as benchmark |
-| `tests/cli.test.ts` (13 tests) | CLI handler integration | `runStatus` prints formatted table and empty-state message; exits with error when DB missing; `computeMetrics` returns correct aggregates (posts, platforms, companion repos, evaluation pass rate); `runMetrics` prints output; `runInit` creates `.blog-agent/` with all subdirs and state.db; init with `--import` uses `config.site.content_dir`; init with `--import` prints clean error message and sets exitCode=1 on config/repo failure; `runInit` idempotent on re-run |
+| `tests/cli.test.ts` (15 tests) | CLI handler integration | `runStatus` prints formatted table and empty-state message; exits with error when DB missing; `computeMetrics` returns correct aggregates (posts, platforms, companion repos, evaluation pass rate); `runMetrics` prints output; `runInit` creates `.blog-agent/` with all subdirs and state.db; init with `--import` uses `config.site.content_dir`; init with `--import` prints clean error message and sets exitCode=1 on config/repo failure; `runInit` idempotent on re-run; **hard-fail regression (Release Prep Pass 1 Codex Finding #4): `runInit` throws with diagnostic mentioning "Missing shipped config template" when `.blogrc.example.yaml` absent from `packageRoot`, sets exitCode=1, does NOT create `.blogrc.yaml`; same for `.env.example` path** |
 
 **Phase 2 — Research (feature/phase-2-research)**
 
@@ -212,6 +214,15 @@ npx vitest run \
 | `tests/frontmatter-phase7.test.ts` (15 tests) | PostFrontmatter Phase 7 round-trip + cross-repo fixtures | serialize + parse preserves unpublished_at / updated_at / update_count (numeric); emits all three together; omits when unset (legacy compat); parses legacy MDX with new fields undefined; parses production-shape Phase 7 MDX with all platform + lifecycle fields; tolerates update_count as YAML string `"5"`; reads 6 fixture files from `fixtures/frontmatter-phase7/` asserting parsed shapes; drift guard: every .mdx on disk must appear in REGISTERED_FIXTURES and vice versa |
 | `tests/origin-guard.test.ts` (16 tests) | Split tolerant/strict origin APIs | parseGitHubRemoteUrl handles SSH/HTTPS; returns null for non-GitHub; getOriginState returns 'matches'/'absent'; narrows catch to 'No such remote' stderr only (re-throws environment errors); throws on wrong-target or unparseable URL; normalizes case (GitHub is case-insensitive); forces LC_ALL=C/LANG=C on subprocess (locale independence); requireOriginMatch throws on absent (unlike tolerant variant); expectedSiteCoords prefers config.site.github_repo over basename(repo_path) fallback; handles trailing slash in repo_path |
 | `tests/pipeline-registry-integrity.test.ts` (8 tests) | Registry ↔ step-tuple invariants | PIPELINE_STEPS exports every PUBLISH_STEP_NAMES entry; every UPDATE_STEP_NAMES entry; pairwise unique names; numbers cover 1..11 with slot 3 shared between site-pr and site-update; each name maps to consistent number; every step has callable execute; no step name outside union of publish+update tuples; createPipelineSteps seeds DB step_numbers that match tuple positions per mode (the ACTUAL invariant the runner depends on) |
+
+**Release Prep (feature/release-prep-v0-1)**
+
+Ships the v0.1.0-readiness bundle: a shared package-root resolver that fixes a latent CWD-relative template-loading bug, a four-layer packaging gate (`verify-pack.mjs`), clean build (`rm -rf dist && tsc`), adversarially-reviewed release runbook, and CI. Validated against a Tier-2 contract with seven adversarial passes (1 Claude evaluator + 6 Codex GPT-5.4 high passes — final verdict `clean / approve`).
+
+| Test File | Feature | What It Validates |
+| --------- | ------- | ----------------- |
+| `tests/paths.test.ts` (4 tests) | Shared package-root resolver | `findPackageRoot(import.meta.url)` from the test file returns a real path ending in `/m0lz.01`; synthetic src-layout URL (`file:///tmp/fakeProj/src/cli/foo.ts`) walks up to seeded `package.json`; synthetic dist-layout URL (`file:///tmp/fakeProj/dist/cli/foo.js`) resolves identically (proving no offset-arithmetic brittleness between src/ and dist/ layouts); missing-package.json throws with the URL in the error message (uses a path whose ancestors definitionally have none) |
+| `tests/cli-templates-cwd-independence.test.ts` (1 test) | CLI works from arbitrary CWD | `beforeAll` unconditionally rebuilds dist (Release Prep Pass 1 Codex Finding #1: without this, a stale dist could silently false-positive); `spawnSync('node', [distPath, 'init'], { cwd: mkdtempSync })` from an empty OS-tmpdir (macOS `/var/folders/...`, physically outside repo ancestry so findPackageRoot cannot accidentally resolve against the real package.json); asserts exit 0, `.blog-agent/state.db` created, AND byte-equal comparison of `.blogrc.yaml` ↔ shipped `.blogrc.example.yaml` + `.env` ↔ shipped `.env.example` (proves both the templates/ helper fix AND the init.ts hard-fail path) |
 
 ### Source files these tests protect
 
@@ -310,6 +321,21 @@ npx vitest run \
 - `.claude/rules/lifecycle.md` — path-scoped rule doc: publishMode dispatch, first-class update_cycles rows, partial-unique-index constraint, explicit isUpdateReview flag, cycle-keyed notice marker, publish guard, shared per-slug lock, shared finalize helper, metrics audit log, unpublish trust boundaries, origin-guard tolerant/strict APIs, readme-revert direct-push policy clarification
 - `docs/spikes/forem-put-semantics.md` — canonical source for Forem PUT body shapes (unpublish + update), referenced by devto.ts implementations
 
+**Release Prep source files:**
+
+- `src/core/paths.ts` — shared package-root resolver: `findPackageRoot(moduleUrl)` walks up from a module URL until it finds a `package.json`, `PACKAGE_ROOT` = the package directory computed eagerly at module load via `import.meta.url`, `TEMPLATES_ROOT` = `resolve(PACKAGE_ROOT, 'templates')`. Every template-reading code path in the repo routes through one of these two constants — no inline `fileURLToPath` / offset-arithmetic incantations remain
+- `src/cli/init.ts` — hard-fail on missing shipped example files (`.blogrc.example.yaml` / `.env.example`) with diagnostic pointing at a packaging bug; `packageRoot` is an injectable third parameter (defaults to `PACKAGE_ROOT`) so regression tests can exercise the hard-fail path via a tmpdir without monkey-patching the module
+- `src/cli/publish.ts` / `src/cli/update.ts` — use `TEMPLATES_ROOT` for package-shipped template reads; all `.blog-agent/...` and `.blogrc.yaml` paths remain CWD-relative (operator state, not package state — Negative contract criterion #11 locks this distinction in)
+- `src/core/benchmark/companion.ts` / `src/core/research/document.ts` — same refactor symmetrically applied: `resolve(TEMPLATES_ROOT, '<subpath>')` instead of inline `fileURLToPath`
+- `scripts/verify-pack.mjs` — four-layer packaging gate wired into both `npm run verify-pack` and `prepublishOnly`: (1) ALLOWED_PATTERNS whitelist, (2) FORBIDDEN_PATTERNS denylist (no secrets, `.js.map`, `state.db`, `.blog-agent/`, `src/`, `tests/`, `.claude/`), (3) REQUIRED_FILES manifest of 12 runtime-critical paths (catches silent deletions the allowlist alone would miss — Release Prep Pass 1 Codex Finding #3), (4) src→dist compiled-closure check walking `src/**/*.ts` and asserting every corresponding `dist/**/*.js` is in the tarball (Release Prep Pass 2 Codex Finding #1 — the allowlist glob + single-entrypoint REQUIRED_FILES would silently pass a missing compiled module without this)
+- `package.json` — `build: "rm -rf dist && tsc"` (prevents stale compiled artifacts from shipping); `prepublishOnly: "lint && build && test && verify-pack"` (publish-time gate that cannot be bypassed); `files` uses globs (`dist/**/*.js`, `dist/**/*.d.ts` — excludes `.js.map` without a second build config); publish surface fields (`repository`, `homepage`, `bugs`, `keywords`, `author`)
+- `.github/workflows/ci.yml` — single Node 20 job, step order: checkout → setup-node → npm ci → lint → build → test → verify-pack (build BEFORE test — Release Prep Pass 1 Codex Finding #1; ensures the CWD-independence integration test always runs against fresh dist)
+- `CHANGELOG.md` — Keep-a-Changelog format, single `[0.1.0]` section covering Phases 1–7 plus the template-path fix
+- `RELEASING.md` — literal v0.1.0 sequence + subsequent-releases template; both sections have `main`-branch + clean-tree fail-fast preflight guards; pre-publish `git push --atomic --dry-run` check; atomic `git push --atomic origin main refs/tags/vX.Y.Z` (not `--follow-tags`) so branch + tag move together; `gh release create --verify-tag` prevents silent wrong-commit tag creation; Recovery section structured around registry-state check (`npm view m0lz-01@X.Y.Z version`) with three cases: A=live/push-only-with-rebase-and-re-tag, B=E404/safe-retry, C=abandon (uses `--mixed` reset with `git status`/`git log` preflights); subsequent-release flow has its own two-commit recovery block with `HEAD~2` (not `HEAD~1`)
+- `.github/PULL_REQUEST_TEMPLATE.md` — ≤10 line checklist with absolute GitHub URLs to CLAUDE.md (relative paths 404 in GitHub's PR body rendering)
+- `.nvmrc` — `20` (contributor convenience; complements `engines.node: ">=20.0.0"`)
+- `README.md` — CI badge at top; `## Install` leads with `npx m0lz-01 init --import` (dev install moved to new `## Development` section); `## Changelog` + `## Project Status` one-liners
+
 ### Expected results
 
 All tests should pass. If any fail after your changes:
@@ -348,7 +374,7 @@ npm test
 npm run build
 ```
 
-Expected baseline: **0 TypeScript errors, 723 tests passing across 56 suites, clean build** (as of feature/phase-7-lifecycle after Cluster L: fixture-directory drift guard + DB step_number ↔ tuple-position invariant test; closes Codex Pass 4 Minors #2 and #3). Any drift from this baseline is a signal to investigate before merging.
+Expected baseline: **0 TypeScript errors, 730 tests passing across 58 suites, clean build** (as of feature/release-prep-v0-1 after the seven-pass adversarial evaluation converged with Codex verdict `clean / approve`: +4 paths unit tests + 1 CWD-independence integration test + 2 init.ts hard-fail regression tests = +7 across +2 suites over the 723/56 Phase 7 baseline). Any drift from this baseline is a signal to investigate before merging.
 
 ## Phase 3: Code Review of Current Changes
 
@@ -483,7 +509,12 @@ Phase 7 — Lifecycle:
   - Split origin-guard tolerant/strict APIs (16 tests): ✓ / ✗
   - Pipeline registry ↔ step-tuple invariants (8 tests): ✓ / ✗
 
-Full Suite: X passing, Y failing  (baseline: 723 passing across 56 suites)
+Release Prep:
+  - Shared package-root resolver (4 tests): ✓ / ✗
+  - CLI CWD-independence integration (1 test): ✓ / ✗
+  - init.ts hard-fail regression — absent shipped templates (2 tests in cli.test.ts): ✓ / ✗
+
+Full Suite: X passing, Y failing  (baseline: 730 passing across 58 suites)
 Lint: {error count} errors  (baseline: 0)
 Build: PASS / FAIL
 ```
