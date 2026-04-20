@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 import { Command } from 'commander';
@@ -9,10 +9,13 @@ import { loadConfig } from '../core/config/loader.js';
 import { detectContentType } from '../core/draft/content-types.js';
 import {
   ResearchDocument,
+  SECTION_KEYS,
+  SectionKey,
   writeResearchDocument,
   validateResearchDocument,
   validateSlug,
   documentPath,
+  setResearchSection,
 } from '../core/research/document.js';
 import { addSource, countSources } from '../core/research/sources.js';
 import { initResearchPost, getResearchPost } from '../core/research/state.js';
@@ -199,6 +202,98 @@ export function runResearchShow(slug: string, paths: ResearchPaths = {}): void {
   }
 }
 
+interface SetSectionOptions {
+  section: string;
+  content?: string;
+  fromFile?: string;
+}
+
+// `blog research set-section` — CLI-native write surface for research doc
+// sections. Needed because the /blog skill has `allowed-tools: Bash(blog:*)
+// Read Grep Glob` (no Write/Edit — structural safety boundary). Without this
+// command, the skill has to tell the operator to hand-author the 7 template
+// sections between `init` and `finalize` — a workaround, not a fix. Plan
+// steps carry `--content` through the hash gate so section content is
+// immutable between approve and apply.
+export function runResearchSetSection(
+  slug: string,
+  opts: SetSectionOptions,
+  paths: ResearchPaths = {},
+): void {
+  try {
+    validateSlug(slug);
+  } catch (e) {
+    console.error((e as Error).message);
+    process.exitCode = 1;
+    return;
+  }
+
+  if (!SECTION_KEYS.includes(opts.section as SectionKey)) {
+    console.error(
+      `Invalid section '${opts.section}'. Valid: ${SECTION_KEYS.join(', ')}`,
+    );
+    process.exitCode = 1;
+    return;
+  }
+
+  const hasContent = opts.content !== undefined;
+  const hasFile = opts.fromFile !== undefined;
+  if (hasContent === hasFile) {
+    console.error('Pass exactly one of --content or --from-file');
+    process.exitCode = 1;
+    return;
+  }
+
+  let content: string;
+  if (hasFile) {
+    if (!existsSync(opts.fromFile!)) {
+      console.error(`File not found: ${opts.fromFile}`);
+      process.exitCode = 1;
+      return;
+    }
+    content = readFileSync(opts.fromFile!, 'utf-8');
+  } else {
+    content = opts.content!;
+  }
+
+  if (content.trim().length === 0) {
+    console.error('Section content cannot be empty (finalize would reject it).');
+    process.exitCode = 1;
+    return;
+  }
+
+  const dbPath = paths.dbPath ?? DB_PATH;
+  const researchDir = paths.researchDir ?? RESEARCH_DIR;
+  requireDb(dbPath);
+
+  const db = getDatabase(dbPath);
+  try {
+    let post;
+    try {
+      post = getResearchPost(db, slug);
+    } catch (e) {
+      console.error((e as Error).message);
+      process.exitCode = 1;
+      return;
+    }
+    if (!post) {
+      console.error(`Post not found: ${slug}`);
+      process.exitCode = 1;
+      return;
+    }
+
+    try {
+      setResearchSection(researchDir, slug, opts.section as SectionKey, content);
+      console.log(`Updated '${opts.section}' in research doc for '${slug}'.`);
+    } catch (e) {
+      console.error((e as Error).message);
+      process.exitCode = 1;
+    }
+  } finally {
+    closeDatabase(db);
+  }
+}
+
 export function runResearchFinalize(slug: string, paths: ResearchPaths = {}): void {
   try {
     validateSlug(slug);
@@ -309,6 +404,23 @@ export function registerResearch(program: Command): void {
     .description('Show research state for a slug')
     .action((slug: string) => {
       runResearchShow(slug);
+    });
+
+  research
+    .command('set-section <slug>')
+    .description('Replace one section of the research doc with new content')
+    .requiredOption(
+      '--section <name>',
+      `Section key: ${SECTION_KEYS.join(', ')}`,
+    )
+    .option('--content <text>', 'Inline section content')
+    .option('--from-file <path>', 'Read section content from a file')
+    .action((slug: string, opts: { section: string; content?: string; fromFile?: string }) => {
+      runResearchSetSection(slug, {
+        section: opts.section,
+        content: opts.content,
+        fromFile: opts.fromFile,
+      });
     });
 
   research

@@ -36,20 +36,24 @@ Before proposing a plan for a new slug, parse `blog status --json` and grep `dat
 
 Summarize the classification and render the proposed step sequence as a markdown table. Each row MUST name a concrete `blog <subcommand>` — no abstract actions like "run the panel" or "init-and-draft".
 
-Example step sequence for `fast-path` + `project-launch` starting from `research`:
+**Research phase — two-gate finalize:** When the post is in `research` and the doc has empty `{{placeholder}}` sections OR fewer than `config.evaluation.min_sources` (default 3) DB-tracked sources, finalize will fail. The plan must include either (a) `blog research set-section` steps to populate the 7 sections AND `blog research add-source` steps to meet the source floor, OR (b) a clear "pause here, operator authors interactively then resumes" checkpoint before finalize. Option (a) is the skill-driven path and is preferred for project-launch posts where the source material is the repo/artifact itself; option (b) fits deep-dive research where the operator wants interactive drafting. `REFERENCES.md § Research phase authoring` documents the two-gate contract.
+
+Example step sequence for `fast-path` + `project-launch` starting from `research` (with research authoring inline):
 
 | Step | Command | Purpose |
 |---|---|---|
-| 1 | `blog research finalize <slug>` | Lock research sources |
-| 2 | `blog draft init <slug>` | Scaffold the MDX draft |
-| 3 | `blog draft complete <slug>` | Advance to evaluate |
-| 4 | `blog evaluate init <slug>` | Open the evaluation cycle |
-| 5 | `blog evaluate record <slug> --reviewer structural --report <path> --issues <path>` | Record the structural reviewer |
-| 6 | `blog evaluate synthesize <slug>` | Compute verdict |
-| 7 | `blog evaluate complete <slug>` | Gate pass → publish-ready |
-| 8 | `blog publish start <slug>` | Run the 11-step publish pipeline |
+| 1a..1g | `blog research set-section <slug> --section <key> --content "<prose>"` | One step per section key (thesis, findings, sources_list, data_points, open_questions, benchmark_targets, repo_scope). Skill composes prose from in-conversation approval before emitting. |
+| 1h..1j+ | `blog research add-source <slug> --url "<...>" --title "<...>" --excerpt "<...>"` | At least 3; omit if operator has added sources interactively. |
+| 2 | `blog research finalize <slug>` | Validate both gates (sections + source count) |
+| 3 | `blog draft init <slug>` | Scaffold the MDX draft |
+| 4 | `blog draft complete <slug>` | Advance to evaluate |
+| 5 | `blog evaluate init <slug>` | Open the evaluation cycle |
+| 6 | `blog evaluate record <slug> --reviewer structural --report <path> --issues <path>` | Record the structural reviewer |
+| 7 | `blog evaluate synthesize <slug>` | Compute verdict |
+| 8 | `blog evaluate complete <slug>` | Gate pass → publish-ready |
+| 9 | `blog publish start <slug>` | Run the 11-step publish pipeline |
 
-Every destructive step (`draft init`, `evaluate complete`, `publish start`, any `update`/`unpublish` command) MUST appear only inside a `blog agent apply` handoff — never as a direct invocation from this skill.
+Every destructive step (`draft init`, `evaluate complete`, `publish start`, any `update`/`unpublish` command) MUST appear only inside a `blog agent apply` handoff — never as a direct invocation from this skill. Research-authoring steps (`set-section`, `add-source`) are destructive in the same sense — they live inside the plan, not in the skill's direct exec scope.
 
 ## 4. Write the plan file
 

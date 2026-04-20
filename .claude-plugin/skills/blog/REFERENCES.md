@@ -32,6 +32,22 @@ Every `--json` output is wrapped as:
 | `blog unpublish show <slug> --json` | `UnpublishPipeline` | `slug`, `steps[]`, `completed_at` |
 | `blog evaluate show <slug> --json` | `EvaluationState` | `slug`, `cycle_id`, `reviewers[]`, `verdict` |
 
+## Research phase authoring — two-gate finalize contract
+
+`blog research finalize <slug>` enforces BOTH gates, independently:
+
+1. **DB sources** — `countSources(slug) >= config.evaluation.min_sources` (default 3). Populate via `blog research add-source <slug> --url <...> --title <...> --excerpt <...>`.
+2. **Document sections** — all 7 template sections non-empty in the rendered markdown. Populate via `blog research set-section <slug> --section <key> --content <text>` (or `--from-file <path>` for large content). Sections keyed by:
+   - `thesis` → "Thesis"
+   - `findings` → "Key Findings"
+   - `sources_list` → "Sources"
+   - `data_points` → "Data Points"
+   - `open_questions` → "Open Questions"
+   - `benchmark_targets` → "Benchmark Targets"
+   - `repo_scope` → "Suggested Companion Repo Scope"
+
+The two gates are INDEPENDENT — DB sources do NOT auto-populate the `Sources` markdown block, and `set-section` does NOT add DB source rows. A complete research phase requires both. Plan steps carry `set-section` content through the hash gate so section prose is immutable between `approve` and `apply`.
+
 ## Phase state machine
 
 ```

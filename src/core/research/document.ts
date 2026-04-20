@@ -31,6 +31,21 @@ export const REQUIRED_SECTIONS = [
   'Suggested Companion Repo Scope',
 ] as const;
 
+// Stable section keys used by `blog research set-section`. These are the
+// ResearchDocument field names — preferred over heading prose because they
+// survive template prose tweaks without breaking plan steps. The CLI maps
+// key → heading via SECTION_KEY_TO_HEADING below.
+export const SECTION_KEYS = [
+  'thesis',
+  'findings',
+  'sources_list',
+  'data_points',
+  'open_questions',
+  'benchmark_targets',
+  'repo_scope',
+] as const;
+export type SectionKey = typeof SECTION_KEYS[number];
+
 function getTemplatePath(): string {
   return resolve(TEMPLATES_ROOT, 'research/template.md');
 }
@@ -186,6 +201,36 @@ export interface ValidationResult {
   ok: boolean;
   missing: string[];
   empty: string[];
+}
+
+// Replace ONE section of the rendered research doc, preserving frontmatter
+// and every other section. This is the CLI-native write surface for the
+// /blog skill — plan steps carry section content through the hash gate
+// so finalize's two-gate contract (DB sources >= min_sources AND all 7
+// sections non-empty) can be satisfied without granting the skill Write
+// scope. Slug + file-existence checks live here (defense in depth); the
+// CLI handler re-validates at the boundary.
+export function setResearchSection(
+  researchDir: string,
+  slug: string,
+  section: SectionKey,
+  content: string,
+): void {
+  validateSlug(slug);
+  if (!SECTION_KEYS.includes(section)) {
+    throw new Error(
+      `Invalid section '${section}'. Valid: ${SECTION_KEYS.join(', ')}`,
+    );
+  }
+  const docPath = documentPath(researchDir, slug);
+  if (!existsSync(docPath)) {
+    throw new Error(
+      `Research document not found: ${docPath}. Run 'blog research init' first.`,
+    );
+  }
+  const current = readResearchDocument(docPath);
+  const updated: ResearchDocument = { ...current, [section]: content };
+  writeResearchDocument(researchDir, updated, { force: true });
 }
 
 export function validateResearchDocument(docPath: string): ValidationResult {

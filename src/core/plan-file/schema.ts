@@ -90,6 +90,7 @@ export const BANNED_ARG_FLAGS: readonly string[] = [
 export const SLUG_BEARING_STEP_COMMANDS: readonly string[] = [
   'blog research init',
   'blog research add-source',
+  'blog research set-section',
   'blog research show',
   'blog research finalize',
   'blog benchmark init',

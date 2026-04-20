@@ -73,6 +73,7 @@ npx vitest run \
   tests/research-sources.test.ts \
   tests/research-document.test.ts \
   tests/research-cli.test.ts \
+  tests/research-set-section.test.ts \
   tests/benchmark-environment.test.ts \
   tests/benchmark-state.test.ts \
   tests/benchmark-results.test.ts \
@@ -569,7 +570,7 @@ Release Prep:
   - Plugin static shape + SKILL discipline + sibling-doc parity + install-docs (22 tests): ✓ / ✗
   - Real skill-to-CLI handoff end-to-end + crash recovery + workspace pinning (25 tests): ✓ / ✗
 
-Full Suite: X passing, Y failing  (baseline: 861 passing across 64 suites)
+Full Suite: X passing, Y failing  (baseline: 874 passing across 65 suites)
 Lint: {error count} errors  (baseline: 0)
 Build: PASS / FAIL
 ```

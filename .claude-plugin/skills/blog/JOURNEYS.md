@@ -26,15 +26,17 @@ All identity values (`<your-user>`, `<your-domain>`, etc.) come from `.blogrc.ya
 
 | # | `command` | `args` | `checkpoint_message` |
 |---|---|---|---|
-| 1 | `blog research finalize` | `[<slug>]` | Finalize research sources? |
-| 2 | `blog draft init` | `[<slug>]` | Scaffold MDX draft? |
-| 3 | `blog draft complete` | `[<slug>]` | Advance to evaluate? |
-| 4 | `blog evaluate init` | `[<slug>]` | Open evaluation cycle? |
-| 5 | `blog evaluate structural-autocheck` | `[<slug>]` | Run deterministic lints? |
-| 6 | `blog evaluate record` | `[<slug>, --reviewer, structural, --report, <path>, --issues, <path>]` | Record structural reviewer output? |
-| 7 | `blog evaluate synthesize` | `[<slug>]` | Compute verdict? |
-| 8 | `blog evaluate complete` | `[<slug>]` | Gate pass → publish-ready? |
-| 9 | `blog publish start` | `[<slug>]` | Run the 11-step publish pipeline? |
+| 1a..1g | `blog research set-section` | `[<slug>, --section, thesis\|findings\|sources_list\|data_points\|open_questions\|benchmark_targets\|repo_scope, --content, "<section prose>"]` | Approve this section prose? (one step per section; plan author composes prose from the in-conversation draft before emitting) |
+| 1h..1j+ | `blog research add-source` | `[<slug>, --url, "<...>", --title, "<...>", --excerpt, "<why it matters>"]` | Approve this source citation? (at least `config.evaluation.min_sources` = 3; omit entirely if the operator has already added sources interactively) |
+| 2 | `blog research finalize` | `[<slug>]` | Finalize research (both gates: sections + source count)? |
+| 3 | `blog draft init` | `[<slug>]` | Scaffold MDX draft? |
+| 4 | `blog draft complete` | `[<slug>]` | Advance to evaluate? |
+| 5 | `blog evaluate init` | `[<slug>]` | Open evaluation cycle? |
+| 6 | `blog evaluate structural-autocheck` | `[<slug>]` | Run deterministic lints? |
+| 7 | `blog evaluate record` | `[<slug>, --reviewer, structural, --report, <path>, --issues, <path>]` | Record structural reviewer output? |
+| 8 | `blog evaluate synthesize` | `[<slug>]` | Compute verdict? |
+| 9 | `blog evaluate complete` | `[<slug>]` | Gate pass → publish-ready? |
+| 10 | `blog publish start` | `[<slug>]` | Run the 11-step publish pipeline? |
 
 None of these rows is a direct shell invocation. Each is a JSON object inside the inline payload; they execute only via `blog agent apply` after hash-verified approval.
 
