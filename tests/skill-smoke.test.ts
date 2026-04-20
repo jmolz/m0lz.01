@@ -1,8 +1,16 @@
-import { existsSync, readdirSync, readFileSync, readlinkSync, statSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  readlinkSync,
+  statSync,
+  symlinkSync,
+} from 'node:fs';
 import { dirname, resolve } from 'node:path';
 
 import yaml from 'js-yaml';
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
 
 const ROOT = resolve(__dirname, '..');
 const PLUGIN_DIR = resolve(ROOT, '.claude-plugin');
@@ -10,6 +18,18 @@ const PLUGIN_JSON = resolve(PLUGIN_DIR, 'plugin.json');
 const SKILL_DIR = resolve(PLUGIN_DIR, 'skills', 'blog');
 const SKILL_MD = resolve(SKILL_DIR, 'SKILL.md');
 const CONTRIBUTOR_SYMLINK = resolve(ROOT, '.claude', 'skills', 'blog');
+
+// The contributor symlink is deliberately gitignored — it's per-dev-env
+// convenience (see .gitignore:16 + docs/plugin-install.md path (c)). Fresh
+// clones + CI + merged main don't have it. Idempotently create it from
+// the exact recipe documented in the install docs so this test file is
+// both self-contained AND a structural verification of that recipe.
+beforeAll(() => {
+  if (!existsSync(CONTRIBUTOR_SYMLINK)) {
+    mkdirSync(dirname(CONTRIBUTOR_SYMLINK), { recursive: true });
+    symlinkSync('../../.claude-plugin/skills/blog', CONTRIBUTOR_SYMLINK);
+  }
+});
 
 interface PluginManifest {
   name: string;
