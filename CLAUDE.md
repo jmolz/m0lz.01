@@ -56,7 +56,7 @@ m0lz.01/
       ideas.ts             # Editorial backlog
       research.ts          # Research phase (init, add-source, show, finalize)
       draft.ts             # Draft phase (init, show, validate, add-asset, complete)
-    skills/                # Claude Code skill definitions (later phases)
+      agent.ts             # `blog agent` family (preflight/plan/approve/verify/apply)
     core/                  # Shared business logic
       db/                  # SQLite schema, connection, types
       config/              # .blogrc.yaml loader + types
@@ -72,6 +72,12 @@ m0lz.01/
       research-page/       # Auto-generate m0lz.00 research pages
       update/              # Content update pipeline
       ideas/               # Editorial backlog management
+      workspace/           # Workspace-root detection + user-path resolution
+      plan-file/           # Plan schema, hash, validator, apply runner
+      json-envelope.ts     # Versioned envelope for --json CLI output
+  .claude-plugin/          # /blog Claude Code plugin (ships in npm tarball)
+    plugin.json            # Plugin manifest
+    skills/blog/           # SKILL.md + REFERENCES/JOURNEYS/CHECKPOINTS
   templates/               # Repo, methodology, social, research-page templates
   tests/                   # Vitest test files
   .blog-agent/             # Runtime state (gitignored)
@@ -276,6 +282,8 @@ These load automatically when editing files in their scope:
 | `.claude/rules/evaluation.md` | `src/core/evaluate/**`, `src/cli/evaluate.ts` | Deterministic-CLI/judgment-skill split, autocheck determinism, JACCARD_THRESHOLD, mandatory artifact_hashes provenance, DB-authoritative re-derivation with cluster-identity, slug-scoped FS lock, readManifest single-choke-point validation, synthesis receipt, reject sentinel ordering, cycle isolation |
 | `.claude/rules/lifecycle.md` | `src/core/update/**`, `src/core/unpublish/**`, `src/cli/update.ts`, `src/cli/unpublish.ts` | publishMode dispatch, update_cycles first-class rows, partial-unique-index constraint, explicit isUpdateReview flag, cycle-keyed notice marker, publish guard, shared per-slug lock, shared finalize helper, metrics audit log, unpublish trust boundaries |
 | `.claude/rules/release.md` | `RELEASING.md`, `CHANGELOG.md`, `package.json`, `scripts/**`, `.github/**`, `.nvmrc` | Package-root vs CWD-relative path separation, four-layer verify-pack gate (allowlist + denylist + required + src→dist closure), clean-build invariant (`node scripts/clean-dist.mjs`), prepublishOnly chain, `engines.node` tight-pinning, release runbook invariants (main-branch preflight, atomic push, `--verify-tag`, registry-state-check-first recovery, `--mixed` resets), awk flag-based CHANGELOG extraction, adversarial-review convergence cadence, regression suite registration (four-place parity) |
+| `.claude/rules/skills.md` | `.claude-plugin/skills/**` | `/blog` skill discipline — destructive execution only via `blog agent apply`, state reads via `--json`, no `node -e`/`cat`/`head` in code fences, concrete `{command, args}` steps, SHA256 hash binding, canonical-URL permanence citation, no hardcoded identity values |
+| `.claude/rules/plan-file.md` | `src/core/plan-file/**`, `src/cli/agent.ts`, `src/cli/index.ts`, `src/core/workspace/**`, `src/core/json-envelope.ts` | Plan-file safety boundary invariants (seven adversarial review passes) — canonical single-space form + `KNOWN_LEAF_COMMANDS` TRUE-leaves-only allowlist, `SLUG_BEARING_STEP_COMMANDS` slug-binding, `validateSlug` at BOTH CLI + schema layers, `--output` realpath + lstat clamp, slug-scoped apply lock with honest PID-liveness policy, DB-authoritative step state + RECEIPT_CONFLICT (schema v4), pre-spawn crash-recovery sentinel, child-workspace pinning (`--workspace` prepend + `BLOG_WORKSPACE` env scrub), startup shim `--workspace=/path` compact form + empty-operand rejection, `BANNED_ARG_FLAGS`, `agent` nesting ban, v0.3 config-hash-binding residual risk |
 
 ### Read on demand
 
@@ -298,6 +306,7 @@ These load automatically when editing files in their scope:
 
 ## Key Rules
 
+- **Destructive actions go through `blog agent apply` with hash-verified plans** — the `/blog` skill proposes, the user approves, and the CLI's `apply` command executes. Never invoke `blog publish start`, `blog update *`, `blog unpublish start`, `blog evaluate complete/reject`, `blog research init/finalize`, `blog draft init/complete` directly from the skill. The safety boundary is CLI-native: `blog agent approve` sets the SHA256 `payload_hash`; `blog agent verify`/`apply` reject any post-approval edit with `[AGENT_ERROR] HASH_MISMATCH`.
 - **ESM imports require `.js` extension** — every internal import must end in `.js` even for `.ts` source files. This is non-negotiable with Node16 module resolution.
 - **All database queries use parameterized statements** — never string interpolation for SQL. Use `?` placeholders or `@named` parameters. SQLite does not support parameterized table names — use separate prepared statements per table (branched by literal), never `${table}` interpolation.
 - **Config values are threaded, never hardcoded** — `config.author.github`, `config.site.base_url`, `config.site.content_dir`, and similar identity/URL values must flow into library functions via option parameters. Baking `jmolz` or `m0lz.dev` into a module breaks the moment another author uses the agent.
