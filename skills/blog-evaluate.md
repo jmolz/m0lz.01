@@ -51,11 +51,12 @@ Read these files:
 Tasks:
 
 1. Load `structural.lint.json` and parse the autocheck issues.
-2. Add judgment-based issues that autocheck cannot detect: prose quality, reading level, section cohesion, source sufficiency, thesis clarity. Tag each with `"source": "reviewer"`.
-3. Merge autocheck + judgment issues into a single array. Do not modify autocheck-tagged issues.
-4. Write `.blog-agent/evaluations/{slug}/structural.md` — a human-readable report.
-5. Write `.blog-agent/evaluations/{slug}/structural.json` — a `ReviewerOutput` (schema below).
-6. Record:
+2. Load `.claude/rules/voice.md` and scan the draft for voice violations: hedges and filler, tricolon stacks, uniform sentence length, topic-restatement transitions, smarmy openers, undefined jargon, em-dash overuse (more than ~1 per 500 words without the substitution test surviving), colon-as-reveal overuse, emojis anywhere. Emit each as a reviewer-sourced issue with `"category": "voice"` and `"source": "reviewer"`.
+3. Add other judgment-based issues that autocheck cannot detect: prose quality, reading level, section cohesion, source sufficiency, thesis clarity. Tag each with `"source": "reviewer"`.
+4. Merge autocheck + judgment issues into a single array. Do not modify autocheck-tagged issues.
+5. Write `.blog-agent/evaluations/{slug}/structural.md` — a human-readable report.
+6. Write `.blog-agent/evaluations/{slug}/structural.json` — a `ReviewerOutput` (schema below).
+7. Record:
 
 ```bash
 blog evaluate record <slug> \

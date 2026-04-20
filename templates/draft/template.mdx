@@ -9,6 +9,14 @@ companion_repo: "{{companion_repo}}"
 project: "{{project}}"
 ---
 
+{/*
+  Voice rules: .claude/rules/voice.md (dev), .claude-plugin/skills/blog/VOICE.md (plugin).
+  Quick gist: direct declaratives, no hedges, no tricolon stacks, no topic-restatement
+  transitions, no smarmy openers, no undefined jargon, ~1 em dash per 500 words max
+  (substitute period / comma / parens / cut first), no emojis. Structural reviewer
+  flags voice drift with category='voice' at evaluation time.
+*/}
+
 ## Introduction
 
 {{thesis}}

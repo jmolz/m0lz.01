@@ -12,6 +12,7 @@ Interactive skill for drafting MDX content. Orchestrates the draft phase of the 
 - Post must be in `draft` phase (completed research + benchmark or benchmark skip)
 - `.blogrc.yaml` config present
 - Research document exists in `.blog-agent/research/{slug}.md`
+- Voice rules loaded — read `.claude/rules/voice.md` before writing any prose. Every section below is voice-gated at evaluation time.
 
 ## Workflow
 

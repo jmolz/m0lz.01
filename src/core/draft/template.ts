@@ -1,6 +1,19 @@
 import { ContentType } from '../db/types.js';
 import { PostFrontmatter, serializeFrontmatter } from './frontmatter.js';
 
+// Guidance comment injected between frontmatter and the first section. MDX
+// strips JSX comments at compile time so this is invisible in the published
+// output; it survives as context for the author/agent editing the draft.
+// Full rules live at .claude/rules/voice.md (dev) and
+// .claude-plugin/skills/blog/VOICE.md (plugin, shipped with the tarball).
+const VOICE_COMMENT = `{/*
+  Voice rules: .claude/rules/voice.md (dev), .claude-plugin/skills/blog/VOICE.md (plugin).
+  Quick gist: direct declaratives, no hedges, no tricolon stacks, no topic-restatement
+  transitions, no smarmy openers, no undefined jargon, ~1 em dash per 500 words max
+  (substitute period / comma / parens / cut first), no emojis. Structural reviewer
+  flags voice drift with category='voice' at evaluation time.
+*/}`;
+
 export interface DraftContext {
   contentType: ContentType;
   benchmarkTable?: string;
@@ -14,6 +27,8 @@ export function renderDraftTemplate(frontmatter: PostFrontmatter, context: Draft
   const sections: string[] = [];
 
   sections.push(serializeFrontmatter(frontmatter));
+  sections.push('');
+  sections.push(VOICE_COMMENT);
   sections.push('');
 
   // Introduction (all content types)

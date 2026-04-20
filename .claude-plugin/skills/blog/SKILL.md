@@ -38,6 +38,8 @@ Summarize the classification and render the proposed step sequence as a markdown
 
 **Research phase — two-gate finalize:** When the post is in `research` and the doc has empty `{{placeholder}}` sections OR fewer than `config.evaluation.min_sources` (default 3) DB-tracked sources, finalize will fail. The plan must include either (a) `blog research set-section` steps to populate the 7 sections AND `blog research add-source` steps to meet the source floor, OR (b) a clear "pause here, operator authors interactively then resumes" checkpoint before finalize. Option (a) is the skill-driven path and is preferred for project-launch posts where the source material is the repo/artifact itself; option (b) fits deep-dive research where the operator wants interactive drafting. `REFERENCES.md § Research phase authoring` documents the two-gate contract.
 
+**Voice applies to all composed prose.** Before emitting `blog research set-section` or any plan-step that carries prose content (`--intent`, `--summary`, etc.), read `VOICE.md` in this skill directory. Voice rules are hash-bound into the plan alongside the content — once the plan is approved, voice is locked. Hard-rule gist: no hedges ("I believe", "perhaps", "it's worth noting"), no tricolon stacks, no topic-restatement transitions ("Now that we've covered X..."), no smarmy openers ("Let's dive in"), no undefined jargon without a handle, max ~1 em dash per 500 words (try period, comma, parens, or cut first), no emojis. Full rules at `VOICE.md`.
+
 Example step sequence for `fast-path` + `project-launch` starting from `research` (with research authoring inline):
 
 | Step | Command | Purpose |
