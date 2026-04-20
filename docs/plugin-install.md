@@ -107,3 +107,13 @@ The plan's `workspace_root` doesn't match where you're running. Either:
 
 - `cd` into the workspace recorded in `plan.workspace_root`, or
 - regenerate the plan from the correct workspace (plan files are workspace-scoped).
+
+### `Shell command failed … parse error near \`>\``
+
+Symptom: the skill tries to run a command like `!blog agent verify <plan-path>`
+and bash rejects it. Cause: your Claude Code session loaded a stale version of
+SKILL.md / JOURNEYS.md from before the `<placeholder>` → `"$VAR"` fix. Pull
+the latest, rebuild if running from source, and restart Claude Code with the
+current plugin dir. The regression is locked in `tests/skill-smoke.test.ts`
+(three tests, one per skill doc), so any future recurrence fails CI before
+reaching operators.

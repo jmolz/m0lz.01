@@ -26,6 +26,23 @@ these commands appears in a SKILL.md code fence ONLY inside a
 The skill may READ state via `blog status --json`, `blog <flow> show --json`,
 and `blog agent preflight --json`. Grep-verifiable via `tests/skill-smoke.test.ts`.
 
+## `!`…`` exec fences must use `"$VAR"`, never literal `<placeholder>` tokens
+
+Claude Code executes `!`…`` fences verbatim in bash. A token like `<plan-path>`
+inside such a fence parses as stdin redirection (`<` reads from file `plan-path`)
+and fails with `parse error near `>`` when followed by nothing, or silently
+reads from a nonexistent file otherwise. Every `!`…`` fence in SKILL.md,
+JOURNEYS.md, CHECKPOINTS.md MUST substitute real values first — either via
+bash-variable form `!blog agent verify "$PLAN"` or by inline-composing the
+full command before emission. The surrounding prose states "substitute `$PLAN`
+with the real path" so Claude knows to compose before executing.
+
+Descriptive (non-`!`) inline-code spans documenting CLI argument conventions
+(`blog agent verify <plan-path>` without a leading `!`) are fine — they are
+reference documentation for humans, not shell-exec instructions for Claude.
+Grep-verifiable: `tests/skill-smoke.test.ts` fails if any `!`…`` fence in any
+of the three skill docs contains a `<…>` token.
+
 ## Preflight uses the CLI envelope, never `node -e` or `cat`
 
 The skill's first action on every invocation is `!`blog agent preflight --json``.

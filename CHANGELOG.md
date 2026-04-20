@@ -51,6 +51,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - CLAUDE.md `src/skills/` reference was stale — the agent's skill definitions live under `.claude-plugin/skills/blog/` now. Updated Project Structure table and Key Rules accordingly.
 - CWD-bound workspace resolution — running any `blog` subcommand from a subdirectory below the workspace root would previously fail with "No state database found" because `resolve('.blog-agent/state.db')` used the cwd. The new startup shim chdirs to the detected workspace root before any module imports, so existing relative-resolve constants resolve correctly.
+- **`/blog` skill exec fences with literal `<placeholder>` tokens would fail shell parse.** `SKILL.md` and `JOURNEYS.md` contained `!`blog agent verify <plan-path>`` style templates. Claude Code executes `!`…`` verbatim in bash, so `<plan-path>` parsed as stdin redirection and the command failed with `parse error near `>`` on the first live dogfood invocation. Fixed by replacing every `<…>` token inside `!`…`` fences with explicit `"$VAR"` bash-variable form, making the substitution responsibility visible to Claude before shell-exec. New `tests/skill-smoke.test.ts` check (3 tests — one per `.md` sibling) rejects any exec fence containing an unsubstituted `<…>` token, so future drift surfaces as a failing test.
 
 ## [0.1.0] — 2026-04-18
 
