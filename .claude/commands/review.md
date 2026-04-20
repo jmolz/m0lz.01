@@ -119,7 +119,12 @@ npx vitest run \
   tests/origin-guard.test.ts \
   tests/pipeline-registry-integrity.test.ts \
   tests/paths.test.ts \
-  tests/cli-templates-cwd-independence.test.ts
+  tests/cli-templates-cwd-independence.test.ts \
+  tests/workspace-root.test.ts \
+  tests/cli-json.test.ts \
+  tests/plan-file.test.ts \
+  tests/skill-smoke.test.ts \
+  tests/skill-fixture-integration.test.ts
 ```
 
 ### What each test covers
@@ -223,6 +228,18 @@ Ships the v0.1.0-readiness bundle: a shared package-root resolver that fixes a l
 | --------- | ------- | ----------------- |
 | `tests/paths.test.ts` (4 tests) | Shared package-root resolver | `findPackageRoot(import.meta.url)` from the test file returns a real path ending in `/m0lz.01`; synthetic src-layout URL (`file:///tmp/fakeProj/src/cli/foo.ts`) walks up to seeded `package.json`; synthetic dist-layout URL (`file:///tmp/fakeProj/dist/cli/foo.js`) resolves identically (proving no offset-arithmetic brittleness between src/ and dist/ layouts); missing-package.json throws with the URL in the error message (uses a path whose ancestors definitionally have none) |
 | `tests/cli-templates-cwd-independence.test.ts` (1 test) | CLI works from arbitrary CWD | `beforeAll` unconditionally rebuilds dist (Release Prep Pass 1 Codex Finding #1: without this, a stale dist could silently false-positive); `spawnSync('node', [distPath, 'init'], { cwd: mkdtempSync })` from an empty OS-tmpdir (macOS `/var/folders/...`, physically outside repo ancestry so findPackageRoot cannot accidentally resolve against the real package.json); asserts exit 0, `.blog-agent/state.db` created, AND byte-equal comparison of `.blogrc.yaml` ↔ shipped `.blogrc.example.yaml` + `.env` ↔ shipped `.env.example` (proves both the templates/ helper fix AND the init.ts hard-fail path) |
+
+**/blog Skill Plugin (feature/blog-skill-plugin)**
+
+Ships the `/blog` Claude Code plugin + `blog agent` CLI subcommand family. Single skill with SHA256-bound plan artifacts as the structural safety boundary; destructive execution only via `blog agent apply`.
+
+| Test File | Feature | What It Validates |
+| --------- | ------- | ----------------- |
+| `tests/workspace-root.test.ts` (11 tests) | Workspace-root detection | `findWorkspaceRoot` ancestor-walks from cwd to `.blog-agent/state.db`; honors `override` (--workspace flag) and `envVar` (BLOG_WORKSPACE); override beats envVar beats walk; throws `WorkspaceNotFoundError` with actionable hints (--workspace + BLOG_WORKSPACE cited); `resolveUserPath` preserves `_BLOG_ORIGINAL_CWD` for relative paths, passes absolutes through unchanged |
+| `tests/cli-json.test.ts` (6 tests) | `--json` envelope surface | Every `--json` output has `schema_version='1'` + versioned `kind` + ISO `generated_at` + typed `data`; `WorkspaceStatus` / `PublishPipeline` / `UpdatePipeline` / `UnpublishPipeline` / `EvaluationState` shapes; empty-DB graceful fallback for `blog status --json` |
+| `tests/plan-file.test.ts` (61 tests) | Plan schema + SHA256 hash + validator + apply runner + receipt + apply-lock | `canonicalPlanJSON` is key-order independent and drops approved_at/payload_hash; `computePlanHash` deterministic; schema rejects unknown content_type (park-research rejected), unknown depth, abstract step commands (run-panel rejected), bare "research finalize" without blog prefix, empty steps/venues, `blog agent *` nesting, flag-like tokens inside `command` (e.g. "blog status --sneak"), BANNED_ARG_FLAGS in args (--workspace, --help, -h, --version, -V + compact = forms), slug traversal at the shared-schema layer ("../../outside"), namespace-only commands ("blog research" with args=[finalize, beta]), whitespace variants (double-space, tab, newline, leading space), workspace-global mutators ("blog init", "blog ideas add/start/remove"), args[0] != plan.slug for slug-bearing commands; accepts blog status/metrics as read-only leaves (not "blog ideas" which has Commander subcommands via default-action); `validatePlanForApply` throws NO_APPROVAL/HASH_MISMATCH/WORKSPACE_MISMATCH/SCHEMA_INVALID/CRASH_RECOVERY_REQUIRED; DB-authoritative skip state (schema v4 agent_plan_runs + agent_plan_steps); `applyPlan` writes receipt with per-step exit_code/stdout_tail/stderr_tail/duration_ms, tampered receipt JSON is a no-op (DB authoritative — forged-skip vector closed), RECEIPT_CONFLICT derived from DB open runs not receipt file (forgery-resistant), RECEIPT_HASH_MISMATCH on same-plan-id re-approved with different content, --restart clears ALL open runs for slug (not just current plan_id), CRASH_RECOVERY_REQUIRED on attempt-sentinel-without-completion; slug-scoped apply lock serializes different plan_ids for same slug, reclaims legacy bare-PID stale lockfiles, honest PID-liveness policy (no false PID-reuse hardening); stepToArgv strips "blog" prefix + concatenates command words with args |
+| `tests/skill-smoke.test.ts` (22 tests) | Plugin static shape + SKILL.md discipline + sibling-doc parity + install-docs structural contract | plugin.json declares blog skill at skills/blog; SKILL.md frontmatter parses + allowed-tools contains Bash(blog:*) AND explicitly excludes Write/Edit/Bash(gh:*) (CLI-enforced gate, not prose-gated); body ≤ 200 lines; no `node -e` / `cat ` / `head ` in code fences; every read command uses `--json`; no bare destructive execs outside `blog agent apply`; no hardcoded identity values (jmolz/m0lz.dev/DEVTO_API_KEY=); sibling docs (JOURNEYS.md + CHECKPOINTS.md) enforce the same discipline; skill-content identity hygiene scans `.claude-plugin/skills/**` recursively with manifest-field whitelist for plugin.json author/homepage; install-docs structural contract: npm-bundled path ships all required files, plugin.json declares readable SKILL.md, install docs reference files that actually exist; contributor symlink resolves; REFERENCES/JOURNEYS/CHECKPOINTS exist; `.claude-plugin/**` in `package.json#files` |
+| `tests/skill-fixture-integration.test.ts` (25 tests) | Real skill-to-CLI handoff end-to-end + crash recovery + workspace pinning | `beforeAll` unconditionally rebuilds dist; `spawnSync(node, [distPath, ...])` drives the real CLI: preflight → plan → verify-unapproved (exit 2 NO_APPROVAL) → approve (atomic approved_at + payload_hash) → verify-approved (exit 0) → apply (receipt written with plan_id pin, plan_payload_hash binding, step exit/stdout/stderr tail, completed_at, overall_exit=0); tamper plan → verify exits 2 HASH_MISMATCH; cross-workspace plan → verify exits 2 WORKSPACE_MISMATCH; abstract command via --steps-json → plan exits 2 SCHEMA_INVALID; `blog agent` nesting in --steps-inline → plan exits 2 SCHEMA_INVALID; --steps-inline writes a plan whose steps exactly match the payload; --steps-inline + --steps-json → exits 2 (mutually exclusive); slug traversal + leaf-level symlink rejected; --workspace smuggled through step args rejected; --output path clamp (outside plans/ reject, wrong ext reject, valid accept); hand-authored traversal slug rejected at verify; completed prior plan does NOT block a later plan for same slug; RECEIPT_CONFLICT cannot be forced by forged receipt (DB authority only); stale open-run recovery via --restart clears debt across plan_ids; RECEIPT_HASH_MISMATCH on re-approval with different content; receipt-JSON tampering is benign (DB authoritative); apply is resumable (no-op when complete); preflight respects --workspace override from outside the workspace; preflight honors --workspace > BLOG_WORKSPACE precedence; apply pins spawned children to plan.workspace_root (BLOG_WORKSPACE cannot redirect child via child env scrub + --workspace prepend); `--workspace=/path` compact form recognized; empty `--workspace=` rejected with explicit error; startup shim --workspace operand excluded from positional walk so agent preflight classification holds |
 
 ### Source files these tests protect
 
@@ -336,6 +353,34 @@ Ships the v0.1.0-readiness bundle: a shared package-root resolver that fixes a l
 - `.nvmrc` — `20` (contributor convenience; complements `engines.node: ">=20.0.0"`)
 - `README.md` — CI badge at top; `## Install` leads with `npx m0lz-01 init --import` (dev install moved to new `## Development` section); `## Changelog` + `## Project Status` one-liners
 
+**/blog Skill Plugin source files:**
+
+- `src/core/workspace/root.ts` — `findWorkspaceRoot(cwd, {override, envVar})` ancestor-walks to `.blog-agent/state.db`; throws `WorkspaceNotFoundError` with actionable hint citing `--workspace` + `BLOG_WORKSPACE`
+- `src/core/workspace/user-path.ts` — `resolveUserPath(p)` uses `_BLOG_ORIGINAL_CWD` env (set by startup shim) to resolve relative path flags against the operator's original cwd, not the chdir'd workspace root
+- `src/core/workspace/resolve.ts` — `workspaceRelative(subpath)` helper for explicit workspace-relative path construction (optional; module-level `resolve(...)` constants work after chdir)
+- `src/cli/index.ts` — startup shim: parse `--workspace` early, `findWorkspaceRoot` + `process.chdir()` BEFORE dynamic-importing command modules (so module-level `resolve('.blog-agent/...')` constants evaluate against post-chdir cwd); whitelists `init`, `help`, `agent`, `--help`, `--version` to skip the check; registers `agent` alongside the other commands
+- `src/core/json-envelope.ts` — `JsonEnvelope<K, D>` type + `makeEnvelope(kind, data)` + `printEnvelope(kind, data)` writing to stdout with 2-space indent
+- `src/core/plan-file/schema.ts` — `PlanFile` type (schema v2), `PLAN_CONTENT_TYPES`, `PLAN_DEPTHS`, `KNOWN_SUBCOMMANDS`, `DENY_STEP_SUBCOMMANDS` (banned `agent` nesting), `BANNED_ARG_FLAGS` (--workspace/--help/-h/--version/-V + `=` forms; the CLI startup shim hoists --workspace from any argv position — plan steps must not carry it), `SLUG_BEARING_STEP_COMMANDS` (every `blog X Y <slug>` subcommand — validator requires args[0] === plan.slug), `KNOWN_LEAF_COMMANDS` (exhaustive allowlist of TRUE leaves: blog status / blog metrics + SLUG_BEARING; namespace parents like `blog ideas` / `blog research` excluded to prevent args-smuggling via Commander's default-action pattern)
+- `src/core/plan-file/hash.ts` — `canonicalPlanJSON(plan)` drops `approved_at` + `payload_hash` and stable-stringifies (recursive key sort, arrays preserve order); `computePlanHash(plan)` = `sha256(canonicalPlanJSON(plan))`
+- `src/core/plan-file/validator.ts` — `validatePlanSchema(raw)` validates required fields + enums + step shape + `validateSlug(plan.slug)` at schema layer (hand-authored traversal slugs rejected, not just CLI-generated ones); per-step: command starts with "blog ", first word in KNOWN_SUBCOMMANDS, no flag-like tokens in command, canonical single-space form (no whitespace variants), exact match in KNOWN_LEAF_COMMANDS, banned flags in args, `args[0] === plan.slug` for slug-bearing commands; `validatePlanForApply(raw, {workspaceRoot})` adds NO_APPROVAL / HASH_MISMATCH / WORKSPACE_MISMATCH; `readPlanFile(path)` parses JSON with SCHEMA_INVALID on parse failure
+- `src/core/plan-file/apply.ts` — `applyPlan(plan, opts)` holds slug-scoped lock, DB-authoritative step state (schema v4 agent_plan_runs + agent_plan_steps), pre-spawn sentinel for crash recovery, pins spawned child to plan.workspace_root (prepend `--workspace` + scrub BLOG_WORKSPACE from child env), captures exit/stdout_tail/stderr_tail/duration_ms per step, writes receipt at `.blog-agent/plans/<slug>.receipt.json` atomically via `renameSync` (audit mirror, NOT trust input), resumes via completed-step skip derived from DB, `--restart` clears all open runs for slug + sentinels, throws ApplyError with UNKNOWN_COMMAND/STEP_FAILED/RECEIPT_CONFLICT/RECEIPT_HASH_MISMATCH/CRASH_RECOVERY_REQUIRED
+- `src/core/plan-file/apply-lock.ts` — slug-scoped O_CREAT|O_EXCL lockfile with JSON stamp (pid + acquiredAt); honest PID-liveness policy (no false PID-reuse hardening claim); tolerant of legacy bare-PID format; reclaims ESRCH-dead holders + corrupt/empty lockfiles
+- `src/core/db/schema.ts` — `SCHEMA_VERSION=4`, `SCHEMA_V4_SQL` adds `agent_plan_runs` + `agent_plan_steps` tables with FK CASCADE; receipt JSON is demoted to audit mirror
+- `src/core/db/database.ts` — v4 migration block in `migrate()` transaction
+- `src/cli/agent.ts` — `preflight` (trusts post-chdir process.cwd(), omits envVar fallthrough so --workspace > BLOG_WORKSPACE precedence holds), `plan` (writes skeleton with `approved_at: null`, validateSlug at CLI boundary, clampOutputPath enforces <workspace>/.blog-agent/plans/*.plan.json with realpath-aware parent + lstat-based leaf symlink rejection), `approve` (atomically sets approved_at + payload_hash), `verify` (dry-run validation), `apply` (validate + execute + write receipt); error taxonomy emitted as `[AGENT_ERROR] <CODE>: <msg>` on stderr with exit 2 (validation) or 1 (STEP_FAILED)
+- `src/cli/index.ts` — startup shim: parses both `--workspace <path>` and `--workspace=<path>` compact form, rejects empty operands explicitly, excludes workspace-operand slots from positional walk so `firstPositional` correctly identifies subcommand; WORKSPACE_FREE_COMMANDS narrowed to `init`, `help`; AGENT_WORKSPACE_FREE_SUBCOMMANDS=`preflight` (plan/approve/verify/apply require real workspace)
+- `src/cli/status.ts`, `src/cli/publish.ts`, `src/cli/update.ts`, `src/cli/unpublish.ts`, `src/cli/evaluate.ts` — `--json` flag on show commands; branches before human-table render, prints envelope + returns
+- `.claude-plugin/plugin.json` — manifest declaring the `blog` skill
+- `.claude-plugin/skills/blog/SKILL.md` — ≤200-line orchestration prose: preflight via `blog agent preflight --json`, intent classification, slug collision, plan proposal, approval gate invoking `approve → verify → apply`, error taxonomy
+- `.claude-plugin/skills/blog/REFERENCES.md` — CLI surface + phase state machine + plan schema + receipt shape + legacy `skills/blog-*.md` pointers
+- `.claude-plugin/skills/blog/JOURNEYS.md` — four worked journeys: new project launch, technical deep-dive with benchmark, update, unpublish
+- `.claude-plugin/skills/blog/CHECKPOINTS.md` — every human-in-the-loop moment, pre-apply (skill-owned) and post-apply (CLI-owned)
+- `.claude/skills/blog` — relative symlink → `../../.claude-plugin/skills/blog` for contributor sessions
+- `.claude/rules/skills.md` — path-scoped rules for `.claude-plugin/skills/**` (destructive-only-via-apply, --json discipline, no hardcoded identity)
+- `scripts/verify-pack.mjs` — allowlist `.claude-plugin/**`; REQUIRED_FILES adds `.claude-plugin/plugin.json` + `.claude-plugin/skills/blog/SKILL.md`
+- `package.json` — `files` array adds `.claude-plugin/**`
+- `docs/plugin-install.md` — three install paths (npm-bundled, repo clone, contributor) + troubleshooting
+
 ### Expected results
 
 All tests should pass. If any fail after your changes:
@@ -374,7 +419,7 @@ npm test
 npm run build
 ```
 
-Expected baseline: **0 TypeScript errors, 730 tests passing across 58 suites, clean build** (as of feature/release-prep-v0-1 after the seven-pass adversarial evaluation converged with Codex verdict `clean / approve`: +4 paths unit tests + 1 CWD-independence integration test + 2 init.ts hard-fail regression tests = +7 across +2 suites over the 723/56 Phase 7 baseline). Any drift from this baseline is a signal to investigate before merging.
+Expected baseline: **0 TypeScript errors, 857 tests passing across 63 suites, clean build** (as of feature/blog-skill-plugin after seven adversarial passes converged: +5 new test files — `workspace-root` (11), `cli-json` (6), `plan-file` (61), `skill-smoke` (22), `skill-fixture-integration` (25) = +125 tests across +5 suites over the 730/58 Release Prep baseline; `cli.test.ts` and `db-migration-v3.test.ts` also extended with plan-plugin regressions). Any drift from this baseline is a signal to investigate before merging.
 
 ## Phase 3: Code Review of Current Changes
 
@@ -514,7 +559,14 @@ Release Prep:
   - CLI CWD-independence integration (1 test): ✓ / ✗
   - init.ts hard-fail regression — absent shipped templates (2 tests in cli.test.ts): ✓ / ✗
 
-Full Suite: X passing, Y failing  (baseline: 730 passing across 58 suites)
+/blog Skill Plugin:
+  - Workspace-root detection (11 tests): ✓ / ✗
+  - `--json` envelope surface (6 tests): ✓ / ✗
+  - Plan schema + hash + validator + apply + receipt + lock (61 tests): ✓ / ✗
+  - Plugin static shape + SKILL discipline + sibling-doc parity + install-docs (22 tests): ✓ / ✗
+  - Real skill-to-CLI handoff end-to-end + crash recovery + workspace pinning (25 tests): ✓ / ✗
+
+Full Suite: X passing, Y failing  (baseline: 857 passing across 63 suites)
 Lint: {error count} errors  (baseline: 0)
 Build: PASS / FAIL
 ```
