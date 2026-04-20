@@ -14,7 +14,7 @@ Coordinates the three-reviewer panel for a draft post. The CLI owns all determin
    - `.blog-agent/drafts/{slug}/index.mdx` — valid frontmatter, no placeholder sections
    - `.blog-agent/research/{slug}.md` — research document
    - `.blog-agent/benchmarks/{slug}/results.json` and `environment.json` — only for `technical-deep-dive` and `project-launch` with benchmarks
-3. `codex` CLI must be available on `$PATH`. Fall back to structural-only if Codex is unreachable (see Degraded Mode below).
+3. Either `codex` CLI on `$PATH` OR `~/.claude/.openai-fallback-key` (single-line OpenAI API key, `chmod 600`). The Codex CLI is the primary path; the fallback key authorizes a direct OpenAI Responses API call when Codex is rate-limited, crashed, auth-missing, or empty. If BOTH are unavailable, synthesis blocks — see Degraded Mode below.
 
 ## Workflow
 
@@ -67,7 +67,7 @@ blog evaluate record <slug> \
 
 ### Step 4 — Codex adversarial review (GPT-5.4 high, in parallel with Step 5)
 
-Invoke the Codex CLI to challenge the thesis. Write to `adversarial.json` matching the `ReviewerOutput` schema.
+Invoke the Codex CLI to challenge the thesis. Write to `adversarial.json` matching the `ReviewerOutput` schema. Capture stdout/stderr/exit so fallback triggers can evaluate them (see "Codex failure handling" below).
 
 ```bash
 codex exec --effort high \
@@ -104,10 +104,14 @@ codex exec --effort high \
      }
    }
 
-   Also write a human-readable adversarial.md alongside the JSON."
+   Also write a human-readable adversarial.md alongside the JSON." \
+  > /tmp/codex-adversarial-out.txt 2> /tmp/codex-adversarial-err.txt
+CODEX_EXIT=$?
 ```
 
-After Codex returns:
+If `CODEX_EXIT != 0` OR the output triggers any fallback condition, follow "Codex failure handling" below — **do not** record the reviewer until a valid JSON exists.
+
+After Codex (or fallback) returns:
 
 ```bash
 blog evaluate record <slug> \
@@ -128,10 +132,12 @@ codex exec --effort xhigh \
 
    Output .blog-agent/evaluations/<slug>/methodology.json matching ReviewerOutput
    schema (including artifact_hashes with SHA-256 of every reviewed file — use
-   '<absent>' for files that do not exist) and methodology.md with the reasoning."
+   '<absent>' for files that do not exist) and methodology.md with the reasoning." \
+  > /tmp/codex-methodology-out.txt 2> /tmp/codex-methodology-err.txt
+CODEX_EXIT=$?
 ```
 
-Then:
+Same fallback contract as Step 4. Then:
 
 ```bash
 blog evaluate record <slug> \
@@ -141,6 +147,103 @@ blog evaluate record <slug> \
 ```
 
 Skip this entire step when `manifest.json.expected_reviewers` does not include `methodology` (analysis-opinion).
+
+### Codex failure handling — OpenAI Responses API fallback
+
+The Codex CLI authenticates via the user's ChatGPT Team session. It can fail four ways: **rate-limited** (quota exhausted), **auth missing** (no session), **script crash** (Node-level error), **empty output** (exits 0 but emits nothing). The fallback path is a direct OpenAI Responses API call via `~/.claude/.openai-fallback-key` — this preserves the ChatGPT Team session (do NOT run `codex login --api-key`, which would overwrite it).
+
+**Fallback triggers** — apply to Step 4 and Step 5 independently. Use the fallback if ANY hold for that reviewer's output:
+
+1. `CODEX_EXIT != 0`, OR
+2. `/tmp/codex-<reviewer>-out.txt` ≤ 200 bytes (empty or trivially short), OR
+3. Output contains (case-insensitive): `rate limit`, `rate_limit_exceeded`, `429`, `too many requests`, `usage cap`, `quota exceeded`, OR
+4. Output or stderr contains: `EISDIR`, `ENOENT`, `ECONNREFUSED`, `Cannot find module`, `Error [ERR_`, `TypeError:`, `SyntaxError:`, `UnhandledPromiseRejection`.
+
+**Fallback invocation** — the Responses API has no filesystem access, so the prompt must inline every file that Codex would have read. Compose the prompt by cat-ing the draft, research doc, and benchmarks into a single string, then POST:
+
+```bash
+if [ ! -f "$HOME/.claude/.openai-fallback-key" ]; then
+  echo "Codex failed and no fallback key at ~/.claude/.openai-fallback-key"
+  echo "Either create the key file (chmod 600) or hand-author the reviewer JSON"
+  exit 1
+fi
+
+OPENAI_FALLBACK_KEY=$(cat "$HOME/.claude/.openai-fallback-key")
+EFFORT="high"   # Step 4 (adversarial) → high; Step 5 (methodology) → xhigh
+REVIEWER="adversarial"  # or "methodology"
+
+# Read file contents (Responses API cannot read workspace files)
+DRAFT=$(cat ".blog-agent/drafts/<slug>/index.mdx")
+RESEARCH=$(cat ".blog-agent/research/<slug>.md")
+BENCHMARK_RESULTS=$(cat ".blog-agent/benchmarks/<slug>/results.json" 2>/dev/null || echo "<absent>")
+BENCHMARK_ENV=$(cat ".blog-agent/benchmarks/<slug>/environment.json" 2>/dev/null || echo "<absent>")
+LINT=$(cat ".blog-agent/evaluations/<slug>/structural.lint.json")
+
+# Compose prompt — identical semantics to the codex exec prompt, but with
+# file contents inlined AND the model label changed to reflect fallback path.
+# For adversarial: job is thesis challenge, argument gaps, bias.
+# For methodology: job is benchmark validity, sample size, reproducibility.
+
+PROMPT=$(jq -Rs . <<PEOF
+[Paste the full prompt text from Step 4 or Step 5 here, with "Read: ..."
+replaced by inlined file contents:
+
+=== DRAFT (index.mdx) ===
+$DRAFT
+
+=== RESEARCH (<slug>.md) ===
+$RESEARCH
+
+=== BENCHMARK RESULTS ===
+$BENCHMARK_RESULTS
+
+=== BENCHMARK ENVIRONMENT ===
+$BENCHMARK_ENV
+
+=== STRUCTURAL LINT FINDINGS ===
+$LINT
+
+Output a single JSON object matching the ReviewerOutput schema. Set
+"model" to "gpt-5.4-$EFFORT-fallback-api" so downstream audit shows
+the fallback path ran. Do NOT output any prose before or after the
+JSON — raw JSON only. Use the <absent> sentinel for any artifact_hashes
+key whose file was missing above.]
+PEOF
+)
+
+cat > /tmp/openai-fallback-req.json <<JEOF
+{
+  "model": "gpt-5.4",
+  "reasoning": { "effort": "$EFFORT" },
+  "max_output_tokens": 32000,
+  "input": $PROMPT
+}
+JEOF
+
+curl -sS https://api.openai.com/v1/responses \
+  -H "Authorization: Bearer $OPENAI_FALLBACK_KEY" \
+  -H "Content-Type: application/json" \
+  --data-binary @/tmp/openai-fallback-req.json > /tmp/openai-fallback-out.json
+
+# Extract response text from response.output[].content[].text (or .output_text)
+# Write it to .blog-agent/evaluations/<slug>/<reviewer>.json and
+# author a matching <reviewer>.md from the JSON's issues array.
+```
+
+**Required output shape on both paths** — `blog evaluate record` validates `ReviewerOutput` against the schema in `src/core/evaluate/reviewer.ts` and rejects any payload missing `artifact_hashes` with all four required keys (`draft/index.mdx`, `benchmark/results.json`, `benchmark/environment.json`, `evaluation/structural.lint.json`). The hashes must match the current workspace bytes — `recordReview` cross-checks each declared hash and throws with a mismatch list on drift.
+
+**Model field convention** — the `model` string distinguishes which path produced the review. `blog evaluate show` renders the model field, so incidents are traceable post-hoc.
+
+| Path | `model` value |
+|---|---|
+| Codex CLI adversarial success | `gpt-5.4-high` |
+| Codex CLI methodology success | `gpt-5.4-xhigh` |
+| API fallback adversarial success | `gpt-5.4-high-fallback-api` |
+| API fallback methodology success | `gpt-5.4-xhigh-fallback-api` |
+
+**`max_output_tokens` budget** — GPT-5.4 at `xhigh` reasoning can consume 25k+ tokens before emitting visible output. Reserve at least 32000. If the response has `status: "incomplete"` with `incomplete_details.reason === "max_output_tokens"`, retry with a larger budget.
+
+**Upstream recovery is passive** — the primary Codex path resumes on the next invocation with no action required. The fallback triggers only on failure.
 
 ### Step 6 — Synthesize
 
@@ -203,16 +306,19 @@ interface ReviewerOutput {
 
 `blog evaluate record` validates this schema before inserting into the `evaluations` table. Malformed JSON or schema drift fails the record call with a descriptive error and leaves the DB unchanged.
 
-## Degraded mode — Codex unavailable
+## Degraded mode — Codex AND fallback unavailable
 
-If `codex exec` fails or is not installed:
+Fallback hierarchy:
 
-1. Run Step 3 only (Claude structural review).
-2. Do NOT run `blog evaluate synthesize` — it will refuse because adversarial/methodology are missing.
-3. Surface the degraded state explicitly to the author: "Only structural review ran. Adversarial and methodology skipped because Codex CLI is unavailable. Set `codex` on $PATH or pass a manually-authored adversarial.json through `blog evaluate record`."
-4. Do not advance the post — manual `blog evaluate complete` will fail because there is no synthesis row.
+1. **Codex CLI succeeds** — primary path, `model` field is `gpt-5.4-<effort>`.
+2. **Codex fails, `~/.claude/.openai-fallback-key` exists** — OpenAI Responses API fallback runs, `model` field is `gpt-5.4-<effort>-fallback-api`. See "Codex failure handling" above.
+3. **Codex fails AND no fallback key** — fully degraded. Only then:
+   - Run Step 3 only (Claude structural review).
+   - Do NOT run `blog evaluate synthesize` — it will refuse because adversarial/methodology are missing.
+   - Surface the degraded state explicitly: "Codex CLI is unreachable and no fallback key at `~/.claude/.openai-fallback-key`. Either install `codex` on `$PATH`, create the fallback key file (`chmod 600` + single-line OpenAI API key), or hand-author `adversarial.json` / `methodology.json` and record via `blog evaluate record`."
+   - Do not advance the post — manual `blog evaluate complete` will fail because there is no synthesis row.
 
-This is by design. The three-reviewer contract is load-bearing.
+This is by design. The three-reviewer contract is load-bearing; the fallback exists so transient Codex issues (rate limit, auth drift, companion-script bug) don't block the gate, but the gate itself still requires every expected reviewer.
 
 ## Transparency principle
 
