@@ -93,7 +93,7 @@ Order matters:
 1. `lint` — fast fail on type errors before wasting cycles
 2. `build` — dist must exist before test (the CWD-independence
    integration test spawns `dist/cli/index.js`)
-3. `test` — 730+ tests must pass, including regression suite
+3. `test` — full test suite must pass (860+ tests as of Phase 8), including the registered regression suite
 4. `verify-pack` — last gate, reads from the freshly-built `dist/`
 
 Any `npm publish` invocation triggers this hook. It cannot be bypassed

@@ -18,9 +18,9 @@ All identity values (`<your-user>`, `<your-domain>`, etc.) come from `.blogrc.ya
 1. `!`blog agent preflight --json`` — confirm `workspace_detected=true` + `config_valid=true`.
 2. `!`blog status --json`` — parse `data.posts[].slug` for slug collision against the proposed `<slug>`.
 3. Skill classifies: `slug=<slug>` (new), `content_type=project-launch`, `depth=fast-path`, `venues=hub,devto,hn`.
-4. `!`blog agent plan <slug> --intent "..." --content-type project-launch --depth fast-path --venues "hub,devto,hn" --steps-inline '<json>'`` — CLI writes the plan file and prints its absolute path. The `<json>` is the array of plan-step objects below. The skill never hand-edits plan JSON; every byte originates from the CLI.
+4. Substitute `$SLUG` and `$JSON` with the real values, then run `!blog agent plan "$SLUG" --intent "..." --content-type project-launch --depth fast-path --venues "hub,devto,hn" --steps-inline "$JSON"` — CLI writes the plan file and prints its absolute path. `$JSON` is the array of plan-step objects below. The skill never hand-edits plan JSON; every byte originates from the CLI.
 5. Human checkpoint: "Approve this exact plan?" (render the step list as a markdown table, not raw JSON).
-6. On `yes`: `!`blog agent approve <plan-path>`` → `!`blog agent verify <plan-path>`` → `!`blog agent apply <plan-path>``.
+6. On `yes`: capture the plan path from step 4's stdout into `$PLAN`, then `!blog agent approve "$PLAN"` → `!blog agent verify "$PLAN"` → `!blog agent apply "$PLAN"`. Never emit a literal `<plan-path>` token — `<` parses as stdin redirection in the shell.
 
 ### Plan-step payload (inline JSON array passed to `--steps-inline`)
 
@@ -48,9 +48,9 @@ Live dogfood transcript will be captured in `docs/journeys/launch.md` once a rea
 
 1. `!`blog agent preflight --json``.
 2. Skill classifies: `content_type=technical-deep-dive`, `depth=full`, `venues=hub,devto`.
-3. `!`blog agent plan <slug> --content-type technical-deep-dive --depth full --venues "hub,devto" --steps-inline '<json>'``.
+3. Substitute `$SLUG`/`$JSON` first, then `!blog agent plan "$SLUG" --content-type technical-deep-dive --depth full --venues "hub,devto" --steps-inline "$JSON"`.
 4. Human checkpoints between each phase: research done? benchmark results sane? draft complete? evaluation passed?
-5. `!`blog agent approve`` → `!`blog agent verify`` → `!`blog agent apply``. Pauses at `preview-gate` for PR merge.
+5. Capture the plan path from step 3 into `$PLAN`, then `!blog agent approve "$PLAN"` → `!blog agent verify "$PLAN"` → `!blog agent apply "$PLAN"`. Pauses at `preview-gate` for PR merge.
 
 ### Plan-step payload
 
@@ -78,9 +78,9 @@ Live dogfood transcript will be captured in `docs/journeys/launch.md` once a rea
 
 1. `!`blog status --json`` — detect existing published post.
 2. Skill classifies: this is an **update**, not a new publish. Plan uses the `blog update *` family.
-3. `!`blog agent plan <slug> --intent "..." --content-type ... --depth full --venues "..." --steps-inline '<json>'``.
+3. Substitute `$SLUG`/`$JSON` first, then `!blog agent plan "$SLUG" --intent "..." --content-type ... --depth full --venues "..." --steps-inline "$JSON"`.
 4. Human checkpoint before `apply`: "Ready to push the updated post live?"
-5. `!`blog agent approve`` → `!`blog agent verify`` → `!`blog agent apply``.
+5. Capture the plan path from step 3 into `$PLAN`, then `!blog agent approve "$PLAN"` → `!blog agent verify "$PLAN"` → `!blog agent apply "$PLAN"`.
 
 Phase stays `published` throughout; update state lives in `update_cycles` (one open row at a time per slug, enforced by partial unique index).
 
@@ -100,8 +100,8 @@ Phase stays `published` throughout; update state lives in `update_cycles` (one o
 
 1. Skill classifies: destructive terminal action. Depth inapplicable.
 2. Human checkpoint cites canonical-URL permanence: "This is irreversible. The slug `<slug>` is reserved forever at `<your-domain>/writing/<slug>`. Continue?"
-3. `!`blog agent plan <slug> --intent "..." --content-type ... --depth park --venues "..." --steps-inline '<json>'`` — where `<json>` is the one-element plan-step array described below.
-4. On approval: `!`blog agent approve <plan-path>`` → `!`blog agent verify <plan-path>`` → `!`blog agent apply <plan-path>``.
+3. Substitute `$SLUG`/`$JSON` first, then `!blog agent plan "$SLUG" --intent "..." --content-type ... --depth park --venues "..." --steps-inline "$JSON"` — `$JSON` is the one-element plan-step array described below.
+4. On approval: capture the plan path from step 3 into `$PLAN`, then `!blog agent approve "$PLAN"` → `!blog agent verify "$PLAN"` → `!blog agent apply "$PLAN"`. Never emit a literal `<plan-path>` token to the shell.
 5. The `apply` step pauses at the site-revert-PR gate until the operator merges the PR on GitHub, then resumes the 7-step unpublish pipeline (site revert PR, Dev.to PUT `published:false`, project README link removal, etc.).
 
 ### Plan-step payload

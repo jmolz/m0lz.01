@@ -129,6 +129,21 @@ describe('SKILL.md structure', () => {
     expect(body).not.toMatch(/\bm0lz\.dev\b/);
     expect(body).not.toMatch(/DEVTO_API_KEY\s*=\s*[^$]/);
   });
+
+  // Regression: pre-fix, SKILL.md had `!`blog agent verify <plan-path>``
+  // fences. Claude shell-execs `!`…`` literally, so `<plan-path>` became
+  // stdin redirection and failed with "parse error near `>`". Require
+  // every `!`…`` fence to substitute via `$VAR` (or a concrete path) —
+  // never a `<placeholder>` token. Hyphens are allowed inside `$VAR`
+  // surrounding prose, only inside the exec fence itself are they banned.
+  it('exec fences have no literal <placeholder> tokens (stdin-redirection trap)', () => {
+    const execFences = body.match(/!\s*`[^`]*`/g) ?? [];
+    for (const ex of execFences) {
+      if (/<[a-z][a-z0-9-]*>/i.test(ex)) {
+        throw new Error(`unsubstituted placeholder in exec fence (will parse as stdin redirect): ${ex}`);
+      }
+    }
+  });
 });
 
 describe('sibling docs share the same discipline', () => {
@@ -152,6 +167,15 @@ describe('sibling docs share the same discipline', () => {
       for (const ex of execFences) {
         if (destructivePattern.test(ex) && !/blog\s+agent\s+apply/.test(ex)) {
           throw new Error(`${sibling}: bare destructive exec without blog agent apply: ${ex}`);
+        }
+      }
+    });
+
+    it(`${sibling} exec fences have no literal <placeholder> tokens`, () => {
+      const execFences = body.match(/!\s*`[^`]*`/g) ?? [];
+      for (const ex of execFences) {
+        if (/<[a-z][a-z0-9-]*>/i.test(ex)) {
+          throw new Error(`${sibling}: unsubstituted placeholder in exec fence (will parse as stdin redirect): ${ex}`);
         }
       }
     });

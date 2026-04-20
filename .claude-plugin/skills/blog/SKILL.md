@@ -55,7 +55,13 @@ Every destructive step (`draft init`, `evaluate complete`, `publish start`, any 
 
 Invoke `blog agent plan` with the proposed steps passed inline — the CLI generates the `plan_id`, detects `workspace_root`, validates schema on write, and refuses to start if anything is malformed. The skill **never hand-edits plan JSON**; the tool scope does not grant `Write` or `Edit`, and that is intentional — every byte of the plan file originates from the CLI so the hash gate stays enforceable.
 
-!`blog agent plan <slug> --intent "<intent>" --content-type <type> --depth <depth> --venues "<v1,v2,...>" --steps-inline '<json-array>'`
+Compose the invocation by substituting every `<…>` token with the classified value, then emit the final line to the shell:
+
+```
+!blog agent plan "$SLUG" --intent "$INTENT" --content-type "$TYPE" --depth "$DEPTH" --venues "$VENUES" --steps-inline "$JSON"
+```
+
+Never emit a literal `<slug>` or `<json>` token to the shell — `<` parses as stdin redirection and the command fails.
 
 `--steps-inline` is a JSON array of `{ "command": "blog <subcmd>", "args": [...], "checkpoint_message": "..." }` objects. The validator rejects abstract action strings, unknown subcommands, and nested `blog agent *` delegation (a plan cannot call another `agent apply`). The CLI prints the plan path; `Read` it back to render the approval table.
 
@@ -65,17 +71,16 @@ Show the final plan (rendered as a table, not the raw JSON) and ask:
 
 > **Approve this exact plan?** (`yes` / `edit <n>` / `abort`)
 
-- **`yes`** — atomically set `approved_at` + `payload_hash`:
+- **`yes`** — capture the plan path printed by `blog agent plan` into a shell variable, then run approve → verify → apply with that variable (each on its own `!` line):
 
-  !`blog agent approve <plan-path>`
+  ```
+  !PLAN="/absolute/path/from/blog-agent-plan-stdout.plan.json"
+  !blog agent approve "$PLAN"
+  !blog agent verify "$PLAN"
+  !blog agent apply "$PLAN"
+  ```
 
-  Then dry-run validate:
-
-  !`blog agent verify <plan-path>`
-
-  Then execute:
-
-  !`blog agent apply <plan-path>`
+  Substitute `$PLAN` with the real path before emitting each `!` line — never emit a literal `<plan-path>` token to the shell (the `<` parses as stdin redirection and the command fails).
 
   The `apply` command spawns each `blog <subcmd>` in sequence and writes a receipt at `.blog-agent/plans/<slug>.receipt.json` with per-step exit codes, stdout tails, and durations. The receipt is **bound to the plan's `payload_hash`** — a receipt edit or a plan re-approval forces `--restart`, so skip authority cannot be silently suppressed. Resume is the default; use `--restart` only when the CLI explicitly asks for it.
 

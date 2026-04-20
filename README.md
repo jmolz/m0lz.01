@@ -389,7 +389,7 @@ Validate:
 
 ```bash
 npm run lint          # tsc --noEmit
-npm test              # vitest run (730+ tests)
+npm test              # vitest run (860 tests across 63 suites)
 npm run build         # clean + tsc
 npm run verify-pack   # four-layer packaging gate
 ```
