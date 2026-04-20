@@ -71,17 +71,33 @@ expected (compiles from src/core/paths.ts) but not in tarball`.
 
 ## Clean build is required, not optional
 
-`package.json` build script is `"build": "node scripts/clean-dist.mjs && tsc"`.
-The leading clean is load-bearing: `tsc` never removes stale outputs, so
-a renamed/deleted source file leaves an orphan `dist/foo.js` behind that
-(a) passes the `dist/**/*.js` allowlist and (b) would be re-packed on
-the next `npm publish`.
+`package.json` build script is
+`"build": "node scripts/clean-dist.mjs && tsc && node scripts/chmod-bin.mjs"`.
+Three steps, each load-bearing — do not drop any of them:
+
+1. **Clean** (`clean-dist.mjs`) — `tsc` never removes stale outputs, so a
+   renamed/deleted source file leaves an orphan `dist/foo.js` behind that
+   (a) passes the `dist/**/*.js` allowlist and (b) would be re-packed on
+   the next `npm publish`. The clean prevents orphan-in-tarball bugs.
+2. **Compile** (`tsc`) — standard TypeScript emit, no special flags.
+3. **chmod +x** (`chmod-bin.mjs`) — `tsc` does NOT preserve or set the
+   owner-execute bit on its outputs. On initial `npm install` / `npm
+   link`, npm applies +x to every `bin` target exactly once — but every
+   subsequent rebuild regenerates `dist/cli/index.js` as 0644. Any
+   pre-existing symlink (e.g. `/opt/homebrew/bin/blog → dist/cli/index.js`
+   from a previous `npm link`) dereferences to the now-non-executable
+   target and the bash error surfaces as `Permission denied: blog`
+   inside the `/blog` skill — with zero diagnostic hint at the build
+   pipeline. The chmod step closes that loop. `tests/build-bin-executable.test.ts`
+   regression-asserts `mode & 0o100 === 0o100` after globalSetup's
+   build completes.
 
 **Use `scripts/clean-dist.mjs`, not `rm -rf`.** Pure Node
 (`fs.rmSync({recursive, force})`), cross-platform, no new devDeps.
 `rm -rf dist && tsc` works on macOS/Linux/WSL but breaks on Windows
 cmd/PowerShell — we do not target Windows in CI but the build script
-should not preemptively block Windows contributors.
+should not preemptively block Windows contributors. Same rationale
+applies to `chmod-bin.mjs`: pure Node `fs.chmodSync`, not shell `chmod`.
 
 ## `prepublishOnly` is the publish-time gate
 
