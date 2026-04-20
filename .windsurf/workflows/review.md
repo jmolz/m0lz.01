@@ -516,7 +516,7 @@ Release Prep:
   - Plugin static shape + SKILL discipline + sibling-doc parity + install-docs (22 tests): PASS / FAIL
   - Real skill-to-CLI handoff end-to-end + crash recovery + workspace pinning (25 tests): PASS / FAIL
 
-Full Suite: X passing, Y failing  (baseline: 857 passing across 63 suites)
+Full Suite: X passing, Y failing  (baseline: 861 passing across 64 suites)
 Lint: {error count} errors  (baseline: 0)
 Build: PASS / FAIL
 ```

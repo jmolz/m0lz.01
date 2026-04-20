@@ -120,6 +120,7 @@ npx vitest run \
   tests/pipeline-registry-integrity.test.ts \
   tests/paths.test.ts \
   tests/cli-templates-cwd-independence.test.ts \
+  tests/build-bin-executable.test.ts \
   tests/workspace-root.test.ts \
   tests/cli-json.test.ts \
   tests/plan-file.test.ts \
@@ -228,6 +229,7 @@ Ships the v0.1.0-readiness bundle: a shared package-root resolver that fixes a l
 | --------- | ------- | ----------------- |
 | `tests/paths.test.ts` (4 tests) | Shared package-root resolver | `findPackageRoot(import.meta.url)` from the test file returns a real path ending in `/m0lz.01`; synthetic src-layout URL (`file:///tmp/fakeProj/src/cli/foo.ts`) walks up to seeded `package.json`; synthetic dist-layout URL (`file:///tmp/fakeProj/dist/cli/foo.js`) resolves identically (proving no offset-arithmetic brittleness between src/ and dist/ layouts); missing-package.json throws with the URL in the error message (uses a path whose ancestors definitionally have none) |
 | `tests/cli-templates-cwd-independence.test.ts` (1 test) | CLI works from arbitrary CWD | `beforeAll` unconditionally rebuilds dist (Release Prep Pass 1 Codex Finding #1: without this, a stale dist could silently false-positive); `spawnSync('node', [distPath, 'init'], { cwd: mkdtempSync })` from an empty OS-tmpdir (macOS `/var/folders/...`, physically outside repo ancestry so findPackageRoot cannot accidentally resolve against the real package.json); asserts exit 0, `.blog-agent/state.db` created, AND byte-equal comparison of `.blogrc.yaml` ↔ shipped `.blogrc.example.yaml` + `.env` ↔ shipped `.env.example` (proves both the templates/ helper fix AND the init.ts hard-fail path) |
+| `tests/build-bin-executable.test.ts` (1 test) | Build preserves +x on CLI entrypoint | `tsc` strips the owner-execute bit on every rebuild; on initial `npm install` / `npm link`, npm applies +x once but subsequent `npm run build` regenerates `dist/cli/index.js` as 0644, causing `/bin/sh: blog: Permission denied` inside `/blog` skill exec fences. `scripts/chmod-bin.mjs` runs as the last step of `npm run build`; this test `statSync`s the built entry after vitest globalSetup and asserts `mode & 0o100 === 0o100` (owner-executable). Catches any future refactor that drops the chmod step before the next contributor hits it in a skill session. |
 
 **/blog Skill Plugin (feature/blog-skill-plugin)**
 
@@ -345,7 +347,8 @@ Ships the `/blog` Claude Code plugin + `blog agent` CLI subcommand family. Singl
 - `src/cli/publish.ts` / `src/cli/update.ts` — use `TEMPLATES_ROOT` for package-shipped template reads; all `.blog-agent/...` and `.blogrc.yaml` paths remain CWD-relative (operator state, not package state — Negative contract criterion #11 locks this distinction in)
 - `src/core/benchmark/companion.ts` / `src/core/research/document.ts` — same refactor symmetrically applied: `resolve(TEMPLATES_ROOT, '<subpath>')` instead of inline `fileURLToPath`
 - `scripts/verify-pack.mjs` — four-layer packaging gate wired into both `npm run verify-pack` and `prepublishOnly`: (1) ALLOWED_PATTERNS whitelist, (2) FORBIDDEN_PATTERNS denylist (no secrets, `.js.map`, `state.db`, `.blog-agent/`, `src/`, `tests/`, `.claude/`), (3) REQUIRED_FILES manifest of 12 runtime-critical paths (catches silent deletions the allowlist alone would miss — Release Prep Pass 1 Codex Finding #3), (4) src→dist compiled-closure check walking `src/**/*.ts` and asserting every corresponding `dist/**/*.js` is in the tarball (Release Prep Pass 2 Codex Finding #1 — the allowlist glob + single-entrypoint REQUIRED_FILES would silently pass a missing compiled module without this)
-- `package.json` — `build: "rm -rf dist && tsc"` (prevents stale compiled artifacts from shipping); `prepublishOnly: "lint && build && test && verify-pack"` (publish-time gate that cannot be bypassed); `files` uses globs (`dist/**/*.js`, `dist/**/*.d.ts` — excludes `.js.map` without a second build config); publish surface fields (`repository`, `homepage`, `bugs`, `keywords`, `author`)
+- `package.json` — `build: "clean-dist && tsc && chmod-bin"` (prevents stale compiled artifacts from shipping AND restores owner-execute bit on the CLI entrypoint that tsc strips on every rebuild — see `scripts/chmod-bin.mjs`); `prepublishOnly: "lint && build && test && verify-pack"` (publish-time gate that cannot be bypassed); `files` uses globs (`dist/**/*.js`, `dist/**/*.d.ts` — excludes `.js.map` without a second build config); publish surface fields (`repository`, `homepage`, `bugs`, `keywords`, `author`)
+- `scripts/chmod-bin.mjs` — post-tsc step that `chmodSync(dist/cli/index.js, 0o755)`. Covers the failure mode where `tsc` regenerates `dist/cli/index.js` as 0644 and a pre-existing `npm link` symlink (`/opt/homebrew/bin/blog → dist/cli/index.js`) dereferences to a non-executable target. Grep-verifiable: the build script's terminal step imports this file; `tests/build-bin-executable.test.ts` asserts the final mode bit.
 - `.github/workflows/ci.yml` — single Node 20 job, step order: checkout → setup-node → npm ci → lint → build → test → verify-pack (build BEFORE test — Release Prep Pass 1 Codex Finding #1; ensures the CWD-independence integration test always runs against fresh dist)
 - `CHANGELOG.md` — Keep-a-Changelog format, single `[0.1.0]` section covering Phases 1–7 plus the template-path fix
 - `RELEASING.md` — literal v0.1.0 sequence + subsequent-releases template; both sections have `main`-branch + clean-tree fail-fast preflight guards; pre-publish `git push --atomic --dry-run` check; atomic `git push --atomic origin main refs/tags/vX.Y.Z` (not `--follow-tags`) so branch + tag move together; `gh release create --verify-tag` prevents silent wrong-commit tag creation; Recovery section structured around registry-state check (`npm view m0lz-01@X.Y.Z version`) with three cases: A=live/push-only-with-rebase-and-re-tag, B=E404/safe-retry, C=abandon (uses `--mixed` reset with `git status`/`git log` preflights); subsequent-release flow has its own two-commit recovery block with `HEAD~2` (not `HEAD~1`)
@@ -419,7 +422,7 @@ npm test
 npm run build
 ```
 
-Expected baseline: **0 TypeScript errors, 857 tests passing across 63 suites, clean build** (as of feature/blog-skill-plugin after seven adversarial passes converged: +5 new test files — `workspace-root` (11), `cli-json` (6), `plan-file` (61), `skill-smoke` (22), `skill-fixture-integration` (25) = +125 tests across +5 suites over the 730/58 Release Prep baseline; `cli.test.ts` and `db-migration-v3.test.ts` also extended with plan-plugin regressions). Any drift from this baseline is a signal to investigate before merging.
+Expected baseline: **0 TypeScript errors, 861 tests passing across 64 suites, clean build** (as of feature/blog-skill-plugin after seven adversarial passes converged: +5 new test files — `workspace-root` (11), `cli-json` (6), `plan-file` (61), `skill-smoke` (22 → 25 after placeholder-fence regression), `skill-fixture-integration` (25) = +130 tests across +5 suites over the 730/58 Release Prep baseline; `cli.test.ts` and `db-migration-v3.test.ts` also extended with plan-plugin regressions. Post-merge follow-ups added `build-bin-executable` (1) for the tsc-strips-+x fix). Any drift from this baseline is a signal to investigate before merging.
 
 ## Phase 3: Code Review of Current Changes
 
@@ -566,7 +569,7 @@ Release Prep:
   - Plugin static shape + SKILL discipline + sibling-doc parity + install-docs (22 tests): ✓ / ✗
   - Real skill-to-CLI handoff end-to-end + crash recovery + workspace pinning (25 tests): ✓ / ✗
 
-Full Suite: X passing, Y failing  (baseline: 857 passing across 63 suites)
+Full Suite: X passing, Y failing  (baseline: 861 passing across 64 suites)
 Lint: {error count} errors  (baseline: 0)
 Build: PASS / FAIL
 ```

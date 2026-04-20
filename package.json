@@ -7,7 +7,7 @@
     "blog": "./dist/cli/index.js"
   },
   "scripts": {
-    "build": "node scripts/clean-dist.mjs && tsc",
+    "build": "node scripts/clean-dist.mjs && tsc && node scripts/chmod-bin.mjs",
     "dev": "tsc --watch",
     "test": "vitest run",
     "test:watch": "vitest",
