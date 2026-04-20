@@ -54,17 +54,16 @@ function seedFixtureWorkspace(): { root: string; slug: string } {
 }
 
 beforeAll(() => {
-  // Rebuild unconditionally so the spawned CLI reflects the current source
-  // — same pattern as cli-templates-cwd-independence.test.ts.
-  const result = spawnSync('npm', ['run', 'build'], {
-    cwd: PACKAGE_ROOT,
-    encoding: 'utf-8',
-  });
-  if (result.status !== 0) {
-    throw new Error(`build failed (${result.status}):\n${result.stdout}\n${result.stderr}`);
-  }
+  // The build is handled by vitest's globalSetup (tests/global-setup.ts) so
+  // it runs exactly once across the whole test run — previously this file
+  // and cli-templates-cwd-independence.test.ts each ran `npm run build`
+  // in their own beforeAll, and the `clean-dist && tsc` step raced between
+  // parallel vitest workers. Here we just assert dist exists.
   if (!existsSync(CLI_ENTRY)) {
-    throw new Error(`CLI entry missing after build: ${CLI_ENTRY}`);
+    throw new Error(
+      `CLI entry missing: ${CLI_ENTRY}. globalSetup should have built dist/. ` +
+        `If running vitest directly (without our config), run \`npm run build\` first.`,
+    );
   }
 }, 60_000);
 

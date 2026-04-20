@@ -28,27 +28,22 @@ const EXAMPLE_ENV = resolve(PACKAGE_ROOT, '.env.example');
 let tempDir: string;
 
 beforeAll(() => {
-  // Rebuild unconditionally. Skipping when dist/ exists (the original impl)
-  // let this test pass against stale artifacts — i.e., we'd validate
-  // yesterday's compiled output against today's source. For the regression
-  // guard to actually protect the template-path fix, the tested CLI must be
-  // compiled from the current tree.
+  // The build is handled by vitest's globalSetup (tests/global-setup.ts)
+  // so it runs exactly once across the whole test run. Previously this
+  // file and skill-fixture-integration.test.ts each ran `npm run build`
+  // in their own beforeAll, and the `clean-dist && tsc` step raced
+  // between parallel vitest workers — deterministic CI failure, rare
+  // locally. Here we just assert dist exists.
   //
-  // CI also runs `npm run build` before `npm test`, so this is a second
-  // build (~1.7s). Intentional: the test must work when run standalone
-  // (`npx vitest run tests/cli-templates-cwd-independence.test.ts`) without
-  // relying on a prior CI build step that a contributor could reorder.
-  const result = spawnSync('npm', ['run', 'build'], {
-    cwd: PACKAGE_ROOT,
-    encoding: 'utf-8',
-  });
-  if (result.status !== 0) {
-    throw new Error(
-      `build failed (exit ${result.status}):\n${result.stdout}\n${result.stderr}`,
-    );
-  }
+  // Running a single test file standalone still works because globalSetup
+  // fires for any `vitest run` invocation that uses this config. If you
+  // run vitest WITHOUT our config (`npx vitest run --config ...`),
+  // run `npm run build` first.
   if (!existsSync(CLI_ENTRY)) {
-    throw new Error(`CLI entry missing after build: ${CLI_ENTRY}`);
+    throw new Error(
+      `CLI entry missing: ${CLI_ENTRY}. globalSetup should have built dist/. ` +
+        `If running vitest directly without our config, run \`npm run build\` first.`,
+    );
   }
 }, 60_000);
 
