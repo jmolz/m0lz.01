@@ -47,10 +47,14 @@ function tableHasColumn(
 }
 
 describe('schema migration v3 — fresh init', () => {
-  it('fresh DB opens at v3 with all new tables and indexes', () => {
+  it('fresh DB opens at the current SCHEMA_VERSION with all new tables and indexes', () => {
     db = getDatabase(':memory:');
     expect(db.pragma('user_version', { simple: true })).toBe(SCHEMA_VERSION);
-    expect(SCHEMA_VERSION).toBe(3);
+    // Guard against silent schema drift: bumping SCHEMA_VERSION without
+    // adding a migration or without updating the assertions in this file
+    // would regress the migration gate. Update this literal in lockstep
+    // with SCHEMA_VERSION.
+    expect(SCHEMA_VERSION).toBe(4);
 
     expect(objectExists(db, 'table', 'pipeline_steps')).toBe(true);
     expect(tableHasColumn(db, 'pipeline_steps', 'cycle_id')).toBe(true);
@@ -59,6 +63,12 @@ describe('schema migration v3 — fresh init', () => {
     expect(objectExists(db, 'index', 'idx_update_cycles_open')).toBe(true);
 
     expect(objectExists(db, 'table', 'unpublish_steps')).toBe(true);
+
+    // v4: DB-authoritative agent-plan execution state.
+    expect(objectExists(db, 'table', 'agent_plan_runs')).toBe(true);
+    expect(objectExists(db, 'table', 'agent_plan_steps')).toBe(true);
+    expect(tableHasColumn(db, 'agent_plan_runs', 'plan_payload_hash')).toBe(true);
+    expect(tableHasColumn(db, 'agent_plan_steps', 'args_json')).toBe(true);
   });
 
   it('pipeline_steps.cycle_id defaults to 0 on INSERT without cycle_id', () => {
@@ -217,7 +227,7 @@ describe('schema migration v1 -> v3', () => {
     staging.close();
 
     db = getDatabase(dbPath);
-    expect(db.pragma('user_version', { simple: true })).toBe(3);
+    expect(db.pragma('user_version', { simple: true })).toBe(SCHEMA_VERSION);
 
     expect(tableHasColumn(db, 'pipeline_steps', 'cycle_id')).toBe(true);
     expect(objectExists(db, 'table', 'update_cycles')).toBe(true);
@@ -275,7 +285,7 @@ describe('schema migration v2 -> v3', () => {
     staging.close();
 
     db = getDatabase(dbPath);
-    expect(db.pragma('user_version', { simple: true })).toBe(3);
+    expect(db.pragma('user_version', { simple: true })).toBe(SCHEMA_VERSION);
 
     const row = db
       .prepare(
@@ -292,11 +302,11 @@ describe('schema migration idempotency', () => {
     const dbPath = join(tempDir, 'test.db');
 
     db = getDatabase(dbPath);
-    expect(db.pragma('user_version', { simple: true })).toBe(3);
+    expect(db.pragma('user_version', { simple: true })).toBe(SCHEMA_VERSION);
     closeDatabase(db);
 
     db = getDatabase(dbPath);
-    expect(db.pragma('user_version', { simple: true })).toBe(3);
+    expect(db.pragma('user_version', { simple: true })).toBe(SCHEMA_VERSION);
 
     expect(tableHasColumn(db, 'pipeline_steps', 'cycle_id')).toBe(true);
     expect(objectExists(db, 'table', 'update_cycles')).toBe(true);

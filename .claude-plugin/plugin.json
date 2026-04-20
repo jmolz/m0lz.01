@@ -1,0 +1,14 @@
+{
+  "$schema": "https://code.claude.com/plugin.schema.json",
+  "name": "m0lz",
+  "version": "0.2.0",
+  "description": "Orchestrate the m0lz.01 content pipeline from Claude Code sessions. Describe intent, review a proposed plan, hand off to the `blog agent apply` CLI for hash-verified execution.",
+  "author": "Jacob Molz",
+  "homepage": "https://github.com/jmolz/m0lz.01",
+  "skills": [
+    {
+      "name": "blog",
+      "path": "skills/blog"
+    }
+  ]
+}

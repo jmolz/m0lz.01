@@ -7,6 +7,7 @@ import { getDatabase, closeDatabase } from '../core/db/database.js';
 import { ContentType } from '../core/db/types.js';
 import { loadConfig } from '../core/config/loader.js';
 import { validateSlug } from '../core/research/document.js';
+import { resolveUserPath } from '../core/workspace/user-path.js';
 import { captureEnvironment, formatEnvironmentMarkdown } from '../core/benchmark/environment.js';
 import {
   getBenchmarkPost,
@@ -394,7 +395,7 @@ export function registerBenchmark(program: Command): void {
   benchmark
     .command('run <slug>')
     .description('Record a benchmark run and optionally store results')
-    .option('--results-file <path>', 'Path to a results JSON file to import')
+    .option('--results-file <path>', 'Path to a results JSON file to import', resolveUserPath)
     .action((slug: string, opts: { resultsFile?: string }) => {
       runBenchmarkRun(slug, opts);
     });

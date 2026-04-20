@@ -54,7 +54,7 @@ describe('runStatus', () => {
     const logs: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((msg: string) => { logs.push(msg); });
 
-    runStatus(dbPath);
+    runStatus({ dbPath });
 
     const output = logs.join('\n');
     expect(output).toContain('alpha');
@@ -73,7 +73,7 @@ describe('runStatus', () => {
     const logs: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((msg: string) => { logs.push(msg); });
 
-    runStatus(dbPath);
+    runStatus({ dbPath });
 
     expect(logs.join('\n')).toContain('No posts yet');
   });
@@ -86,7 +86,7 @@ describe('runStatus', () => {
     vi.spyOn(console, 'error').mockImplementation((msg: string) => { errors.push(msg); });
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => { throw new Error(`exit:${code}`); }) as never);
 
-    expect(() => runStatus(dbPath)).toThrow('exit:1');
+    expect(() => runStatus({ dbPath })).toThrow('exit:1');
     expect(errors.join('\n')).toContain("No state database found");
     expect(exitSpy).toHaveBeenCalledWith(1);
   });

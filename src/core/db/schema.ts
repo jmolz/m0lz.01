@@ -1,4 +1,4 @@
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 export const SCHEMA_V1_SQL = `
 -- Core post tracking
@@ -185,5 +185,57 @@ CREATE TABLE unpublish_steps (
   completed_at DATETIME,
   error_message TEXT,
   UNIQUE(post_slug, step_name)
+);
+`;
+
+// Phase 8 schema changes (v4): DB-authoritative agent-plan execution state.
+//
+// Pre-v4 `blog agent apply` used the receipt JSON file as the sole source of
+// truth for "which steps have already run". The receipt had no authenticity
+// guarantee beyond a `plan_payload_hash` field that the operator (or the
+// skill under a compromised scope) could trivially reconstruct — forged rows
+// with `status: "completed"` silently suppressed execution (Codex Phase-8
+// adversarial review, High #1).
+//
+// v4 moves authoritative step-completion state into SQLite under two tables,
+// scoped by `plan_id`. The receipt file remains for audit, but `applyPlan`
+// derives its skip authority from `agent_plan_steps`, not from the JSON.
+// Tampering the receipt becomes a no-op; the only way to suppress a step is
+// to mutate the DB, which requires the operator's privileges by definition.
+//
+// `agent_plan_runs` is keyed on `plan_id` — the same plan content can be
+// re-approved (keeping the same `plan_id`) with new content bytes, and the
+// apply path reconciles by checking `plan_payload_hash` against the plan's
+// current hash.
+//
+// `agent_plan_steps` stores the authoritative per-step execution record.
+// `UNIQUE(plan_id, step_number)` means re-executing a step (on resume after a
+// transient failure) replaces the prior row via INSERT OR REPLACE rather than
+// accumulating history — the receipt file is the append-once audit artifact,
+// and per-step history is recoverable from Git if ever needed.
+export const SCHEMA_V4_SQL = `
+CREATE TABLE agent_plan_runs (
+  plan_id TEXT PRIMARY KEY,
+  plan_payload_hash TEXT NOT NULL,
+  slug TEXT NOT NULL,
+  workspace_root TEXT NOT NULL,
+  applied_at DATETIME NOT NULL,
+  completed_at DATETIME,
+  overall_exit INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE agent_plan_steps (
+  plan_id TEXT NOT NULL REFERENCES agent_plan_runs(plan_id) ON DELETE CASCADE,
+  step_number INTEGER NOT NULL,
+  command TEXT NOT NULL,
+  args_json TEXT NOT NULL,
+  status TEXT NOT NULL CHECK(status IN ('completed', 'failed', 'skipped')),
+  exit_code INTEGER NOT NULL,
+  stdout_tail TEXT NOT NULL,
+  stderr_tail TEXT NOT NULL,
+  started_at DATETIME NOT NULL,
+  completed_at DATETIME NOT NULL,
+  duration_ms INTEGER NOT NULL,
+  PRIMARY KEY (plan_id, step_number)
 );
 `;

@@ -5,6 +5,7 @@ import {
   SCHEMA_V1_SQL,
   SCHEMA_V2_SQL,
   SCHEMA_V3_SQL,
+  SCHEMA_V4_SQL,
 } from './schema.js';
 
 export function getDatabase(dbPath: string): Database.Database {
@@ -48,6 +49,9 @@ function migrate(db: Database.Database, fromVersion: number): void {
       }
       if (fromVersion < 3) {
         db.exec(SCHEMA_V3_SQL);
+      }
+      if (fromVersion < 4) {
+        db.exec(SCHEMA_V4_SQL);
       }
 
       // SQLite pragmas do not accept bound parameters. SCHEMA_VERSION is a

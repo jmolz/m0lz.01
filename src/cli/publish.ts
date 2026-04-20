@@ -7,6 +7,7 @@ import { getDatabase, closeDatabase } from '../core/db/database.js';
 import { ContentType } from '../core/db/types.js';
 import { loadConfig } from '../core/config/loader.js';
 import { TEMPLATES_ROOT } from '../core/paths.js';
+import { printEnvelope } from '../core/json-envelope.js';
 import { validateSlug } from '../core/research/document.js';
 import { initPublish } from '../core/publish/phase.js';
 import { getPipelineSteps } from '../core/publish/steps-crud.js';
@@ -48,6 +49,7 @@ export interface PublishCliPaths {
   researchPagesDir?: string;
   publishDir?: string;
   templatesDir?: string;
+  json?: boolean;
 }
 
 function requireDb(dbPath: string): void {
@@ -312,6 +314,45 @@ export function runPublishShow(
       return;
     }
 
+    const steps = getPipelineSteps(db, slug);
+    if (paths.json) {
+      const pausedStep = steps.find((s) => s.status === 'running' || s.status === 'failed');
+      printEnvelope<'PublishPipeline', {
+        slug: string;
+        phase: string;
+        content_type: string | null;
+        title: string | null;
+        evaluation_passed: boolean;
+        published_at: string | null;
+        paused_step: number | null;
+        steps: Array<{
+          step_number: number;
+          step_name: string;
+          status: string;
+          started_at: string | null;
+          completed_at: string | null;
+          error_message: string | null;
+        }>;
+      }>('PublishPipeline', {
+        slug: post.slug,
+        phase: post.phase,
+        content_type: post.content_type,
+        title: post.title,
+        evaluation_passed: post.evaluation_passed === 1,
+        published_at: post.published_at,
+        paused_step: pausedStep ? pausedStep.step_number : null,
+        steps: steps.map((s) => ({
+          step_number: s.step_number,
+          step_name: s.step_name,
+          status: s.status,
+          started_at: s.started_at ?? null,
+          completed_at: s.completed_at ?? null,
+          error_message: s.error_message ?? null,
+        })),
+      });
+      return;
+    }
+
     console.log(`slug:               ${post.slug}`);
     console.log(`phase:              ${post.phase}`);
     console.log(`content_type:       ${post.content_type ?? 'unknown'}`);
@@ -320,7 +361,6 @@ export function runPublishShow(
     console.log(`published_at:       ${post.published_at ?? '—'}`);
     console.log('');
 
-    const steps = getPipelineSteps(db, slug);
     if (steps.length === 0) {
       console.log(`No pipeline steps yet. Run 'blog publish start ${slug}' to initialize.`);
       return;
@@ -401,7 +441,8 @@ export function registerPublish(program: Command): void {
   publish
     .command('show <slug>')
     .description('Show publish pipeline step status for a post')
-    .action((slug: string) => {
-      runPublishShow(slug);
+    .option('--json', 'Emit JSON envelope for machine consumers')
+    .action((slug: string, opts: { json?: boolean }) => {
+      runPublishShow(slug, { json: opts.json });
     });
 }

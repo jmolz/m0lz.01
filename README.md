@@ -61,7 +61,50 @@ blog --help    # verify installation
 
 ## Quick Start
 
-From install to first imported post in five minutes.
+From install to first post via the `/blog` Claude Code skill.
+
+### 1. Install the CLI
+
+```bash
+npm install -g m0lz-01
+blog --help    # verify installation
+```
+
+### 2. Scaffold a workspace
+
+`blog init` creates `.blog-agent/` (SQLite state + pipeline artifacts) in the current directory. Pick a dedicated location — **not** inside a project repo:
+
+```bash
+mkdir -p ~/blog && cd ~/blog
+blog init
+```
+
+Edit `~/blog/.blogrc.yaml` (site repo + author details) and `~/blog/.env` (DEVTO_API_KEY, etc.) — see [Configuration](#configuration).
+
+### 3. Load the `/blog` Claude Code plugin
+
+```bash
+# npm-bundled install — plugin ships inside the tarball at .claude-plugin/
+claude --plugin-dir "$(npm root -g)/m0lz-01/.claude-plugin"
+```
+
+Other install paths (repo clone, contributor symlink) in [`docs/plugin-install.md`](docs/plugin-install.md).
+
+### 4. Use `/blog`
+
+```
+/blog Launch post for new npm package jmolz/m0lz.01 — Show HN target, Dev.to cross-post.
+```
+
+The skill classifies intent, proposes a concrete plan, asks you to approve it, then hands off to `blog agent apply`, which runs each step under a SHA256-bound approval gate. All destructive work is CLI-native; the skill is the orchestration layer.
+
+Read [`docs/plugin-install.md`](docs/plugin-install.md) for troubleshooting.
+
+---
+
+## Using the CLI underneath
+
+Everything the `/blog` skill does is also available as direct CLI commands. If you prefer to drive the pipeline without the skill, or you're scripting in CI, the five-minute CLI walkthrough is below.
 
 ### 1. Choose a work directory
 
@@ -254,7 +297,23 @@ blog update abort <slug>
 # Unpublish
 blog unpublish start <slug> --confirm
 blog unpublish show <slug>
+
+# Agent orchestration (used by the /blog skill; also usable directly)
+blog agent preflight [--json]                   # workspace + config + schema snapshot
+blog agent plan <slug> \
+  --intent "..." --content-type <type> --depth <depth> --venues "v1,v2" \
+  [--steps-inline '<json>' | --steps-json <path>] \
+  [--output <path-inside-.blog-agent/plans/>]    # write an unapproved plan skeleton
+blog agent approve <plan-path>                  # atomic approved_at + payload_hash
+blog agent verify  <plan-path>                  # dry-run validate an approved plan
+blog agent apply   <plan-path> [--restart]      # execute step-by-step, writes receipt
 ```
+
+The `agent` family is the skill's handoff surface: `plan` writes an unapproved
+plan file, `approve` hash-binds it, `verify` dry-runs the validator, and `apply`
+executes each step under the SHA256-bound gate. The apply runner refuses to run
+an unapproved plan, a re-approved plan (hash mismatch), a plan from a different
+workspace, or a plan whose step list tries to nest `blog agent *` calls.
 
 ---
 

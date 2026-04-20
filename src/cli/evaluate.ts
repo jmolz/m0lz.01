@@ -6,6 +6,8 @@ import { Command } from 'commander';
 import { getDatabase, closeDatabase } from '../core/db/database.js';
 import { ReviewerType } from '../core/db/types.js';
 import { validateSlug } from '../core/research/document.js';
+import { resolveUserPath } from '../core/workspace/user-path.js';
+import { printEnvelope } from '../core/json-envelope.js';
 import { runStructuralAutocheck } from '../core/evaluate/autocheck.js';
 import {
   initEvaluation,
@@ -32,6 +34,7 @@ export interface EvaluatePaths {
   evaluationsDir?: string;
   draftsDir?: string;
   benchmarkDir?: string;
+  json?: boolean;
 }
 
 const VALID_REVIEWERS: readonly ReviewerType[] = ['structural', 'adversarial', 'methodology'] as const;
@@ -194,6 +197,55 @@ export function runEvaluateShow(slug: string, paths: EvaluatePaths = {}): void {
     } catch (e) {
       manifest = null;
       manifestError = (e as Error).message;
+    }
+
+    if (paths.json) {
+      const currentCycle = manifest && manifest.cycles.length > 0
+        ? manifest.cycles[manifest.cycles.length - 1]
+        : null;
+      const inCycle = currentCycle
+        ? listRecordedReviewersInCycle(db, slug, currentCycle.evaluation_id_floor)
+        : [];
+      const synthesis = currentCycle
+        ? latestSynthesisInCycle(db, slug, currentCycle.synthesis_id_floor)
+        : null;
+      printEnvelope<'EvaluationState', {
+        slug: string;
+        phase: string;
+        content_type: string | null;
+        manifest_readable: boolean;
+        manifest_error: string | null;
+        cycle_id: number | null;
+        cycle_number: number | null;
+        cycle_status: string | null;
+        expected_reviewers: string[];
+        reviewers: Array<{ reviewer: string; status: 'recorded' | 'pending' }>;
+        verdict: string | null;
+        consensus_issues: number | null;
+        majority_issues: number | null;
+        single_issues: number | null;
+      }>('EvaluationState', {
+        slug: post.slug,
+        phase: post.phase,
+        content_type: post.content_type,
+        manifest_readable: manifest !== null,
+        manifest_error: manifestError ?? null,
+        cycle_id: currentCycle ? currentCycle.evaluation_id_floor : null,
+        cycle_number: manifest ? manifest.cycles.length : null,
+        cycle_status: currentCycle ? (currentCycle.ended_reason ?? 'open') : null,
+        expected_reviewers: manifest ? [...manifest.expected_reviewers] : [],
+        reviewers: manifest
+          ? manifest.expected_reviewers.map((r) => ({
+              reviewer: r,
+              status: (inCycle.includes(r) ? 'recorded' : 'pending') as 'recorded' | 'pending',
+            }))
+          : [],
+        verdict: synthesis ? synthesis.verdict : null,
+        consensus_issues: synthesis ? synthesis.consensus_issues : null,
+        majority_issues: synthesis ? synthesis.majority_issues : null,
+        single_issues: synthesis ? synthesis.single_issues : null,
+      });
+      return;
     }
 
     console.log(`slug:               ${post.slug}`);
@@ -367,8 +419,8 @@ export function registerEvaluate(program: Command): void {
     .command('record <slug>')
     .description('Record a reviewer output file into the evaluations table')
     .requiredOption('--reviewer <reviewer>', 'Reviewer type: structural, adversarial, methodology')
-    .requiredOption('--report <path>', 'Path to the reviewer markdown report')
-    .requiredOption('--issues <path>', 'Path to the reviewer JSON output (ReviewerOutput schema)')
+    .requiredOption('--report <path>', 'Path to the reviewer markdown report', resolveUserPath)
+    .requiredOption('--issues <path>', 'Path to the reviewer JSON output (ReviewerOutput schema)', resolveUserPath)
     .action((slug: string, opts: { reviewer: string; report: string; issues: string }) => {
       runEvaluateRecord(slug, opts);
     });
@@ -376,8 +428,9 @@ export function registerEvaluate(program: Command): void {
   evaluate
     .command('show <slug>')
     .description('Show evaluation state: reviewers recorded, verdict, report path')
-    .action((slug: string) => {
-      runEvaluateShow(slug);
+    .option('--json', 'Emit JSON envelope for machine consumers')
+    .action((slug: string, opts: { json?: boolean }) => {
+      runEvaluateShow(slug, { json: opts.json });
     });
 
   evaluate

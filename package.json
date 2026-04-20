@@ -41,6 +41,7 @@
     "dist/**/*.js",
     "dist/**/*.d.ts",
     "templates/**",
+    ".claude-plugin/**",
     ".blogrc.example.yaml",
     ".env.example",
     "branch-mark.svg",
