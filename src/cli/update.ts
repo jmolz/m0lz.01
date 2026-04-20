@@ -6,6 +6,8 @@ import { Command } from 'commander';
 import { getDatabase, closeDatabase } from '../core/db/database.js';
 import { loadConfig } from '../core/config/loader.js';
 import { TEMPLATES_ROOT } from '../core/paths.js';
+import { printEnvelope } from '../core/json-envelope.js';
+import { resolveUserPath } from '../core/workspace/user-path.js';
 import { validateSlug } from '../core/research/document.js';
 import {
   openUpdateCycle,
@@ -63,6 +65,7 @@ export interface UpdateCliPaths {
   researchPagesDir?: string;
   publishDir?: string;
   templatesDir?: string;
+  json?: boolean;
 }
 
 function requireDb(dbPath: string): void {
@@ -547,6 +550,54 @@ export function runUpdateShow(
       return;
     }
 
+    const cycles = listUpdateCycles(db, slug);
+    const openCycle = cycles.find((c) => c.closed_at === null) ?? null;
+    if (paths.json) {
+      const openSteps = openCycle ? getPipelineSteps(db, slug, openCycle.id) : [];
+      printEnvelope<'UpdatePipeline', {
+        slug: string;
+        phase: string;
+        title: string | null;
+        update_count: number;
+        last_updated_at: string | null;
+        open_cycle_id: number | null;
+        cycles: Array<{
+          id: number;
+          cycle_number: number;
+          opened_at: string;
+          closed_at: string | null;
+          ended_reason: string | null;
+          summary: string | null;
+        }>;
+        open_cycle_steps: Array<{
+          step_number: number;
+          step_name: string;
+          status: string;
+        }>;
+      }>('UpdatePipeline', {
+        slug: post.slug,
+        phase: post.phase,
+        title: post.title,
+        update_count: post.update_count,
+        last_updated_at: post.last_updated_at,
+        open_cycle_id: openCycle ? openCycle.id : null,
+        cycles: cycles.map((c) => ({
+          id: c.id,
+          cycle_number: c.cycle_number,
+          opened_at: c.opened_at,
+          closed_at: c.closed_at,
+          ended_reason: c.ended_reason ?? null,
+          summary: c.summary ?? null,
+        })),
+        open_cycle_steps: openSteps.map((s) => ({
+          step_number: s.step_number,
+          step_name: s.step_name,
+          status: s.status,
+        })),
+      });
+      return;
+    }
+
     console.log(`slug:            ${post.slug}`);
     console.log(`phase:           ${post.phase}`);
     console.log(`title:           ${post.title ?? '(none)'}`);
@@ -554,7 +605,6 @@ export function runUpdateShow(
     console.log(`last_updated_at: ${post.last_updated_at ?? '-'}`);
     console.log('');
 
-    const cycles = listUpdateCycles(db, slug);
     if (cycles.length === 0) {
       console.log(
         `No update cycles yet. Run 'blog update start ${slug} --summary "..."' to open one.`,
@@ -571,7 +621,6 @@ export function runUpdateShow(
       );
     }
 
-    const openCycle = cycles.find((c) => c.closed_at === null);
     if (openCycle) {
       const steps = getPipelineSteps(db, slug, openCycle.id);
       if (steps.length > 0) {
@@ -603,7 +652,7 @@ export function registerUpdate(program: Command): void {
   update
     .command('benchmark <slug>')
     .description('Record a new benchmark run for the open update cycle')
-    .requiredOption('--results <file>', 'Path to benchmark results JSON')
+    .requiredOption('--results <file>', 'Path to benchmark results JSON', resolveUserPath)
     .option('--env-json <json>', 'Optional environment snapshot JSON (default "{}")')
     .action((slug: string, opts: { results: string; envJson?: string }) => {
       runUpdateBenchmark(slug, { results: opts.results, environmentJson: opts.envJson });
@@ -640,7 +689,8 @@ export function registerUpdate(program: Command): void {
   update
     .command('show <slug>')
     .description('Show update cycle history and current pipeline state')
-    .action((slug: string) => {
-      runUpdateShow(slug);
+    .option('--json', 'Emit JSON envelope for machine consumers')
+    .action((slug: string, opts: { json?: boolean }) => {
+      runUpdateShow(slug, { json: opts.json });
     });
 }

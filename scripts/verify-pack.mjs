@@ -28,6 +28,7 @@ const ALLOWED_PATTERNS = [
   /^dist\/.+\.js$/,
   /^dist\/.+\.d\.ts$/,
   /^templates\/.+$/,
+  /^\.claude-plugin\/.+$/,
   /^\.blogrc\.example\.yaml$/,
   /^\.env\.example$/,
   /^branch-mark\.svg$/,
@@ -76,6 +77,10 @@ const REQUIRED_FILES = [
   'templates/research-page/template.mdx',
   'templates/social/linkedin.md',
   'templates/social/hackernews.md',
+  // Phase 8: /blog Claude Code plugin ships in the tarball so `claude
+  // --plugin-dir $(npm root -g)/m0lz-01/.claude-plugin` finds the skill.
+  '.claude-plugin/plugin.json',
+  '.claude-plugin/skills/blog/SKILL.md',
 ];
 
 function fail(msg) {

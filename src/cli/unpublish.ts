@@ -5,6 +5,7 @@ import { Command } from 'commander';
 
 import { getDatabase, closeDatabase } from '../core/db/database.js';
 import { loadConfig } from '../core/config/loader.js';
+import { printEnvelope } from '../core/json-envelope.js';
 import { validateSlug } from '../core/research/document.js';
 import { getOpenUpdateCycle } from '../core/update/cycles.js';
 import { initUnpublish } from '../core/unpublish/state.js';
@@ -25,6 +26,7 @@ export interface UnpublishCliPaths {
   configPath?: string;
   socialDir?: string;
   publishDir?: string;
+  json?: boolean;
 }
 
 export interface UnpublishStartOptions {
@@ -174,13 +176,42 @@ export function runUnpublishShow(
       process.exitCode = 1;
       return;
     }
+    const steps = listUnpublishSteps(db, slug);
+    if (paths.json) {
+      const completedStep = [...steps].reverse().find((s) => s.status === 'completed');
+      printEnvelope<'UnpublishPipeline', {
+        slug: string;
+        phase: string;
+        title: string | null;
+        unpublished_at: string | null;
+        completed_at: string | null;
+        steps: Array<{
+          step_number: number;
+          step_name: string;
+          status: string;
+          error_message: string | null;
+        }>;
+      }>('UnpublishPipeline', {
+        slug: post.slug,
+        phase: post.phase,
+        title: post.title,
+        unpublished_at: post.unpublished_at,
+        completed_at: completedStep?.completed_at ?? null,
+        steps: steps.map((s) => ({
+          step_number: s.step_number,
+          step_name: s.step_name,
+          status: s.status,
+          error_message: s.error_message ?? null,
+        })),
+      });
+      return;
+    }
     console.log(`slug:            ${post.slug}`);
     console.log(`phase:           ${post.phase}`);
     console.log(`title:           ${post.title ?? '(none)'}`);
     console.log(`unpublished_at:  ${post.unpublished_at ?? '-'}`);
     console.log('');
 
-    const steps = listUnpublishSteps(db, slug);
     if (steps.length === 0) {
       console.log(
         `No unpublish steps recorded. Run 'blog unpublish start ${slug} --confirm' to begin.`,
@@ -215,7 +246,8 @@ export function registerUnpublish(program: Command): void {
   unpublish
     .command('show <slug>')
     .description('Show unpublish pipeline status for a post')
-    .action((slug: string) => {
-      runUnpublishShow(slug);
+    .option('--json', 'Emit JSON envelope for machine consumers')
+    .action((slug: string, opts: { json?: boolean }) => {
+      runUnpublishShow(slug, { json: opts.json });
     });
 }
