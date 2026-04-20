@@ -93,6 +93,13 @@ Phase-boundary guards in the CLI reject a subcommand that doesn't match the post
 }
 ```
 
+### `venues` taxonomy
+
+Two categories, one flat field. The `venues` array is declarative intent metadata — it records what the operator asked for and flows through the hash gate, but the 11-step publish pipeline runs the same steps regardless of its contents. Step gating happens at the step level (e.g., `devto-crosspost` skips when `DEVTO_API_KEY` is unset), not the venue level.
+
+- **API-automated** (`hub`, `devto`) — pipeline step opens a PR (site), or calls an HTTP API with probe-before-mutate (Dev.to Forem). Step fails loudly on network/auth errors; the receipt records the failure.
+- **Paste-ready** (`linkedin`, `medium`, `substack`, `hn`) — pipeline step writes a text file under `.blog-agent/social/<slug>/` (Medium/Substack at steps 6/7, LinkedIn + HN at step 11). The operator copies these into each platform manually. The pipeline never blocks on these venues' network state.
+
 ### Hash derivation
 
 1. Clone plan, drop `approved_at` + `payload_hash`.

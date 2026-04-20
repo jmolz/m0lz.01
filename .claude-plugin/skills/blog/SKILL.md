@@ -26,7 +26,7 @@ Ask the user exactly enough to fill four dimensions. Infer what you can from the
 | **slug** | new, existing in-workspace, or existing GitHub project | Read `blog status --json` to detect collisions. Canonical URL is permanent — an existing slug's phase dictates next steps. |
 | **content_type** | `project-launch`, `technical-deep-dive`, `analysis-opinion` | Enum is schema-locked. Do not invent values like `park-research`. |
 | **depth** | `park`, `fast-path`, `full` | `park` = capture and leave; `fast-path` = skip benchmark; `full` = research → benchmark → draft → evaluate → publish. |
-| **venues** | comma-separated subset of `hub`, `devto`, `hn`, `linkedin`, `medium`, `substack` | `hub` (the canonical site from `.blogrc.yaml#site.base_url`) is always included on a publish path. |
+| **venues** | comma-separated subset. **API-automated**: `hub`, `devto`. **Paste-ready**: `linkedin`, `medium`, `substack`, `hn`. | `hub` (canonical site from `.blogrc.yaml#site.base_url`) always included on a publish path. API venues either succeed or fail-and-report (`devto` probes before mutate). Paste venues write text files under `.blog-agent/social/<slug>/` that the operator copies into each platform — the pipeline never blocks on HN, LinkedIn, Medium, or Substack network state. |
 
 ### Slug collision
 

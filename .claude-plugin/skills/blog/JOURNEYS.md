@@ -17,7 +17,7 @@ All identity values (`<your-user>`, `<your-domain>`, etc.) come from `.blogrc.ya
 
 1. `!`blog agent preflight --json`` — confirm `workspace_detected=true` + `config_valid=true`.
 2. `!`blog status --json`` — parse `data.posts[].slug` for slug collision against the proposed `<slug>`.
-3. Skill classifies: `slug=<slug>` (new), `content_type=project-launch`, `depth=fast-path`, `venues=hub,devto,hn`.
+3. Skill classifies: `slug=<slug>` (new), `content_type=project-launch`, `depth=fast-path`, `venues=hub,devto,hn`. `hub` and `devto` are API-automated; `hn` is paste-ready (step 11 writes `hacker-news.txt` the operator submits to Show HN manually).
 4. Substitute `$SLUG` and `$JSON` with the real values, then run `!blog agent plan "$SLUG" --intent "..." --content-type project-launch --depth fast-path --venues "hub,devto,hn" --steps-inline "$JSON"` — CLI writes the plan file and prints its absolute path. `$JSON` is the array of plan-step objects below. The skill never hand-edits plan JSON; every byte originates from the CLI.
 5. Human checkpoint: "Approve this exact plan?" (render the step list as a markdown table, not raw JSON).
 6. On `yes`: capture the plan path from step 4's stdout into `$PLAN`, then `!blog agent approve "$PLAN"` → `!blog agent verify "$PLAN"` → `!blog agent apply "$PLAN"`. Never emit a literal `<plan-path>` token — `<` parses as stdin redirection in the shell.
