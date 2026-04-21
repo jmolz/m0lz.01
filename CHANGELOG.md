@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-04-21
+
 ### Added
 
 - `/blog` Claude Code plugin — single orchestration skill that classifies intent, proposes a plan, gets user approval, and hands off to the CLI. Ships in the npm tarball at `.claude-plugin/`. Three install paths documented in `docs/plugin-install.md`.
@@ -74,4 +76,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Template loading now resolves from the installed package directory instead of the current working directory. Previously, `blog publish`, `blog update`, and `blog init` silently failed or emitted unhelpful errors when run from any directory other than the agent's own checkout — `init` in particular would silently skip copying `.blogrc.example.yaml` and `.env.example` when the operator's CWD lacked those files, leaving them with an empty workspace.
 
+[0.2.0]: https://github.com/jmolz/m0lz.01/releases/tag/v0.2.0
 [0.1.0]: https://github.com/jmolz/m0lz.01/releases/tag/v0.1.0
