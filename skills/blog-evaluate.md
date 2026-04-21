@@ -69,6 +69,8 @@ blog evaluate record <slug> \
 
 Invoke the Codex CLI to challenge the thesis. Write to `adversarial.json` matching the `ReviewerOutput` schema. Capture stdout/stderr/exit so fallback triggers can evaluate them (see "Codex failure handling" below).
 
+**If Codex fails, do NOT try to authenticate Codex.** Do not run `codex login --api-key`. Do not set `OPENAI_API_KEY` in the environment. Do not inspect env files, keychain, or secret managers for a key to feed Codex. The fallback bypasses Codex entirely — it reads `~/.claude/.openai-fallback-key` and calls the OpenAI Responses API directly via `curl`. Skip to "Codex failure handling" below when `CODEX_EXIT != 0` or any trigger fires; do not attempt to re-authenticate or re-invoke Codex.
+
 ```bash
 codex exec --effort high \
   "Adversarial peer review of draft at .blog-agent/drafts/<slug>/index.mdx.
@@ -137,7 +139,7 @@ codex exec --effort xhigh \
 CODEX_EXIT=$?
 ```
 
-Same fallback contract as Step 4. Then:
+Same fallback contract as Step 4 — if Codex fails, do NOT authenticate Codex; skip to "Codex failure handling" and use the direct Responses API call. Then:
 
 ```bash
 blog evaluate record <slug> \
@@ -150,7 +152,9 @@ Skip this entire step when `manifest.json.expected_reviewers` does not include `
 
 ### Codex failure handling — OpenAI Responses API fallback
 
-The Codex CLI authenticates via the user's ChatGPT Team session. It can fail four ways: **rate-limited** (quota exhausted), **auth missing** (no session), **script crash** (Node-level error), **empty output** (exits 0 but emits nothing). The fallback path is a direct OpenAI Responses API call via `~/.claude/.openai-fallback-key` — this preserves the ChatGPT Team session (do NOT run `codex login --api-key`, which would overwrite it).
+**The fallback bypasses Codex entirely.** It does not reconfigure Codex auth. It does not feed an API key to Codex. It does not run `codex login --api-key`. When Codex fails, the session reads `~/.claude/.openai-fallback-key` and POSTs to `https://api.openai.com/v1/responses` via `curl`. The Codex CLI is not invoked again for this reviewer's output.
+
+The Codex CLI authenticates via the user's ChatGPT Team session. It can fail four ways: **rate-limited** (quota exhausted), **auth missing** (no session), **script crash** (Node-level error), **empty output** (exits 0 but emits nothing). Running `codex login --api-key` would overwrite the ChatGPT Team session — never do this. The fallback stays entirely outside Codex so the ChatGPT Team path resumes automatically on the next invocation.
 
 **Fallback triggers** — apply to Step 4 and Step 5 independently. Use the fallback if ANY hold for that reviewer's output:
 
