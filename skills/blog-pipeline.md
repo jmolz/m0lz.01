@@ -56,7 +56,7 @@ Content-type dispatch:
    blog draft complete <slug>
    ```
 4. **Evaluate** (three-reviewer adversarial panel — Claude structural,
-   Codex GPT-5.4 high adversarial, Codex GPT-5.4 xhigh methodology).
+   Codex GPT-5.5 high adversarial, Codex GPT-5.5 xhigh methodology).
    ```bash
    blog evaluate init <slug>
    blog evaluate structural-autocheck <slug>

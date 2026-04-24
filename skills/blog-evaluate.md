@@ -1,6 +1,6 @@
 ---
 name: blog-evaluate
-description: Run the three-reviewer adversarial evaluation panel (Claude structural, GPT-5.4 high adversarial, GPT-5.4 xhigh methodology), merge autocheck lints with reviewer judgment, and synthesize verdicts into consensus/majority/single categories with a pass/fail gate.
+description: Run the three-reviewer adversarial evaluation panel (Claude structural, GPT-5.5 high adversarial, GPT-5.5 xhigh methodology), merge autocheck lints with reviewer judgment, and synthesize verdicts into consensus/majority/single categories with a pass/fail gate.
 ---
 
 # /blog-evaluate
@@ -65,7 +65,7 @@ blog evaluate record <slug> \
   --issues .blog-agent/evaluations/<slug>/structural.json
 ```
 
-### Step 4 — Codex adversarial review (GPT-5.4 high, in parallel with Step 5)
+### Step 4 — Codex adversarial review (GPT-5.5 high, in parallel with Step 5)
 
 Invoke the Codex CLI to challenge the thesis. Write to `adversarial.json` matching the `ReviewerOutput` schema. Capture stdout/stderr/exit so fallback triggers can evaluate them (see "Codex failure handling" below).
 
@@ -86,7 +86,7 @@ codex exec --effort high \
 
    {
      \"reviewer\": \"adversarial\",
-     \"model\": \"gpt-5.4-high\",
+     \"model\": \"gpt-5.5-high\",
      \"passed\": <boolean>,
      \"issues\": [
        {
@@ -122,7 +122,7 @@ blog evaluate record <slug> \
   --issues .blog-agent/evaluations/<slug>/adversarial.json
 ```
 
-### Step 5 — Codex methodology review (GPT-5.4 xhigh; skip for analysis-opinion)
+### Step 5 — Codex methodology review (GPT-5.5 xhigh; skip for analysis-opinion)
 
 ```bash
 codex exec --effort xhigh \
@@ -240,12 +240,12 @@ curl -sS https://api.openai.com/v1/responses \
 
 | Path | `model` value |
 |---|---|
-| Codex CLI adversarial success | `gpt-5.4-high` |
-| Codex CLI methodology success | `gpt-5.4-xhigh` |
+| Codex CLI adversarial success | `gpt-5.5-high` |
+| Codex CLI methodology success | `gpt-5.5-xhigh` |
 | API fallback adversarial success | `gpt-5.4-high-fallback-api` |
 | API fallback methodology success | `gpt-5.4-xhigh-fallback-api` |
 
-**`max_output_tokens` budget** — GPT-5.4 at `xhigh` reasoning can consume 25k+ tokens before emitting visible output. Reserve at least 32000. If the response has `status: "incomplete"` with `incomplete_details.reason === "max_output_tokens"`, retry with a larger budget.
+**`max_output_tokens` budget** — GPT-5.5 at `xhigh` reasoning can consume 25k+ tokens before emitting visible output. Reserve at least 32000. If the response has `status: "incomplete"` with `incomplete_details.reason === "max_output_tokens"`, retry with a larger budget.
 
 **Upstream recovery is passive** — the primary Codex path resumes on the next invocation with no action required. The fallback triggers only on failure.
 
@@ -301,7 +301,7 @@ interface Issue {
 
 interface ReviewerOutput {
   reviewer: 'structural' | 'adversarial' | 'methodology';
-  model: string;                                         // 'claude-code', 'gpt-5.4-high', 'gpt-5.4-xhigh'
+  model: string;                                         // 'claude-code', 'gpt-5.5-high', 'gpt-5.5-xhigh'
   passed: boolean;                                       // reviewer's own pass/fail verdict (advisory; CLI computes the hard verdict)
   issues: Issue[];
   report_path?: string;                                  // optional pointer to the human-readable markdown report
@@ -314,7 +314,7 @@ interface ReviewerOutput {
 
 Fallback hierarchy:
 
-1. **Codex CLI succeeds** — primary path, `model` field is `gpt-5.4-<effort>`.
+1. **Codex CLI succeeds** — primary path, `model` field is `gpt-5.5-<effort>`.
 2. **Codex fails, `~/.claude/.openai-fallback-key` exists** — OpenAI Responses API fallback runs, `model` field is `gpt-5.4-<effort>-fallback-api`. See "Codex failure handling" above.
 3. **Codex fails AND no fallback key** — fully degraded. Only then:
    - Run Step 3 only (Claude structural review).

@@ -223,7 +223,7 @@ npx vitest run \
 
 #### Release Prep
 
-Ships the v0.1.0-readiness bundle: shared package-root resolver fixing a latent CWD-relative template-loading bug, four-layer packaging gate (`verify-pack.mjs`), clean build (`node scripts/clean-dist.mjs && tsc`), adversarially-reviewed release runbook, CI. Validated against Tier-2 contract with seven adversarial passes (1 Claude evaluator + 6 Codex GPT-5.4 high — final verdict `clean / approve`).
+Ships the v0.1.0-readiness bundle: shared package-root resolver fixing a latent CWD-relative template-loading bug, four-layer packaging gate (`verify-pack.mjs`), clean build (`node scripts/clean-dist.mjs && tsc`), adversarially-reviewed release runbook, CI. Validated against Tier-2 contract with seven adversarial passes (1 Claude evaluator + 6 Codex GPT-5.5 high — final verdict `clean / approve`).
 
 | Test File | Feature | What It Validates |
 | --------- | ------- | ----------------- |

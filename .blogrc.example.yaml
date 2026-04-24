@@ -19,8 +19,8 @@ ai:
   primary: "claude-code"           # Uses Claude Code subscription for research, drafting, structural review
   reviewers:                       # Three-reviewer evaluation panel
     structural: "claude-code"      # Content quality, schema, MDX, sources
-    adversarial: "codex-cli"       # GPT-5.4 high — thesis challenge, bias, argument gaps
-    methodology: "codex-cli"       # GPT-5.4 xhigh — benchmark validity, statistics, reproducibility
+    adversarial: "codex-cli"       # GPT-5.5 high — thesis challenge, bias, argument gaps
+    methodology: "codex-cli"       # GPT-5.5 xhigh — benchmark validity, statistics, reproducibility
   codex:
     adversarial_effort: "high"     # Reasoning effort for adversarial review
     methodology_effort: "xhigh"    # Reasoning effort for methodology review

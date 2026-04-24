@@ -35,7 +35,7 @@ Runs locally. No server, no SaaS. AI-heavy steps use your Claude Code and OpenAI
 ### Optional — required for AI-heavy commands
 
 - **Claude Code** (`claude` CLI) — used as the structural reviewer and for interactive drafting/research. Falls back to `ANTHROPIC_API_KEY` if not installed.
-- **OpenAI Codex CLI** (`codex`) — used as the adversarial + methodology reviewer (GPT-5.4 high / xhigh). No fallback; evaluate step requires it unless you record reviewer outputs manually.
+- **OpenAI Codex CLI** (`codex`) — used as the adversarial + methodology reviewer (GPT-5.5 high / xhigh). No fallback; evaluate step requires it unless you record reviewer outputs manually.
 
 Both CLIs authenticate against your subscription — no per-call API keys.
 
@@ -364,8 +364,8 @@ Three-reviewer adversarial evaluation:
 | Reviewer | Model | Role |
 |----------|-------|------|
 | Structural | Claude Code | Content quality, MDX schema, sources |
-| Adversarial | GPT-5.4 high (Codex) | Thesis challenge, bias, argument gaps |
-| Methodology | GPT-5.4 xhigh (Codex) | Benchmark validity, statistics, reproducibility |
+| Adversarial | GPT-5.5 high (Codex) | Thesis challenge, bias, argument gaps |
+| Methodology | GPT-5.5 xhigh (Codex) | Benchmark validity, statistics, reproducibility |
 
 Issues categorize as consensus (all 3 = must fix), majority (2/3 = should fix), single (1/3 = advisory).
 

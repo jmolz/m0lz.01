@@ -36,7 +36,7 @@ Core Functionality
 - [ ] Companion repo as research artifact (test suites, benchmarks, reproducible methodology)
 - [ ] MDX draft generation incorporating original benchmark data with PostFrontmatter schema compliance
 - [ ] Auto-generated Excalidraw SVG diagrams and benchmark data visualizations
-- [ ] Three-reviewer evaluation panel: Claude (structural), GPT-5.4 high (adversarial), GPT-5.4 xhigh (methodology)
+- [ ] Three-reviewer evaluation panel: Claude (structural), GPT-5.5 high (adversarial), GPT-5.5 xhigh (methodology)
 - [ ] Hub publish: PR to m0lz.00 with local preview and CI/CD gate
 - [ ] Cross-post to Dev.to with canonical URL
 - [ ] Medium and Substack fallback (paste-ready markdown on API failure)
@@ -102,8 +102,8 @@ Deployment
 | TypeScript / Node.js | Runtime | AI SDKs are JS-first, matches m0lz.00 ecosystem |
 | Commander.js | CLI framework | Lightweight, well-documented for standalone commands |
 | Claude Code Skills | Interactive AI layer + structural review | Uses existing Claude Max 20x subscription, no API billing |
-| Codex CLI (GPT-5.4 high) | Adversarial evaluation | Uses existing OpenAI subscription, challenges thesis and argument structure |
-| Codex CLI (GPT-5.4 xhigh) | Methodology evaluation | Uses existing OpenAI subscription, deep review of benchmark validity and statistical rigor |
+| Codex CLI (GPT-5.5 high) | Adversarial evaluation | Uses existing OpenAI subscription, challenges thesis and argument structure |
+| Codex CLI (GPT-5.5 xhigh) | Methodology evaluation | Uses existing OpenAI subscription, deep review of benchmark validity and statistical rigor |
 | SQLite (better-sqlite3) | State management | Query flexibility, supports growth to many posts over time |
 | Octokit | GitHub API | Companion repo creation, PR management |
 | Forem API | Dev.to cross-posting | Stable API with canonical_url support |
@@ -121,7 +121,7 @@ Claude Code Skills (interactive layer — uses subscription)
   /blog-research    Research workflow, web search, source gathering
   /blog-benchmark   Scaffold test harness, run benchmarks, collect data
   /blog-draft       MDX generation, Excalidraw diagrams, frontmatter
-  /blog-evaluate    Three-reviewer panel (Claude + GPT-5.4 high + GPT-5.4 xhigh)
+  /blog-evaluate    Three-reviewer panel (Claude + GPT-5.5 high + GPT-5.5 xhigh)
   /blog-pipeline    Orchestrates full research-to-publish in one shot
   /blog-update      Re-run benchmarks, regenerate sections, republish
 
@@ -171,8 +171,8 @@ m0lz.01/
         content-types.ts Content type detection and pipeline behavior routing
       evaluate/          Three-reviewer evaluation panel
         structural.ts    Claude: content quality, schema, MDX, sources
-        adversarial.ts   GPT-5.4 high: thesis challenge, bias, argument gaps
-        methodology.ts   GPT-5.4 xhigh: benchmark validity, statistics, reproducibility
+        adversarial.ts   GPT-5.5 high: thesis challenge, bias, argument gaps
+        methodology.ts   GPT-5.5 xhigh: benchmark validity, statistics, reproducibility
         synthesizer.ts   Merge three reviews into consensus/majority/single report
       publish/           Cross-posting pipeline (idempotent sub-steps)
         site.ts          PR to m0lz.00
@@ -221,7 +221,7 @@ Prompt -> Parse intent + detect content type
   -> Draft (automated, incorporates original benchmark data)
   -> Excalidraw + data visualization generation
   -> Evaluate (three-reviewer panel, run in parallel):
-     Claude: structural  |  GPT-5.4 high: adversarial  |  GPT-5.4 xhigh: methodology
+     Claude: structural  |  GPT-5.5 high: adversarial  |  GPT-5.5 xhigh: methodology
   -> Synthesize: consensus / majority / single-reviewer issues
   -> [Pass?] -> Publish PR to m0lz.00 -> Local preview -> CI/CD
   -> Cross-post Dev.to -> Medium/Substack fallback
@@ -274,7 +274,7 @@ blog update <slug>
 - **Claude Code as interface, not a custom REPL:** The interactive AI work (research, benchmarking, drafting, evaluation) happens in Claude Code sessions using the author's existing subscription. No need to build a separate chat UI or terminal REPL. The standalone CLI handles only mechanical, non-AI operations.
 - **Primary-source research, not aggregation:** The agent builds and runs original test suites. Every benchmark claim in a published post is backed by data the author generated, stored in a companion repo readers can clone and verify. This is the core differentiator from other technical blogs.
 - **Benchmark before draft, not after:** The companion repo and test harness are created during the benchmark phase, before drafting begins. The draft incorporates real data from test runs. This inverts the typical "write post, add code sample" workflow.
-- **Three-reviewer panel, not a single adversary:** Claude handles structural review (schema, syntax, sources). GPT-5.4 high challenges the thesis and argument. GPT-5.4 xhigh deep-reviews benchmark methodology and statistical rigor. All three run in parallel. The synthesizer categorizes issues by consensus (all three agree), majority (2 of 3), or single-reviewer (1 of 3 — investigate, author decides). Disagreements between reviewers are themselves informative signal.
+- **Three-reviewer panel, not a single adversary:** Claude handles structural review (schema, syntax, sources). GPT-5.5 high challenges the thesis and argument. GPT-5.5 xhigh deep-reviews benchmark methodology and statistical rigor. All three run in parallel. The synthesizer categorizes issues by consensus (all three agree), majority (2 of 3), or single-reviewer (1 of 3 — investigate, author decides). Disagreements between reviewers are themselves informative signal.
 - **Content types drive pipeline behavior:** Not all posts are the same. Project launches, technical deep-dives, and analysis/opinion pieces each have different benchmark requirements, companion repo needs, and social strategies. Content type is detected from the prompt and research, not from a flag.
 - **PR-based publishing, not direct push:** Content goes to m0lz.00 via pull request with local preview and CI/CD verification. This catches MDX rendering issues before production.
 - **Excalidraw-first visuals:** Every post gets auto-generated architecture diagrams and benchmark data visualizations. Visuals are not optional — they're part of the quality contract.
@@ -409,7 +409,7 @@ Role: Content quality, technical correctness, schema compliance
 - Benchmark claims match the actual data in results.json
 - METHODOLOGY.md is complete and reproducibility instructions are clear
 
-**Reviewer 2: Adversarial (GPT-5.4 high via Codex CLI)**
+**Reviewer 2: Adversarial (GPT-5.5 high via Codex CLI)**
 Role: Challenge the thesis, find argument weaknesses
 - Challenges the thesis — are there counterarguments not addressed?
 - Identifies logical gaps or unsupported leaps
@@ -419,7 +419,7 @@ Role: Challenge the thesis, find argument weaknesses
 - Checks if contradictory data was acknowledged or suppressed
 - Assesses whether the conclusion follows from the evidence presented
 
-**Reviewer 3: Methodology (GPT-5.4 xhigh via Codex CLI)**
+**Reviewer 3: Methodology (GPT-5.5 xhigh via Codex CLI)**
 Role: Deep review of benchmark design and statistical validity
 - Are there confounding variables that weren't controlled for?
 - Is the sample size sufficient for the claims being made?
@@ -663,8 +663,8 @@ ai:
   primary: "claude-code"          # Uses Claude Code subscription for research, drafting, structural review
   reviewers:                      # Three-reviewer evaluation panel
     structural: "claude-code"     # Content quality, schema, MDX, sources
-    adversarial: "codex-cli"      # GPT-5.4 high — thesis challenge, bias, argument gaps
-    methodology: "codex-cli"      # GPT-5.4 xhigh — benchmark validity, statistics, reproducibility
+    adversarial: "codex-cli"      # GPT-5.5 high — thesis challenge, bias, argument gaps
+    methodology: "codex-cli"      # GPT-5.5 xhigh — benchmark validity, statistics, reproducibility
   codex:
     adversarial_effort: "high"    # Reasoning effort for adversarial review
     methodology_effort: "xhigh"   # Reasoning effort for methodology review
@@ -809,7 +809,7 @@ CREATE TABLE evaluations (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   post_slug TEXT REFERENCES posts(slug),
   reviewer TEXT CHECK(reviewer IN ('structural', 'adversarial', 'methodology')) NOT NULL,
-  model TEXT NOT NULL,                 -- 'claude-code', 'gpt-5.4-high', 'gpt-5.4-xhigh'
+  model TEXT NOT NULL,                 -- 'claude-code', 'gpt-5.5-high', 'gpt-5.5-xhigh'
   passed BOOLEAN,
   issues_json TEXT,                    -- JSON array of issues found
   report_path TEXT NOT NULL,           -- Path to full review markdown
@@ -941,11 +941,11 @@ CREATE TABLE metrics (
 
 ### Phase 5: Three-Reviewer Evaluation Panel
 
-**Goal:** Automated quality check with three independent reviewers running in parallel: Claude (structural), GPT-5.4 high (adversarial), GPT-5.4 xhigh (methodology). Synthesized into a consensus-based report.
+**Goal:** Automated quality check with three independent reviewers running in parallel: Claude (structural), GPT-5.5 high (adversarial), GPT-5.5 xhigh (methodology). Synthesized into a consensus-based report.
 
 - [ ] Structural reviewer (Claude): sources, syntax, frontmatter, links, MDX rendering, benchmark-data-matches-prose check
-- [ ] Adversarial reviewer (GPT-5.4 high via Codex CLI): thesis challenge, bias detection, argument gap analysis
-- [ ] Methodology reviewer (GPT-5.4 xhigh via Codex CLI): benchmark validity, statistical rigor, reproducibility, confounding variables
+- [ ] Adversarial reviewer (GPT-5.5 high via Codex CLI): thesis challenge, bias detection, argument gap analysis
+- [ ] Methodology reviewer (GPT-5.5 xhigh via Codex CLI): benchmark validity, statistical rigor, reproducibility, confounding variables
 - [ ] Parallel execution: all three reviewers run simultaneously
 - [ ] Synthesizer: merge three independent reviews into consensus/majority/single-reviewer report
 - [ ] Individual review storage in SQLite `evaluations` table
@@ -1006,7 +1006,7 @@ CREATE TABLE metrics (
 - [ ] Every benchmark claim in a published post is backed by original test data from a companion repo readers can clone and run
 - [ ] Every companion repo includes a complete METHODOLOGY.md with environment details and reproduction steps
 - [ ] Every published post has at least one Excalidraw SVG diagram and benchmark data visualization
-- [ ] Three-reviewer panel catches issues across all domains: structural (Claude), adversarial (GPT-5.4 high), methodology (GPT-5.4 xhigh)
+- [ ] Three-reviewer panel catches issues across all domains: structural (Claude), adversarial (GPT-5.5 high), methodology (GPT-5.5 xhigh)
 - [ ] Consensus/majority/single-reviewer categorization produces actionable, prioritized feedback
 - [ ] Cross-posts to Dev.to include correct canonical URL to m0lz.dev
 - [ ] No content reaches production without resolving all consensus and majority issues from the evaluation panel

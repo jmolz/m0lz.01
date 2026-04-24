@@ -13,7 +13,7 @@ paths:
 Rules for `RELEASING.md`, `CHANGELOG.md`, `package.json`, `scripts/**`,
 and `.github/**`. These invariants emerged from the v0.1.0 release-prep
 work which ran seven adversarial passes (1 Claude evaluator + 6 Codex
-GPT-5.4 high) against a Tier-2 contract before converging.
+GPT-5.5 high) against a Tier-2 contract before converging.
 
 ## Package-relative vs CWD-relative paths
 

@@ -12,7 +12,7 @@ paths:
 Rules that auto-load when editing the `/blog agent` CLI family, the plan-file
 schema/validator/apply runner, the startup shim, or the workspace-root
 resolver. Every invariant below was forged across seven adversarial review
-passes (1 Claude evaluator + 6 Codex GPT-5.4 high) on the Tier-2
+passes (1 Claude evaluator + 6 Codex GPT-5.5 high) on the Tier-2
 `blog-skill-plugin` contract before the feature shipped. **Do NOT revert any
 of them without re-running adversarial review** — the attack vector each
 closes is documented inline.
