@@ -111,7 +111,7 @@ Prompt -> Detect mode (directed vs exploratory) + content type
   -> Research (web search, source gathering)
   -> Benchmark (scaffold test harness, run, collect data) [skip for analysis/opinion, optional for project-launch]
   -> Draft (MDX with benchmark data, Excalidraw diagrams)
-  -> Evaluate (three-reviewer panel: Claude + GPT-5.4 high + GPT-5.4 xhigh)
+  -> Evaluate (three-reviewer panel: Claude + GPT-5.5 high + GPT-5.5 xhigh)
   -> Publish (PR to m0lz.00, cross-post, companion repo, social text)
 ```
 
@@ -124,8 +124,8 @@ Every publish sub-step is idempotent and checkpointed in SQLite `pipeline_steps`
 | Reviewer | Model | Role |
 |----------|-------|------|
 | Structural | Claude Code | Content quality, schema, MDX, sources |
-| Adversarial | GPT-5.4 high (Codex CLI) | Thesis challenge, bias, argument gaps |
-| Methodology | GPT-5.4 xhigh (Codex CLI) | Benchmark validity, statistics, reproducibility |
+| Adversarial | GPT-5.5 high (Codex CLI) | Thesis challenge, bias, argument gaps |
+| Methodology | GPT-5.5 xhigh (Codex CLI) | Benchmark validity, statistics, reproducibility |
 
 Issues categorized by consensus (all 3 = must fix), majority (2/3 = should fix), single (1/3 = advisory).
 
@@ -249,10 +249,10 @@ const resolvedPath = resolve(dirname(configPath), rawPath);
 
 ## Adversarial Evaluation (Codex Plugin)
 
-This project uses **three-reviewer adversarial evaluation** via the Codex CLI (GPT-5.4). Codex acts as peer-level adversary to Claude, challenging both arguments and methodology.
+This project uses **three-reviewer adversarial evaluation** via the Codex CLI (GPT-5.5). Codex acts as peer-level adversary to Claude, challenging both arguments and methodology.
 
-- **Tier 2+ features**: Run Codex adversarial review (GPT-5.4 high) in parallel with Claude evaluation
-- **Tier 3 architectural changes**: Use GPT-5.4 xhigh for deep methodology review
+- **Tier 2+ features**: Run Codex adversarial review (GPT-5.5 high) in parallel with Claude evaluation
+- **Tier 3 architectural changes**: Use GPT-5.5 xhigh for deep methodology review
 - **Evaluation synthesis**: Consensus/majority/single-reviewer categorization
 
 ---
