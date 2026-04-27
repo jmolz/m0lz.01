@@ -129,7 +129,7 @@ Every publish sub-step is idempotent and checkpointed in SQLite `pipeline_steps`
 
 Issues categorized by consensus (all 3 = must fix), majority (2/3 = should fix), single (1/3 = advisory).
 
-Both Codex reviewers have an OpenAI Responses API fallback via `~/.claude/.openai-fallback-key` — activates on Codex rate-limit, crash, auth-miss, or empty output. The fallback labels reviewer JSON with `gpt-5.4-<effort>-fallback-api` so synthesis audits distinguish the paths. Full pattern at `skills/blog-evaluate.md` § Codex failure handling.
+Both Codex reviewers have an OpenAI Responses API fallback via `~/.claude/.openai-fallback-key` — activates on Codex rate-limit, crash, auth-miss, or empty output. The fallback labels reviewer JSON with `gpt-5.5-<effort>-fallback-api` so synthesis audits distinguish the paths. Full pattern at `skills/blog-evaluate.md` § Codex failure handling.
 
 ---
 

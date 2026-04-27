@@ -208,7 +208,7 @@ $BENCHMARK_ENV
 $LINT
 
 Output a single JSON object matching the ReviewerOutput schema. Set
-"model" to "gpt-5.4-$EFFORT-fallback-api" so downstream audit shows
+"model" to "gpt-5.5-$EFFORT-fallback-api" so downstream audit shows
 the fallback path ran. Do NOT output any prose before or after the
 JSON — raw JSON only. Use the <absent> sentinel for any artifact_hashes
 key whose file was missing above.]
@@ -217,7 +217,7 @@ PEOF
 
 cat > /tmp/openai-fallback-req.json <<JEOF
 {
-  "model": "gpt-5.4",
+  "model": "gpt-5.5",
   "reasoning": { "effort": "$EFFORT" },
   "max_output_tokens": 32000,
   "input": $PROMPT
@@ -242,8 +242,8 @@ curl -sS https://api.openai.com/v1/responses \
 |---|---|
 | Codex CLI adversarial success | `gpt-5.5-high` |
 | Codex CLI methodology success | `gpt-5.5-xhigh` |
-| API fallback adversarial success | `gpt-5.4-high-fallback-api` |
-| API fallback methodology success | `gpt-5.4-xhigh-fallback-api` |
+| API fallback adversarial success | `gpt-5.5-high-fallback-api` |
+| API fallback methodology success | `gpt-5.5-xhigh-fallback-api` |
 
 **`max_output_tokens` budget** — GPT-5.5 at `xhigh` reasoning can consume 25k+ tokens before emitting visible output. Reserve at least 32000. If the response has `status: "incomplete"` with `incomplete_details.reason === "max_output_tokens"`, retry with a larger budget.
 
@@ -315,7 +315,7 @@ interface ReviewerOutput {
 Fallback hierarchy:
 
 1. **Codex CLI succeeds** — primary path, `model` field is `gpt-5.5-<effort>`.
-2. **Codex fails, `~/.claude/.openai-fallback-key` exists** — OpenAI Responses API fallback runs, `model` field is `gpt-5.4-<effort>-fallback-api`. See "Codex failure handling" above.
+2. **Codex fails, `~/.claude/.openai-fallback-key` exists** — OpenAI Responses API fallback runs, `model` field is `gpt-5.5-<effort>-fallback-api`. See "Codex failure handling" above.
 3. **Codex fails AND no fallback key** — fully degraded. Only then:
    - Run Step 3 only (Claude structural review).
    - Do NOT run `blog evaluate synthesize` — it will refuse because adversarial/methodology are missing.
