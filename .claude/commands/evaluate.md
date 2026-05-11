@@ -54,6 +54,8 @@ Also gather:
 - The project's CLAUDE.md (for convention checking)
 - Any on-demand rules in `.claude/rules/` relevant to changed files
 
+If `CLAUDE.md` is missing from the current git toplevel and the toplevel path contains `/.worktrees/`, use the sibling main checkout `CLAUDE.md` above the `.worktrees` directory instead. Report the resolved guidance path in the evaluation output so a worktree cannot silently evaluate without project conventions.
+
 ---
 
 ## Step 3: Run Evaluation Pass(es)
@@ -67,17 +69,17 @@ For every tier (1, 2, and 3), launch a Codex adversarial review in the backgroun
 Run the following via `Bash` with `run_in_background: true` (so Claude evaluation can proceed in parallel):
 
 ```bash
-node "$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" \
-  adversarial-review --effort xhigh \
-  "evaluate against this contract: {paste contract criteria names and thresholds}"
+node "$HOME/.codex/plugins/cache/openai-codex/codex/1.0.4/scripts/codex-companion.mjs" \
+  task --background --model gpt-5.5 --effort xhigh \
+  "Adversarially evaluate against this contract: {paste contract criteria names and thresholds}. Use only the contract JSON, git diff/status, CLAUDE.md, and relevant .claude/rules. Challenge design assumptions, failure modes, and production risks; do not edit files."
 ```
 
-All tiers use `--effort xhigh` for maximum reasoning depth.
+All tiers use `task --model gpt-5.5 --effort xhigh` for maximum reasoning depth. Do not use `adversarial-review --effort`; the installed companion does not parse effort flags for that subcommand.
 
 **Capture both stdout AND stderr AND the exit code** — the companion script can fail in several ways (crash, auth missing, rate limit, or simply emit nothing). The only reliable way to tell "success" from "failure" is the exit code. Prefer this shape:
 
 ```bash
-node "$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" \
+node "$HOME/.codex/plugins/cache/openai-codex/codex/1.0.4/scripts/codex-companion.mjs" \
   adversarial-review \
   "..." > /tmp/codex-out.txt 2> /tmp/codex-err.txt
 CODEX_EXIT=$?
@@ -101,7 +103,7 @@ The Codex CLI authenticates via the user's ChatGPT Team session by default. It c
 
 In every case, fall back to a direct OpenAI Responses API call — do **not** run `codex login --api-key`, as that would overwrite the ChatGPT Team session (making recovery manual once upstream recovers).
 
-**Fallback key location**: `~/.claude/.openai-fallback-key` — single line containing an OpenAI API key, `chmod 600`. If absent, skip fallback and report the Codex error verbatim.
+**Fallback key location**: `~/.codex/.openai-fallback-key` — single line containing an OpenAI API key, `chmod 600`. If absent, skip fallback and report the Codex error verbatim.
 
 **Fallback trigger** — use fallback if ANY of these hold:
 
@@ -118,7 +120,7 @@ Label the fallback output in the final report according to the reason:
 **Fallback invocation** (only on trigger, only if the key file exists):
 
 ```bash
-OPENAI_FALLBACK_KEY=$(cat "$HOME/.claude/.openai-fallback-key")
+OPENAI_FALLBACK_KEY=$(cat "$HOME/.codex/.openai-fallback-key")
 EFFORT="xhigh"   # All tiers (Responses API supports xhigh for gpt-5.5)
 cat > /tmp/codex-fallback-request.json <<'JSON'
 {
@@ -136,7 +138,7 @@ curl -sS https://api.openai.com/v1/responses \
 
 Reserve sufficient output budget (OpenAI recommends ≥25k tokens for reasoning + output on gpt-5.5 at `xhigh`). Optionally pass `"max_output_tokens": 32000` and handle `status: "incomplete"` with `incomplete_details.reason === "max_output_tokens"` by retrying with a larger budget. Extract the visible answer from `response.output[].content[].text` (or `response.output_text`).
 
-The `__PROMPT__` must include: the same focus text passed to `codex-companion adversarial-review`, the contract criteria JSON, the full diff, and CLAUDE.md — i.e., the same context Codex would have received. Construct the prompt string explicitly rather than relying on Codex's internal prompt templates (which are not accessible outside the CLI).
+The `__PROMPT__` must include: the same focus text passed to `codex-companion task`, the contract criteria JSON, the full diff, and CLAUDE.md — i.e., the same context Codex would have received. Construct the prompt string explicitly rather than relying on Codex's internal prompt templates (which are not accessible outside the CLI).
 
 Treat the extracted text as the adversarial review output. Label it clearly in the final report per the "Fallback trigger" table above.
 
@@ -249,11 +251,11 @@ If the background task is still running after all Claude evaluation passes are c
 
 1. **`CODEX_EXIT == 0` AND output size > 200 bytes AND no rate-limit/crash markers** → Use Codex output directly. Skip fallback.
 2. **Any failure mode from the Step 3a trigger table** (non-zero exit, tiny output, rate-limit marker, crash marker) → Attempt fallback:
-   - If `~/.claude/.openai-fallback-key` exists → run the fallback curl invocation from Step 3a. Substitute the fallback text for the Codex output. Label it per the trigger reason.
+   - If `~/.codex/.openai-fallback-key` exists → run the fallback curl invocation from Step 3a. Substitute the fallback text for the Codex output. Label it per the trigger reason.
    - If the key file is missing → report to the user:
      ```
      Codex adversarial review unavailable: <reason> (exit=<CODEX_EXIT>, markers=<detected>).
-     To enable fallback: create ~/.claude/.openai-fallback-key (chmod 600) containing an
+     To enable fallback: create ~/.codex/.openai-fallback-key (chmod 600) containing an
      OpenAI API key, then re-run /evaluate. Proceeding with Claude-only evaluation for now.
      ```
 3. **Fallback curl itself fails** (HTTP 5xx, invalid JSON, missing API key, `response.output` empty) → report the failure verbatim and proceed Claude-only. Do not swallow the error silently.
