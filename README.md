@@ -19,7 +19,7 @@ m0lz.01 orchestrates the full lifecycle of technical content. A single prompt ca
 
 Content goes to a hub site (canonical URL, your choice of domain) with Dev.to (cross-post), Medium/Substack (paste-ready fallback), GitHub (companion repos), LinkedIn, and Hacker News as spokes.
 
-Runs locally. No server, no SaaS. AI-heavy steps use your Claude Code and OpenAI Codex CLI subscriptions — no separate API billing for the interactive work.
+Runs locally. No server, no SaaS. The mechanical pipeline is the standalone `blog` CLI; AI-heavy authoring can run from Claude Code or Codex, with Codex also serving the adversarial and methodology reviewer roles.
 
 ---
 
@@ -32,12 +32,12 @@ Runs locally. No server, no SaaS. AI-heavy steps use your Claude Code and OpenAI
 - **GitHub CLI (`gh`)** — PR creation, companion-repo scaffolding, release verification. Install from [cli.github.com](https://cli.github.com/). Run `gh auth login` once before first publish.
 - **A hub site repo** — somewhere on GitHub to commit canonical MDX. Must have a posts directory (default `content/posts/`) and optionally a research directory (default `content/research/`). See [Configuration](#configuration) for the full shape.
 
-### Optional — required for AI-heavy commands
+### Optional — required for AI-heavy authoring/review
 
-- **Claude Code** (`claude` CLI) — used as the structural reviewer and for interactive drafting/research. Falls back to `ANTHROPIC_API_KEY` if not installed.
-- **OpenAI Codex CLI** (`codex`) — used as the adversarial + methodology reviewer (GPT-5.5 high / xhigh). No fallback; evaluate step requires it unless you record reviewer outputs manually.
+- **OpenAI Codex CLI** (`codex`) — Codex-first local authoring surface in this repo via `.codex/commands/*` wrappers and `.agents/skills/source-command-*`; also used as the adversarial + methodology reviewer (GPT-5.5 high / xhigh).
+- **Claude Code** (`claude` CLI) — supported authoring surface via the packaged `.claude-plugin/` `/blog` skill and used as the structural reviewer. Falls back to `ANTHROPIC_API_KEY` if not installed for supported paths.
 
-Both CLIs authenticate against your subscription — no per-call API keys.
+Both CLIs authenticate against your subscription. The npm package currently ships the Claude Code plugin; Codex support is repo-local command and skill guidance plus the standalone CLI.
 
 ### Accounts you'll need
 
@@ -61,7 +61,7 @@ blog --help    # verify installation
 
 ## Quick Start
 
-From install to first post via the `/blog` Claude Code skill.
+From install to first post with the standalone CLI, then pick Codex or Claude Code as the interactive authoring surface.
 
 ### 1. Install the CLI
 
@@ -81,7 +81,17 @@ blog init
 
 Edit `~/blog/.blogrc.yaml` (site repo + author details) and `~/blog/.env` (DEVTO_API_KEY, etc.) — see [Configuration](#configuration).
 
-### 3. Load the `/blog` Claude Code plugin
+### 3. Pick an authoring surface
+
+Codex can drive the repo-local command wrappers when you are working from this repository:
+
+```text
+.codex/commands/prime.md
+.codex/commands/plan-feature.md <topic>
+.codex/commands/execute.md <plan-file>
+```
+
+For Claude Code, load the packaged `/blog` plugin:
 
 ```bash
 # npm-bundled install — plugin ships inside the tarball at .claude-plugin/
@@ -90,13 +100,13 @@ claude --plugin-dir "$(npm root -g)/m0lz-01/.claude-plugin"
 
 Other install paths (repo clone, contributor symlink) in [`docs/plugin-install.md`](docs/plugin-install.md).
 
-### 4. Use `/blog`
+### 4. Use the authoring layer
 
 ```
 /blog Launch post for new npm package jmolz/m0lz.01 — Show HN target, Dev.to cross-post.
 ```
 
-The skill classifies intent, proposes a concrete plan, asks you to approve it, then hands off to `blog agent apply`, which runs each step under a SHA256-bound approval gate. All destructive work is CLI-native; the skill is the orchestration layer.
+The authoring layer classifies intent, proposes a concrete plan, asks you to approve it, then hands off to `blog agent apply`, which runs each step under a SHA256-bound approval gate. All destructive work is CLI-native; Codex and Claude are orchestration surfaces over the same state.
 
 Read [`docs/plugin-install.md`](docs/plugin-install.md) for troubleshooting.
 
@@ -352,10 +362,11 @@ The pipeline runs `assertIndexClean` + strict ahead-commit match before any push
 
 ## Architecture
 
-Dual-layer:
+Three-layer local workflow:
 
 - **Standalone CLI** (what `npm install -g m0lz-01` gives you) — mechanical operations: state management, pipeline execution, git/GitHub/Dev.to API calls. No AI dependency.
-- **Claude Code skills** (installed separately as a plugin) — interactive AI-heavy work: research, drafting, structural review. Skills call the CLI for all state mutations.
+- **Codex repo guidance** (`.codex/commands/*` + `.agents/skills/source-command-*`) — Codex-first planning, execution, review, and maintenance commands for local development.
+- **Claude Code skills** (`.claude-plugin/`, shipped in the npm tarball) — interactive `/blog` work: research, drafting, structural review. Skills call the CLI for all state mutations.
 
 Both layers share state via SQLite (`.blog-agent/state.db`) and file artifacts (`.blog-agent/`). Every publish/update/unpublish step is **idempotent** and **checkpointed** — failures resume from the last good step.
 

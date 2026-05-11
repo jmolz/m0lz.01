@@ -324,6 +324,7 @@ describe('serializeFrontmatter / parseFrontmatter', () => {
       canonical: 'https://m0lz.dev/writing/test-post',
       companion_repo: 'https://github.com/jmolz/test-post',
       project: 'm0lz.02',
+      devto_main_image: './assets/devto-cover.webp',
     };
 
     const serialized = serializeFrontmatter(original);
@@ -339,6 +340,7 @@ describe('serializeFrontmatter / parseFrontmatter', () => {
     expect(parsed.canonical).toBe(original.canonical);
     expect(parsed.companion_repo).toBe(original.companion_repo);
     expect(parsed.project).toBe(original.project);
+    expect(parsed.devto_main_image).toBe(original.devto_main_image);
   });
 
   it('omits undefined optional fields', () => {
@@ -352,6 +354,7 @@ describe('serializeFrontmatter / parseFrontmatter', () => {
     const serialized = serializeFrontmatter(fm);
     expect(serialized).not.toContain('companion_repo');
     expect(serialized).not.toContain('medium_url');
+    expect(serialized).not.toContain('devto_main_image');
   });
 });
 

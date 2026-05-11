@@ -97,6 +97,7 @@ export const PIPELINE_STEPS: StepDefinition[] = [
         researchPagesDir: ctx.paths.researchPagesDir,
         templatesDir: ctx.paths.templatesDir,
         draftsDir: ctx.paths.draftsDir,
+        configPath: ctx.paths.configPath,
       }, ctx.db);
       if (result.skipped) {
         return { outcome: 'skipped', message: result.reason ?? 'Research page skipped' };

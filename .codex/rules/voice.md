@@ -5,7 +5,7 @@ paths:
   - "templates/draft/**"
   - "skills/blog-draft.md"
   - "skills/blog-evaluate.md"
-  - ".codex-plugin/skills/blog/**"
+  - ".claude-plugin/skills/blog/**"
   - "src/core/evaluate/**"
 ---
 # Voice
@@ -263,7 +263,7 @@ After: *(the previous paragraph's last sentence)*. Cut the summary.
   The draft skill gets a compressed version in its prompt.
 - `skills/blog-evaluate.md` loads the hard-rules section verbatim so
   the structural reviewer flags voice drift.
-- `.codex-plugin/skills/blog/SKILL.md` references this rule when
+- `.claude-plugin/skills/blog/SKILL.md` references this rule when
   proposing `blog research set-section` content, so the plan-step
   prose is already voice-compliant before it enters the hash gate.
 - `templates/draft/template.mdx` comment block points the author here.

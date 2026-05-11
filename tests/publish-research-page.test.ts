@@ -1,4 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
+import { execFileSync } from 'node:child_process';
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -51,6 +52,7 @@ interface Fixture {
   researchPagesDir: string;
   templatesDir: string;
   draftsDir: string;
+  configPath: string;
   db: Database.Database;
   paths: ResearchPagePaths;
 }
@@ -64,6 +66,7 @@ function setup(copyTemplate = true): Fixture {
   const researchPagesDir = join(tempDir, 'research-pages');
   const templatesDir = join(tempDir, 'templates');
   const draftsDir = join(tempDir, 'drafts');
+  const configPath = join(tempDir, '.blogrc.yaml');
   mkdirSync(researchDir, { recursive: true });
   mkdirSync(benchmarkDir, { recursive: true });
   mkdirSync(researchPagesDir, { recursive: true });
@@ -79,9 +82,10 @@ function setup(copyTemplate = true): Fixture {
     researchPagesDir,
     templatesDir,
     draftsDir,
+    configPath,
   };
   fixture = {
-    tempDir, researchDir, benchmarkDir, researchPagesDir, templatesDir, draftsDir, db, paths,
+    tempDir, researchDir, benchmarkDir, researchPagesDir, templatesDir, draftsDir, configPath, db, paths,
   };
   return fixture;
 }
@@ -96,8 +100,9 @@ function seedPost(
   db: Database.Database,
   slug: string,
   contentType: 'project-launch' | 'technical-deep-dive' | 'analysis-opinion' = 'technical-deep-dive',
+  projectId?: string,
 ): void {
-  initResearchPost(db, slug, 'some topic', 'directed', contentType);
+  initResearchPost(db, slug, 'some topic', 'directed', contentType, projectId);
   advancePhase(db, slug, 'benchmark');
   advancePhase(db, slug, 'draft');
   advancePhase(db, slug, 'evaluate');
@@ -228,6 +233,73 @@ describe('generateResearchPage — happy path', () => {
     const result = generateResearchPage('nodraft', makeConfig(), f.paths, f.db);
     expect(result.path).toBeDefined();
     expect(existsSync(result.path!)).toBe(true);
+  });
+
+  it('includes project frontmatter when post.project_id is set', () => {
+    const f = setup();
+    seedPost(f.db, 'project-page', 'project-launch', 'm0lz.01');
+    writeResearchDoc(f.researchDir, 'project-page');
+    writeDraft(f.draftsDir, 'project-page');
+
+    const result = generateResearchPage('project-page', makeConfig(), f.paths, f.db);
+    const content = readFileSync(result.path!, 'utf-8');
+
+    expect(content).toContain('title: "m0lz.01 Research: Sample Research"');
+    expect(content).toContain('project: "m0lz.01"');
+    expect(content).not.toContain('{{project_frontmatter}}');
+  });
+
+  it('omits project frontmatter without leaving placeholder text when project_id is absent', () => {
+    const f = setup();
+    seedPost(f.db, 'no-project');
+    writeResearchDoc(f.researchDir, 'no-project');
+    writeDraft(f.draftsDir, 'no-project');
+
+    const result = generateResearchPage('no-project', makeConfig(), f.paths, f.db);
+    const content = readFileSync(result.path!, 'utf-8');
+
+    expect(content).toContain('title: "Research: Sample Research"');
+    expect(content).not.toContain('{{project_frontmatter}}');
+    expect(content).not.toContain('project:');
+  });
+
+  it('prefers posts.repo_url for research page companion links', () => {
+    const f = setup();
+    seedPost(f.db, 'repo-url', 'project-launch', 'm0lz.01');
+    f.db.prepare('UPDATE posts SET repo_url = ? WHERE slug = ?').run(
+      'https://github.com/persisted/repo',
+      'repo-url',
+    );
+    writeResearchDoc(f.researchDir, 'repo-url');
+    writeDraft(f.draftsDir, 'repo-url');
+
+    const result = generateResearchPage('repo-url', makeConfig(), f.paths, f.db);
+    const content = readFileSync(result.path!, 'utf-8');
+
+    expect(content).toContain('https://github.com/persisted/repo/blob/main/METHODOLOGY.md');
+    expect(content).toContain('[companion repo](https://github.com/persisted/repo)');
+  });
+
+  it('resolves project-launch companion links from config.projects git origin', () => {
+    const f = setup();
+    const projectDir = join(f.tempDir, 'project');
+    mkdirSync(projectDir, { recursive: true });
+    execFileSync('git', ['init', '--quiet'], { cwd: projectDir });
+    execFileSync('git', ['remote', 'add', 'origin', 'git@github.com:resolved/project.git'], {
+      cwd: projectDir,
+    });
+    const config = makeConfig();
+    config.projects = { 'm0lz.01': './project' };
+
+    seedPost(f.db, 'origin-link', 'project-launch', 'm0lz.01');
+    writeResearchDoc(f.researchDir, 'origin-link');
+    writeDraft(f.draftsDir, 'origin-link');
+
+    const result = generateResearchPage('origin-link', config, f.paths, f.db);
+    const content = readFileSync(result.path!, 'utf-8');
+
+    expect(content).toContain('https://github.com/resolved/project/blob/main/METHODOLOGY.md');
+    expect(content).toContain('[companion repo](https://github.com/resolved/project)');
   });
 });
 

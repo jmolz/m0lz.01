@@ -68,6 +68,77 @@ interface DevToArticleResponse {
   url?: string;
 }
 
+interface DevToArticlePayload {
+  title: string;
+  body_markdown: string;
+  published?: false;
+  canonical_url: string;
+  tags: string[];
+  description: string;
+  main_image?: string;
+}
+
+function devToHeaders(apiKey: string, includeJsonContentType = false): Record<string, string> {
+  const headers: Record<string, string> = {
+    'api-key': apiKey,
+    Accept: 'application/json',
+  };
+  if (includeJsonContentType) {
+    headers['Content-Type'] = 'application/json';
+  }
+  return headers;
+}
+
+function resolveDevToMainImage(
+  rawValue: string | undefined,
+  slug: string,
+  baseUrl: string,
+): string | undefined {
+  if (rawValue === undefined) {
+    return undefined;
+  }
+
+  const raw = rawValue.trim();
+  if (raw.length === 0) {
+    throw new Error('Invalid devto_main_image: value cannot be empty');
+  }
+
+  if (/^https?:\/\//i.test(raw)) {
+    try {
+      const url = new URL(raw);
+      if (url.protocol === 'http:' || url.protocol === 'https:') {
+        return raw;
+      }
+    } catch {
+      throw new Error(`Invalid devto_main_image URL: ${raw}`);
+    }
+  }
+
+  if (/^[a-z][a-z0-9+.-]*:/i.test(raw) || raw.startsWith('/') || raw.startsWith('\\')) {
+    throw new Error(
+      'Invalid devto_main_image: expected an http(s) URL or assets/<filename>',
+    );
+  }
+
+  const assetPath = raw.startsWith('./assets/') ? raw.slice(2) : raw;
+  if (assetPath.startsWith('assets/')) {
+    const filename = assetPath.slice('assets/'.length);
+    if (
+      filename.length === 0 ||
+      filename.includes('/') ||
+      filename.includes('\\') ||
+      filename.includes('..')
+    ) {
+      throw new Error(`Invalid devto_main_image asset path: ${raw}`);
+    }
+    return `${baseUrl.replace(/\/+$/, '')}/writing/${slug}/assets/${encodeURIComponent(filename)}`;
+  }
+
+  throw new Error(
+    'Invalid devto_main_image: expected an http(s) URL or assets/<filename>',
+  );
+}
+
 // Each article in the /me/all listing exposes its canonical_url and the
 // Dev.to-side URL. Shape is intentionally narrow — we only read fields we
 // use, and tolerate missing fields via optional typing since Dev.to's API
@@ -76,6 +147,9 @@ interface DevToListArticle {
   id?: number;
   url?: string;
   canonical_url?: string | null;
+  published?: boolean | null;
+  cover_image?: string | null;
+  main_image?: string | null;
 }
 
 // Probe the authenticated user's articles for one whose canonical_url
@@ -100,19 +174,17 @@ const DEVTO_PROBE_MAX_PAGES = 100;
 async function probeDevToForCanonical(
   apiKey: string,
   canonicalUrl: string,
-): Promise<{ id?: number; url?: string } | null> {
+): Promise<{ id?: number; url?: string; published?: boolean; coverImage?: string } | null> {
   // Normalize trailing slashes so an author that stores canonical with a
   // slash in Dev.to still matches one without here (and vice versa).
   const target = canonicalUrl.replace(/\/+$/, '');
+  const matches: Array<{ id?: number; url?: string; published?: boolean; coverImage?: string }> = [];
 
   for (let page = 1; page <= DEVTO_PROBE_MAX_PAGES; page += 1) {
     const url = `https://dev.to/api/articles/me/all?per_page=${DEVTO_PROBE_PER_PAGE}&page=${page}`;
     const response = await fetch(url, {
       method: 'GET',
-      headers: {
-        'api-key': apiKey,
-        Accept: 'application/json',
-      },
+      headers: devToHeaders(apiKey),
     });
 
     if (response.status !== 200) {
@@ -130,16 +202,28 @@ async function probeDevToForCanonical(
     for (const entry of data as DevToListArticle[]) {
       if (typeof entry.canonical_url !== 'string') continue;
       if (entry.canonical_url.replace(/\/+$/, '') === target) {
-        return {
+        matches.push({
           id: typeof entry.id === 'number' ? entry.id : undefined,
           url: typeof entry.url === 'string' ? entry.url : undefined,
-        };
+          published: typeof entry.published === 'boolean' ? entry.published : undefined,
+          coverImage: typeof entry.cover_image === 'string'
+            ? entry.cover_image
+            : typeof entry.main_image === 'string'
+              ? entry.main_image
+              : undefined,
+        });
+        if (matches.length > 1) {
+          const ids = matches.map((m) => m.id ?? 'unknown').join(', ');
+          throw new Error(
+            `Dev.to duplicate canonical articles found for ${canonicalUrl}: ids ${ids}`,
+          );
+        }
       }
     }
 
     // Short page means no more results — stop paginating.
     if ((data as unknown[]).length < DEVTO_PROBE_PER_PAGE) {
-      return null;
+      return matches[0] ?? null;
     }
   }
 
@@ -151,6 +235,54 @@ async function probeDevToForCanonical(
   throw new Error(
     `Dev.to probe exceeded ${DEVTO_PROBE_MAX_PAGES} pages — aborting to avoid duplicate-create`,
   );
+}
+
+function buildDevToArticle(
+  slug: string,
+  config: BlogConfig,
+  fm: ReturnType<typeof parseFrontmatter>,
+  bodyMarkdown: string,
+  tags: string[],
+  canonicalUrl: string,
+  includePublishedFalse: boolean,
+): DevToArticlePayload {
+  const mainImage = resolveDevToMainImage(fm.devto_main_image, slug, config.site.base_url);
+  const article: DevToArticlePayload = {
+    title: fm.title,
+    body_markdown: bodyMarkdown,
+    canonical_url: canonicalUrl,
+    tags,
+    description: fm.description,
+  };
+  if (includePublishedFalse) {
+    article.published = false;
+  }
+  if (mainImage !== undefined) {
+    article.main_image = mainImage;
+  }
+  return article;
+}
+
+async function putDevToArticle(
+  apiKey: string,
+  articleId: number,
+  article: DevToArticlePayload,
+): Promise<DevToArticleResponse> {
+  const response = await fetch(`https://dev.to/api/articles/${articleId}`, {
+    method: 'PUT',
+    headers: devToHeaders(apiKey, true),
+    body: JSON.stringify({ article }),
+  });
+
+  if (response.status === 200) {
+    return (await response.json()) as DevToArticleResponse;
+  }
+
+  const text = await response.text();
+  if (response.status === 422) {
+    throw new Error(`Dev.to PUT validation failed: ${text}`);
+  }
+  throw new Error(`Dev.to PUT failed (${response.status}): ${text}`);
 }
 
 export async function crosspostToDevTo(
@@ -165,15 +297,6 @@ export async function crosspostToDevTo(
 
   const canonicalUrl = `${config.site.base_url.replace(/\/+$/, '')}/writing/${slug}`;
 
-  // Probe-then-create. If a prior run already created the Dev.to draft but
-  // crashed before the local commit, we find it here and return the existing
-  // URL instead of POSTing a duplicate. Mirrors the probe-then-create
-  // pattern in repo.ts.
-  const existing = await probeDevToForCanonical(apiKey, canonicalUrl);
-  if (existing) {
-    return { id: existing.id, url: existing.url };
-  }
-
   const draftPath = join(paths.draftsDir, slug, 'index.mdx');
   const mdx = readFileSync(draftPath, 'utf-8');
   const fm = parseFrontmatter(mdx);
@@ -181,25 +304,37 @@ export async function crosspostToDevTo(
 
   const bodyMarkdown = mdxToMarkdown(body, slug, config.site.base_url);
   const tags = mapDevToTags(fm.tags);
+  const article = buildDevToArticle(slug, config, fm, bodyMarkdown, tags, canonicalUrl, true);
+
+  // Probe-then-converge. If a prior run already created the Dev.to draft but
+  // crashed before the local commit, update that single unpublished article
+  // in place so resumed runs pick up body/main_image changes without creating
+  // a duplicate. A published canonical match is a stop-the-line mismatch for
+  // the initial-publish flow because this pipeline never makes Dev.to public.
+  const existing = await probeDevToForCanonical(apiKey, canonicalUrl);
+  if (existing) {
+    if (existing.published !== false) {
+      throw new Error(
+        `Dev.to canonical article already exists but is not a confirmed unpublished draft: ${existing.url ?? existing.id ?? canonicalUrl}`,
+      );
+    }
+    if (typeof existing.id !== 'number') {
+      throw new Error(`Dev.to canonical article exists but has no numeric id: ${canonicalUrl}`);
+    }
+    const data = await putDevToArticle(apiKey, existing.id, article);
+    return {
+      id: typeof data.id === 'number' ? data.id : existing.id,
+      url: typeof data.url === 'string' ? data.url : existing.url,
+    };
+  }
 
   const payload = {
-    article: {
-      title: fm.title,
-      body_markdown: bodyMarkdown,
-      published: false,
-      canonical_url: canonicalUrl,
-      tags,
-      description: fm.description,
-    },
+    article,
   };
 
   const response = await fetch('https://dev.to/api/articles', {
     method: 'POST',
-    headers: {
-      'api-key': apiKey,
-      'Content-Type': 'application/json',
-      Accept: 'application/json',
-    },
+    headers: devToHeaders(apiKey, true),
     body: JSON.stringify(payload),
   });
 
@@ -252,38 +387,11 @@ export async function updateDevToArticle(
 
   const bodyMarkdown = mdxToMarkdown(body, slug, config.site.base_url);
   const tags = mapDevToTags(fm.tags);
+  const article = buildDevToArticle(slug, config, fm, bodyMarkdown, tags, canonicalUrl, false);
+  const data = await putDevToArticle(apiKey, existing.id, article);
 
-  const payload = {
-    article: {
-      title: fm.title,
-      body_markdown: bodyMarkdown,
-      canonical_url: canonicalUrl,
-      tags,
-      description: fm.description,
-    },
+  return {
+    id: typeof data.id === 'number' ? data.id : existing.id,
+    url: typeof data.url === 'string' ? data.url : existing.url,
   };
-
-  const response = await fetch(`https://dev.to/api/articles/${existing.id}`, {
-    method: 'PUT',
-    headers: {
-      'api-key': apiKey,
-      'Content-Type': 'application/json',
-      Accept: 'application/json',
-    },
-    body: JSON.stringify(payload),
-  });
-
-  if (response.status === 200) {
-    const data = (await response.json()) as DevToArticleResponse;
-    return {
-      id: typeof data.id === 'number' ? data.id : existing.id,
-      url: typeof data.url === 'string' ? data.url : existing.url,
-    };
-  }
-
-  const text = await response.text();
-  if (response.status === 422) {
-    throw new Error(`Dev.to PUT validation failed: ${text}`);
-  }
-  throw new Error(`Dev.to PUT failed (${response.status}): ${text}`);
 }
