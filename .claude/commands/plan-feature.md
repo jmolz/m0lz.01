@@ -162,7 +162,7 @@ Run two independent adversaries **in parallel** (not sequentially) at every tier
 
 **Stream B — Codex GPT-5.5 xhigh task** (runs in background via `Bash` with `run_in_background: true`). Always `--model gpt-5.5 --effort xhigh`.
 
-Use the same sandbox, external-approval, JSON launch, `status --wait`, and `result --json` handling as `/evaluate` Step 3a. The initial background launch output is only a receipt; do not treat a short launch receipt as an empty adversarial review.
+Use the same sandbox, external-approval, tenant-policy hard-denial, JSON launch, `status --wait`, and `result --json` handling as `/evaluate` Step 3a. The initial background launch output is only a receipt; do not treat a short launch receipt as an empty adversarial review.
 
 ```bash
 node "$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" \
@@ -171,13 +171,14 @@ node "$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/code
   > /tmp/codex-launch.json 2> /tmp/codex-launch-err.txt
 ```
 
-#### Rate-Limit Fallback
+#### Fallback and policy-blocked runs
 
-Inherits the fallback from `/evaluate`. If Stream B output contains rate-limit markers (`rate limit`, `rate_limit_exceeded`, `429`, `too many requests`, `usage cap`, `quota exceeded`), read `~/.claude/.openai-fallback-key` and retry via direct OpenAI Responses API:
+Inherits the fallback from `/evaluate`. If Stream B output contains rate-limit markers (`rate limit`, `rate_limit_exceeded`, `429`, `too many requests`, `usage cap`, `quota exceeded`), read `~/.codex/.openai-fallback-key` and retry via direct OpenAI Responses API:
 
 - `model: "gpt-5.5"`, `reasoning.effort: "xhigh"` (all tiers)
 - `max_output_tokens: 32000`; on `status: "incomplete"` with `reason: "max_output_tokens"`, retry with larger budget
 - Do NOT run `codex login --api-key` (overwrites ChatGPT Team session)
+- If Stream B is `policy-blocked` by a tenant/security data-exfiltration decision, do not attempt the OpenAI Responses API fallback. Report the Codex stream as unavailable due to policy and continue with Stream A/local planning.
 
 See `/evaluate` Step 3a for the exact curl recipe.
 

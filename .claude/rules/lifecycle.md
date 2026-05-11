@@ -106,6 +106,21 @@ Every Phase 6 invariant carries through Phase 7:
   counterparts.
 - Stale `running` rows reclaimed under the lock at resume time.
 
+## Dev.to tag compatibility
+
+Forem's Dev.to API accepts tag names as alphanumeric strings only. Do
+not preserve spaces, hyphens, underscores, punctuation, or Unicode
+symbols in API tags. `mapDevToTags` must lowercase each source tag,
+strip every non-`[a-z0-9]` character, drop empty results, preserve
+source order, and cap at four tags. A source tag like `developer-tools`
+must become `developertools`, not `developer-tools` or
+`developer tools`.
+
+The live API rejects invalid tags with a 422 validation error such as
+`Tag "developer-tools" contains non-alphanumeric or prohibited unicode
+characters`. Treat tests or docs that describe "hyphenated" Dev.to tags
+as stale.
+
 ## Trust boundaries (unpublish)
 
 - **Site repo**: `createSiteRevertPR` refuses any dirty state outside

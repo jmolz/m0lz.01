@@ -215,7 +215,7 @@ session.
 ## Regression suite registration is non-negotiable
 
 Per `.codex/rules/testing.md`: every new test file must be registered
-in **both** `.codex/commands/review.md` AND `.windsurf/workflows/review.md`,
+in **both** `.agents/skills/source-command-review/SKILL.md` AND `.windsurf/workflows/review.md`,
 and in all four places within each file:
 
 1. The `npx vitest run` bash block (so it runs)
@@ -226,13 +226,13 @@ and in all four places within each file:
 Verify via diff before every Phase close-out:
 
     ls tests/*.test.ts | sed 's|tests/||' | sort > /tmp/disk.txt
-    grep -oE 'tests/[a-z0-9-]+\.test\.ts' .codex/commands/review.md | \
+    grep -oE 'tests/[a-z0-9-]+\.test\.ts' .agents/skills/source-command-review/SKILL.md | \
       sed 's|tests/||' | sort -u > /tmp/block.txt
     diff /tmp/disk.txt /tmp/block.txt
 
 Zero diff in both directions = complete registration. A non-empty diff
 means either a test on disk isn't in the suite, or a line in the suite
 references a deleted test. Release-prep Pass 8 caught exactly this
-gap (2 new tests registered in `.codex/commands/review.md` but not
+gap (2 new tests registered in `.agents/skills/source-command-review/SKILL.md` but not
 `.windsurf/workflows/review.md`, where drift from Phase 5 was 31 files
 deep).

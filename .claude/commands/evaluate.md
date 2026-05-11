@@ -70,7 +70,9 @@ Run the following via `Bash` with `run_in_background: true` (so Claude evaluatio
 
 **Sandbox note:** `codex-companion` starts `codex app-server`, which can fail inside restricted shell sandboxes with `Operation not permitted`. If the shell tool supports sandbox escalation, run every `codex-companion.mjs` invocation in this step outside the sandbox / with escalation and the justification "Allow Codex app-server to start for the adversarial evaluator." If a non-escalated attempt fails with `codex app-server exited unexpectedly` or `Operation not permitted`, immediately rerun the same command with escalation before falling back.
 
-**External-evaluation approval boundary:** This sends the contract, diffs/status, CLAUDE.md, and relevant rules to the Codex GPT-5.5 evaluator. If the host approval layer rejects the command because private workspace content would leave the local machine, do not work around it. Tell the user exactly what would be sent and ask for explicit approval to run the external adversarial evaluator; continue only after that approval.
+**External-evaluation approval boundary:** This sends the contract, diffs/status, CLAUDE.md, and relevant rules to the Codex GPT-5.5 evaluator. If the host approval layer asks for operator approval because private workspace content would leave the local machine, do not work around it. Tell the user exactly what would be sent and ask for explicit approval to run the external adversarial evaluator; continue only after that approval.
+
+**Tenant-policy hard denial:** If the approval layer or tenant policy rejects the evaluator as high-risk data exfiltration, marks the request as disallowed, or says not to route around the decision, treat the Codex adversarial review as `policy-blocked`. Do not ask again in the same run. Do not attempt the OpenAI Responses API fallback for the same payload, because that would send the same private workspace content through a different external path. Continue with the local/formal evaluator and report the external design challenge as unavailable due to policy.
 
 ```bash
 node "$HOME/.codex/plugins/cache/openai-codex/codex/1.0.4/scripts/codex-companion.mjs" \
@@ -118,11 +120,11 @@ The Codex CLI authenticates via the user's ChatGPT Team session by default. It c
 - **Script crash**: Node-level error in the companion script (e.g., `EISDIR`, `ENOENT`, undefined internals).
 - **Empty output**: script exits successfully but emits nothing useful.
 
-In every case, fall back to a direct OpenAI Responses API call — do **not** run `codex login --api-key`, as that would overwrite the ChatGPT Team session (making recovery manual once upstream recovers).
+For non-policy failures, fall back to a direct OpenAI Responses API call — do **not** run `codex login --api-key`, as that would overwrite the ChatGPT Team session (making recovery manual once upstream recovers). Policy-blocked runs are not fallback-eligible.
 
 **Fallback key location**: `~/.codex/.openai-fallback-key` — single line containing an OpenAI API key, `chmod 600`. If absent, skip fallback and report the Codex error verbatim.
 
-**Fallback trigger** — use fallback if ANY of these hold:
+**Fallback trigger** — use fallback if ANY of these hold, except when the failure is `policy-blocked`:
 
 1. `CODEX_LAUNCH_EXIT != 0`, `CODEX_STATUS_EXIT != 0`, or `CODEX_RESULT_EXIT != 0`, OR
 2. `/tmp/codex-result.json` contains no useful final output (empty `finalMessage`, empty rendered result, or missing completed job result), OR
@@ -267,7 +269,11 @@ If the background task is still running after all Claude evaluation passes are c
 **Decision tree** (apply in order — first match wins):
 
 1. **Launch/status/result exits are 0, job status is completed, useful final output is present, and no rate-limit/crash markers are present** → Use Codex output directly from `/tmp/codex-result.json`. Skip fallback.
-2. **Any failure mode from the Step 3a trigger table** (non-zero exit, failed job, missing final output, rate-limit marker, crash marker) → Attempt fallback:
+2. **Policy-blocked external review** (tenant/security denial, high-risk data exfiltration decision, or explicit "do not route around" marker) → Do not attempt fallback. Report:
+   ```
+   Codex adversarial review policy-blocked: the approval/tenant layer refused to send private workspace content to the external evaluator. OpenAI Responses API fallback was skipped because it would send the same payload through another external path. Proceeding with Claude-only evaluation for now.
+   ```
+3. **Any non-policy failure mode from the Step 3a trigger table** (non-zero exit, failed job, missing final output, rate-limit marker, crash marker) → Attempt fallback:
    - If `~/.codex/.openai-fallback-key` exists → run the fallback curl invocation from Step 3a. Substitute the fallback text for the Codex output. Label it per the trigger reason.
    - If the key file is missing → report to the user:
      ```
@@ -275,7 +281,7 @@ If the background task is still running after all Claude evaluation passes are c
      To enable fallback: create ~/.codex/.openai-fallback-key (chmod 600) containing an
      OpenAI API key, then re-run /evaluate. Proceeding with Claude-only evaluation for now.
      ```
-3. **Fallback curl itself fails** (HTTP 5xx, invalid JSON, missing API key, `response.output` empty) → report the failure verbatim and proceed Claude-only. Do not swallow the error silently.
+4. **Fallback curl itself fails** (HTTP 5xx, invalid JSON, missing API key, `response.output` empty) → report the failure verbatim and proceed Claude-only. Do not swallow the error silently.
 
 The Codex review output challenges design decisions and assumptions — it does NOT score against the contract. Treat its findings as a separate evaluation dimension.
 

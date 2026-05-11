@@ -207,7 +207,7 @@ that are out-of-scope of the contract. Every release-prep PR should
 run to convergence or document explicitly-accepted residual risk.
 
 When Codex is rate-limited (ChatGPT Team quota), fall back to the
-OpenAI Responses API via `~/.claude/.openai-fallback-key` (see the
+OpenAI Responses API via `~/.codex/.openai-fallback-key` (see the
 `/evaluate` skill for the exact pattern). Do NOT re-run
 `codex login --api-key` — that would overwrite the ChatGPT Team
 session.

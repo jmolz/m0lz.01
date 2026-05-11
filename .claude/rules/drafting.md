@@ -11,7 +11,7 @@ Rules for the MDX drafting layer (`src/core/draft/**`, `src/cli/draft.ts`). Patt
 
 ## PostFrontmatter is a hard contract
 
-`PostFrontmatter` in `src/core/draft/frontmatter.ts` has exactly these fields: `title`, `description`, `date`, `tags`, `published`, and optional `canonical`, `companion_repo`, `project`, `medium_url`, `devto_url`. These mirror the schema that m0lz.00 consumes.
+`PostFrontmatter` in `src/core/draft/frontmatter.ts` has exactly these fields: `title`, `description`, `date`, `tags`, `published`, and optional `canonical`, `companion_repo`, `project`, `medium_url`, `substack_url`, `devto_url`, `devto_main_image`, `unpublished_at`, `updated_at`, and `update_count`. These mirror the schema that m0lz.00 consumes.
 
 - **Never add, remove, or rename a field without a coordinated change in m0lz.00.** Drift silently breaks published posts.
 - **Validation is strict at completion time.** `date` must match `YYYY-MM-DD`; `tags` must be a non-empty array; `published` must be a literal boolean. No string coercion (`Boolean("false")` → `true` is a bug).

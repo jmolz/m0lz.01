@@ -172,7 +172,7 @@ it('is idempotent on re-run', () => {
 
 ## Regression suite
 
-Every test file must be registered in **both** `.windsurf/workflows/review.md` and `.codex/commands/review.md` under the current milestone. When shipping a feature, update all **four** places in both files — not three, not two:
+Every test file must be registered in **both** `.windsurf/workflows/review.md` and `.agents/skills/source-command-review/SKILL.md` under the current milestone. `.codex/commands/review.md` is only the slash-command wrapper that invokes that source-command skill. When shipping a feature, update all **four** places in both files — not three, not two:
 
 1. The `npx vitest run` bash block (makes the test run)
 2. The "What each test covers" table (documents what the test protects)
@@ -187,8 +187,8 @@ If a test is missing from any one of these, `/review` silently drifts — the mo
 # List .test.ts files on disk
 ls tests/*.test.ts | sed 's|tests/||' | sort > /tmp/disk.txt
 
-# Extract test filenames from the review.md bash block
-grep -oE 'tests/[a-z0-9-]+\.test\.ts' .codex/commands/review.md | \
+# Extract test filenames from the source-command review bash block
+grep -oE 'tests/[a-z0-9-]+\.test\.ts' .agents/skills/source-command-review/SKILL.md | \
   sed 's|tests/||' | sort -u > /tmp/block.txt
 
 # Zero diff in both directions = complete registration
