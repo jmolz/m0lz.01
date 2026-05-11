@@ -73,27 +73,44 @@ Evaluation uses a **dual-model adversarial** approach. The Claude evaluator grad
 
 For every tier (1, 2, and 3), launch a Codex adversarial review in the background **before** running the Claude evaluator. This runs GPT-5.5 xhigh in parallel.
 
-Run the following via `Bash` with `run_in_background: true` (so Claude evaluation can proceed in parallel):
+Run the following via `Bash` with `run_in_background: true` (so Claude evaluation can proceed in parallel).
+
+**Sandbox note:** `codex-companion` starts `codex app-server`, which can fail inside restricted shell sandboxes with `Operation not permitted`. If the shell tool supports sandbox escalation, run every `codex-companion.mjs` invocation in this step with `sandbox_permissions: "require_escalated"` and the justification "Allow Codex app-server to start for the adversarial evaluator." A good persistent prefix rule is `["node", "/Users/jacobmolz/.codex/plugins/cache/openai-codex/codex/1.0.4/scripts/codex-companion.mjs"]`. If a non-escalated attempt fails with `codex app-server exited unexpectedly` or `Operation not permitted`, immediately rerun the same command with escalation before falling back.
+
+**External-evaluation approval boundary:** This sends the contract, diffs/status, AGENTS.md, and relevant rules to the Codex GPT-5.5 evaluator. If the host approval layer rejects the command because private workspace content would leave the local machine, do not work around it. Tell the user exactly what would be sent and ask for explicit approval to run the external adversarial evaluator; continue only after that approval.
 
 ```bash
 node "$HOME/.codex/plugins/cache/openai-codex/codex/1.0.4/scripts/codex-companion.mjs" \
-  task --background --model gpt-5.5 --effort xhigh \
-  "Adversarially evaluate against this contract: {paste contract criteria names and thresholds}. Use only the contract JSON, git diff/status, AGENTS.md, and relevant .codex/rules. Challenge design assumptions, failure modes, and production risks; do not edit files."
+  task --background --json --model gpt-5.5 --effort xhigh \
+  "Adversarially evaluate against this contract: {paste contract criteria names and thresholds}. Use only the contract JSON, git diff/status, AGENTS.md, and relevant .codex/rules. Challenge design assumptions, failure modes, and production risks; do not edit files." \
+  > /tmp/codex-launch.json 2> /tmp/codex-launch-err.txt
 ```
 
 All tiers use `task --model gpt-5.5 --effort xhigh` for maximum reasoning depth. Do not use `adversarial-review --effort`; the installed companion does not parse effort flags for that subcommand.
 
-**Capture both stdout AND stderr AND the exit code** — the companion script can fail in several ways (crash, auth missing, rate limit, or simply emit nothing). The only reliable way to tell "success" from "failure" is the exit code. Prefer this shape:
+**Capture both stdout AND stderr AND the launch exit code**, then capture the background job result. The launch output is only a receipt and is expected to be short; do not classify the launch receipt itself as an empty Codex review. Prefer this shape:
 
 ```bash
 node "$HOME/.codex/plugins/cache/openai-codex/codex/1.0.4/scripts/codex-companion.mjs" \
-  task --background --model gpt-5.5 --effort xhigh \
-  "..." > /tmp/codex-out.txt 2> /tmp/codex-err.txt
-CODEX_EXIT=$?
-echo "CODEX_EXIT=$CODEX_EXIT"
+  task --background --json --model gpt-5.5 --effort xhigh \
+  "..." > /tmp/codex-launch.json 2> /tmp/codex-launch-err.txt
+CODEX_LAUNCH_EXIT=$?
+echo "CODEX_LAUNCH_EXIT=$CODEX_LAUNCH_EXIT"
+CODEX_JOB_ID=$(node -e 'const fs=require("fs"); const p=JSON.parse(fs.readFileSync("/tmp/codex-launch.json","utf8")); console.log(p.jobId || p.payload?.jobId || "");')
+echo "CODEX_JOB_ID=$CODEX_JOB_ID"
+
+node "$HOME/.codex/plugins/cache/openai-codex/codex/1.0.4/scripts/codex-companion.mjs" \
+  status "$CODEX_JOB_ID" --wait --timeout-ms 300000 --json > /tmp/codex-status.json 2> /tmp/codex-status-err.txt
+CODEX_STATUS_EXIT=$?
+echo "CODEX_STATUS_EXIT=$CODEX_STATUS_EXIT"
+
+node "$HOME/.codex/plugins/cache/openai-codex/codex/1.0.4/scripts/codex-companion.mjs" \
+  result "$CODEX_JOB_ID" --json > /tmp/codex-result.json 2> /tmp/codex-result-err.txt
+CODEX_RESULT_EXIT=$?
+echo "CODEX_RESULT_EXIT=$CODEX_RESULT_EXIT"
 ```
 
-Downstream (Step 4) uses `CODEX_EXIT`, the size of `/tmp/codex-out.txt`, and the contents of `/tmp/codex-err.txt` to decide between "use Codex output directly" and "fall back".
+Downstream (Step 4) uses `CODEX_LAUNCH_EXIT`, `CODEX_STATUS_EXIT`, `CODEX_RESULT_EXIT`, `/tmp/codex-status.json`, `/tmp/codex-result.json`, and the stderr files to decide between "use Codex output directly" and "fall back".
 
 If Codex ultimately can't produce output (crashes, rate-limited, and no fallback key), note the error in the final report and continue with Claude-only evaluation — do not block the entire evaluation.
 
@@ -114,8 +131,8 @@ In every case, fall back to a direct OpenAI Responses API call — do **not** ru
 
 **Fallback trigger** — use fallback if ANY of these hold:
 
-1. `CODEX_EXIT != 0`, OR
-2. `/tmp/codex-out.txt` is ≤ 200 bytes (empty or trivially short), OR
+1. `CODEX_LAUNCH_EXIT != 0`, `CODEX_STATUS_EXIT != 0`, or `CODEX_RESULT_EXIT != 0`, OR
+2. `/tmp/codex-result.json` contains no useful final output (empty `finalMessage`, empty rendered result, or missing completed job result), OR
 3. The output contains a known rate-limit marker (case-insensitive): `rate limit`, `rate_limit_exceeded`, `429`, `too many requests`, `usage cap`, `quota exceeded`, OR
 4. The output/stderr contains a known crash marker: `EISDIR`, `ENOENT`, `ECONNREFUSED`, `Cannot find module`, `Error [ERR_`, `TypeError:`, `SyntaxError:`, `UnhandledPromiseRejection`.
 
@@ -256,12 +273,12 @@ If the background task is still running after all Claude evaluation passes are c
 
 **Decision tree** (apply in order — first match wins):
 
-1. **`CODEX_EXIT == 0` AND output size > 200 bytes AND no rate-limit/crash markers** → Use Codex output directly. Skip fallback.
-2. **Any failure mode from the Step 3a trigger table** (non-zero exit, tiny output, rate-limit marker, crash marker) → Attempt fallback:
+1. **Launch/status/result exits are 0, job status is completed, useful final output is present, and no rate-limit/crash markers are present** → Use Codex output directly from `/tmp/codex-result.json`. Skip fallback.
+2. **Any failure mode from the Step 3a trigger table** (non-zero exit, failed job, missing final output, rate-limit marker, crash marker) → Attempt fallback:
    - If `~/.codex/.openai-fallback-key` exists → run the fallback curl invocation from Step 3a. Substitute the fallback text for the Codex output. Label it per the trigger reason.
    - If the key file is missing → report to the user:
      ```
-     Codex adversarial review unavailable: <reason> (exit=<CODEX_EXIT>, markers=<detected>).
+     Codex adversarial review unavailable: <reason> (launch=<CODEX_LAUNCH_EXIT>, status=<CODEX_STATUS_EXIT>, result=<CODEX_RESULT_EXIT>, markers=<detected>).
      To enable fallback: create ~/.codex/.openai-fallback-key (chmod 600) containing an
      OpenAI API key, then re-run /evaluate. Proceeding with Claude-only evaluation for now.
      ```

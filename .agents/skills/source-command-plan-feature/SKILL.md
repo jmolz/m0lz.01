@@ -167,12 +167,15 @@ Run two independent adversaries **in parallel** (not sequentially) at every tier
 - Tier 3 → `subagent_type: "architect"`
 - Pass the critique prompt with plan + AGENTS.md + git log appended.
 
-**Stream B — Codex GPT-5.5 xhigh task** (runs in background via `Bash` with `run_in_background: true`). Always `--model gpt-5.5 --effort xhigh`:
+**Stream B — Codex GPT-5.5 xhigh task** (runs in background via `Bash` with `run_in_background: true`). Always `--model gpt-5.5 --effort xhigh`.
+
+Use the same sandbox, external-approval, JSON launch, `status --wait`, and `result --json` handling as `/evaluate` Step 3a. The initial background launch output is only a receipt; do not treat a short launch receipt as an empty adversarial review.
 
 ```bash
 node "$HOME/.codex/plugins/cache/openai-codex/codex/1.0.4/scripts/codex-companion.mjs" \
-  task --background --model gpt-5.5 --effort xhigh \
-  "{the critique prompt above, with plan + AGENTS.md + git log appended}"
+  task --background --json --model gpt-5.5 --effort xhigh \
+  "{the critique prompt above, with plan + AGENTS.md + git log appended}" \
+  > /tmp/codex-launch.json 2> /tmp/codex-launch-err.txt
 ```
 
 #### Rate-Limit Fallback
