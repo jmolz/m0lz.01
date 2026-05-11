@@ -113,3 +113,24 @@ Single step, passed as the `--steps-inline` JSON array:
 | # | `command` | `args` | `checkpoint_message` |
 |---|---|---|---|
 | 1 | `blog unpublish start` | `[<slug>, --confirm]` | Irreversible. Proceed? |
+
+## Journey E — Fix frontmatter after publish ran
+
+**Intent**: "Regenerate the frontmatter on `<slug>` — companion_repo was missing / project_id changed / canonical URL is wrong."
+
+### CLI handoffs
+
+1. Skill classifies: recovery command. Only legal when `post.phase` is `draft`, `evaluate`, or `publish` — **not** `published`. Check via `!blog publish show "$SLUG" --json` or `!blog status --json`.
+2. If the post is `project-launch` and `project_id` is missing or wrong, include `--project <id>` in the plan step. This patches the row before frontmatter is regenerated; do not tell the operator to use SQL.
+3. Human checkpoint explains scope: "This rewrites `.blog-agent/drafts/<slug>/index.mdx` from the current post row + config. The site-repo copy (if already committed on a PR branch) is NOT touched — update it manually on that branch. Continue?"
+4. Substitute `$SLUG`/`$JSON` first, then `!blog agent plan "$SLUG" --intent "regenerate frontmatter for <slug>" --content-type ... --depth park --venues "hub" --steps-inline "$JSON"`.
+5. On approval: capture the plan path from step 4 into `$PLAN`, then `!blog agent approve "$PLAN"` → `!blog agent verify "$PLAN"` → `!blog agent apply "$PLAN"`. Never emit a literal `<plan-path>` token to the shell.
+6. The `apply` step runs the single `blog draft regenerate-frontmatter` invocation, which writes a receipt to `.blog-agent/drafts/<slug>/.frontmatter-regenerated.json` alongside the rewritten MDX.
+
+### Plan-step payload
+
+Single step, passed as the `--steps-inline` JSON array:
+
+| # | `command` | `args` | `checkpoint_message` |
+|---|---|---|---|
+| 1 | `blog draft regenerate-frontmatter` | `[<slug>]` or `[<slug>, --project, <id>]` | Rewrites the local draft frontmatter in place. Site-repo copy unchanged. Proceed? |

@@ -17,7 +17,23 @@ export function initResearchPost(
   topic: string,
   mode: Mode,
   contentType: ContentType,
+  projectId?: string | null,
 ): InitResearchResult {
+  // v0.3 dogfood-hardening invariant: project-launch posts must carry a
+  // resolved project ID at research-init time. The CLI boundary resolves
+  // projectId from --project → prompt regex → null; a null here at this
+  // point means every resolution path failed. Throwing in the library
+  // (rather than only at the CLI) closes the loop on direct library
+  // callers (tests, future library consumers) who would otherwise miss
+  // the guard.
+  if (contentType === 'project-launch' && (projectId === undefined || projectId === null || projectId === '')) {
+    throw new Error(
+      `[AGENT_ERROR] PROJECT_UNLINKED: project-launch content type requires a project ID. ` +
+      `Pass --project <id> on 'blog research init', include a catalog-style ID (e.g., m0lz.01) ` +
+      `in the --topic text, or register the project in .blogrc.yaml under 'projects:'.`,
+    );
+  }
+
   const existing = db.prepare('SELECT * FROM posts WHERE slug = ?').get(slug) as PostRow | undefined;
   if (existing) {
     if (existing.phase !== 'research') {
@@ -30,9 +46,9 @@ export function initResearchPost(
   }
 
   db.prepare(`
-    INSERT INTO posts (slug, topic, content_type, phase, mode)
-    VALUES (?, ?, ?, 'research', ?)
-  `).run(slug, topic, contentType, mode);
+    INSERT INTO posts (slug, topic, content_type, phase, mode, project_id)
+    VALUES (?, ?, ?, 'research', ?, ?)
+  `).run(slug, topic, contentType, mode, projectId ?? null);
 
   const post = db.prepare('SELECT * FROM posts WHERE slug = ?').get(slug) as PostRow | undefined;
   if (!post) {

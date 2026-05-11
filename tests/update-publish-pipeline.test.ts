@@ -114,6 +114,15 @@ function installExec(matcher: ExecMatcher): void {
     if (cmd === 'git' && args.includes('status') && args.includes('--porcelain')) {
       return '';
     }
+    // v0.3 origin-sync default: pretend in-sync unless the test explicitly
+    // overrides via the matcher. Update-mode uses createSitePR underneath
+    // which runs assertOriginInSync before any mutation.
+    if (cmd === 'git' && args.includes('fetch') && args.includes('origin')) {
+      return '';
+    }
+    if (cmd === 'git' && args.includes('rev-list') && args.includes('--count')) {
+      return '0\n';
+    }
     const result = matcher(cmd, args);
     if (result instanceof Error) throw result;
     if (result === null) {

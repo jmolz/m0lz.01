@@ -14,6 +14,7 @@ import {
   registerAsset,
   listAssets,
   draftPath,
+  regenerateDraftFrontmatter,
   PLACEHOLDER_PATTERN,
 } from '../core/draft/state.js';
 import { parseFrontmatter, validateFrontmatter } from '../core/draft/frontmatter.js';
@@ -32,6 +33,10 @@ export interface DraftPaths {
   benchmarkDir?: string;
   researchDir?: string;
   configPath?: string;
+}
+
+interface RegenerateFrontmatterCliOptions {
+  projectId?: string;
 }
 
 function requireDb(dbPath: string): void {
@@ -68,7 +73,7 @@ export function runDraftInit(slug: string, paths: DraftPaths = {}): void {
   try {
     let result: { draftPath: string; frontmatter: import('../core/draft/frontmatter.js').PostFrontmatter };
     try {
-      result = initDraft(db, slug, draftsDir, benchmarkDir, researchDir, config);
+      result = initDraft(db, slug, draftsDir, benchmarkDir, researchDir, config, configPath);
     } catch (e) {
       console.error((e as Error).message);
       process.exitCode = 1;
@@ -315,6 +320,66 @@ export function runDraftAddAsset(
   }
 }
 
+export function runDraftRegenerateFrontmatter(
+  slug: string,
+  paths: DraftPaths = {},
+  opts: RegenerateFrontmatterCliOptions = {},
+): void {
+  try {
+    validateSlug(slug);
+  } catch (e) {
+    console.error((e as Error).message);
+    process.exitCode = 1;
+    return;
+  }
+
+  const dbPath = paths.dbPath ?? DB_PATH;
+  const draftsDir = paths.draftsDir ?? DRAFTS_DIR;
+  const configPath = paths.configPath ?? CONFIG_PATH;
+  requireDb(dbPath);
+
+  if (!existsSync(configPath)) {
+    console.error(`Config not found: ${configPath}. Run 'blog init' first.`);
+    process.exitCode = 1;
+    return;
+  }
+
+  let config;
+  try {
+    config = loadConfig(configPath);
+  } catch (e) {
+    console.error((e as Error).message);
+    process.exitCode = 1;
+    return;
+  }
+
+  const db = getDatabase(dbPath);
+  try {
+    let result;
+    try {
+      result = regenerateDraftFrontmatter(db, slug, draftsDir, config, configPath, {
+        projectId: opts.projectId,
+      });
+    } catch (e) {
+      console.error((e as Error).message);
+      process.exitCode = 1;
+      return;
+    }
+
+    console.log(`Frontmatter regenerated: ${result.draftPath}`);
+    if (result.fieldsChanged.length === 0) {
+      console.log('No field changes (receipt still written).');
+    } else {
+      console.log(`Fields changed: ${result.fieldsChanged.join(', ')}`);
+    }
+    console.log(`Previous hash: ${result.previousHash}`);
+    console.log(`New hash:      ${result.newHash}`);
+    console.log(`Receipt:       ${result.receiptPath}`);
+  } finally {
+    closeDatabase(db);
+  }
+}
+
 export function runDraftComplete(slug: string, paths: DraftPaths = {}): void {
   try {
     validateSlug(slug);
@@ -381,5 +446,13 @@ export function registerDraft(program: Command): void {
     .description('Validate draft and advance to evaluate phase')
     .action((slug: string) => {
       runDraftComplete(slug);
+    });
+
+  draft
+    .command('regenerate-frontmatter <slug>')
+    .description('Rewrite frontmatter from current post+config, preserving body (pre-published only)')
+    .option('--project <id>', 'Set/update project_id before regenerating frontmatter')
+    .action((slug: string, opts: { project?: string }) => {
+      runDraftRegenerateFrontmatter(slug, {}, { projectId: opts.project });
     });
 }

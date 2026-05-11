@@ -144,6 +144,16 @@ function installExec(matcher: ExecMatcher): void {
     if (cmd === 'git' && args.includes('remote') && args.includes('get-url')) {
       return 'git@github.com:jmolz/m0lz.00.git\n';
     }
+    // Default: origin-sync check — `git fetch origin main --quiet` and
+    // `git rev-list --count origin/main..main`. Return "in sync"
+    // (exit 0, zero ahead) so existing tests not focused on origin
+    // divergence don't need to model the new v0.3 guard.
+    if (cmd === 'git' && args.includes('fetch') && args.includes('origin')) {
+      return '';
+    }
+    if (cmd === 'git' && args.includes('rev-list') && args.includes('--count')) {
+      return '0\n';
+    }
     const result = matcher(cmd, args);
     if (result instanceof Error) throw result;
     if (result === null) {
@@ -479,6 +489,8 @@ describe('createSitePR — dirty-state guardrail (Codex Pass 4 regression)', () 
       if (cmd === 'git' && args.includes('config') && args.includes('--get')) {
         return 'git@github.com:jmolz/m0lz.00.git\n';
       }
+      if (cmd === 'git' && args.includes('fetch') && args.includes('origin')) return '';
+      if (cmd === 'git' && args.includes('rev-list') && args.includes('--count')) return '0\n';
       if (cmd === 'git' && args.includes('branch') && args.includes('--list')) return '';
       if (cmd === 'git' && args.includes('checkout') && args.includes('-b')) return '';
       if (cmd === 'git' && args.includes('add')) return '';
@@ -535,6 +547,8 @@ describe('createSitePR — dirty-state guardrail (Codex Pass 4 regression)', () 
       if (cmd === 'git' && args.includes('config') && args.includes('--get')) {
         return 'git@github.com:jmolz/m0lz.00.git\n';
       }
+      if (cmd === 'git' && args.includes('fetch') && args.includes('origin')) return '';
+      if (cmd === 'git' && args.includes('rev-list') && args.includes('--count')) return '0\n';
       if (cmd === 'git' && args.includes('branch') && args.includes('--list')) return '';
       if (cmd === 'git' && args.includes('checkout') && args.includes('-b')) return '';
       if (cmd === 'git' && args.includes('add')) return '';
@@ -610,7 +624,7 @@ describe('checkPreviewGate', () => {
       return null;
     });
 
-    const result = checkPreviewGate('merged', f.config, f.paths);
+    const result = checkPreviewGate('merged', f.config, f.paths, f.db);
     expect(result.merged).toBe(true);
     expect(result.message).toBeUndefined();
   });
@@ -628,7 +642,7 @@ describe('checkPreviewGate', () => {
       return null;
     });
 
-    const result = checkPreviewGate('pending', f.config, f.paths);
+    const result = checkPreviewGate('pending', f.config, f.paths, f.db);
     expect(result.merged).toBe(false);
     expect(result.message).toContain('15');
     expect(result.message).toContain('OPEN');
@@ -643,7 +657,7 @@ describe('checkPreviewGate', () => {
       return null;
     });
 
-    const result = checkPreviewGate('missing', f.config, f.paths);
+    const result = checkPreviewGate('missing', f.config, f.paths, f.db);
     expect(result.merged).toBe(false);
     expect(result.message).toMatch(/No PR number recorded/);
   });

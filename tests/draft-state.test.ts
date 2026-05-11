@@ -144,7 +144,7 @@ describe('initDraft', () => {
 
     const db = getDatabase(dbPath);
     try {
-      const result = initDraft(db, 'gamma', draftsDir, benchmarkDir, researchDir, config);
+      const result = initDraft(db, 'gamma', draftsDir, benchmarkDir, researchDir, config, join(dir, '.blogrc.yaml'));
 
       expect(existsSync(result.draftPath)).toBe(true);
       expect(existsSync(join(draftsDir, 'gamma', 'assets'))).toBe(true);
@@ -170,7 +170,7 @@ describe('initDraft', () => {
 
     const db = getDatabase(dbPath);
     try {
-      const first = initDraft(db, 'delta', draftsDir, benchmarkDir, researchDir, config);
+      const first = initDraft(db, 'delta', draftsDir, benchmarkDir, researchDir, config, join(dir, '.blogrc.yaml'));
 
       // Simulate the skill filling in the draft — keep valid frontmatter
       // at the top so the file still parses, with author-edited body.
@@ -179,7 +179,7 @@ describe('initDraft', () => {
         '---\ntitle: Custom\ndescription: Edited\ndate: "2026-04-14"\ntags:\n  - test\npublished: false\n---\n\nauthor body content\n',
       );
 
-      const second = initDraft(db, 'delta', draftsDir, benchmarkDir, researchDir, config);
+      const second = initDraft(db, 'delta', draftsDir, benchmarkDir, researchDir, config, join(dir, '.blogrc.yaml'));
       expect(second.draftPath).toBe(first.draftPath);
       expect(second.frontmatter.title).toBe('Custom');
 
@@ -201,7 +201,7 @@ describe('initDraft', () => {
 
     const db = getDatabase(dbPath);
     try {
-      const result = initDraft(db, 'epsilon', draftsDir, benchmarkDir, researchDir, config);
+      const result = initDraft(db, 'epsilon', draftsDir, benchmarkDir, researchDir, config, join(dir, '.blogrc.yaml'));
       const content = readFileSync(result.draftPath, 'utf-8');
       expect(content).toContain('## Benchmark Results');
       expect(content).toContain('## Methodology');
@@ -221,7 +221,7 @@ describe('initDraft', () => {
 
     const db = getDatabase(dbPath);
     try {
-      const result = initDraft(db, 'zeta', draftsDir, benchmarkDir, researchDir, config);
+      const result = initDraft(db, 'zeta', draftsDir, benchmarkDir, researchDir, config, join(dir, '.blogrc.yaml'));
       const content = readFileSync(result.draftPath, 'utf-8');
       expect(content).not.toContain('## Benchmark Results');
       expect(content).not.toContain('## Methodology');
@@ -238,7 +238,7 @@ describe('initDraft', () => {
     const db = getDatabase(dbPath);
     try {
       expect(() =>
-        initDraft(db, 'missing', join(dir, 'drafts'), join(dir, 'bench'), join(dir, 'research'), makeConfig(dir)),
+        initDraft(db, 'missing', join(dir, 'drafts'), join(dir, 'bench'), join(dir, 'research'), makeConfig(dir), join(dir, '.blogrc.yaml')),
       ).toThrow('Post not found');
     } finally {
       closeDatabase(db);
@@ -258,7 +258,7 @@ describe('completeDraft', () => {
 
     const db = getDatabase(dbPath);
     try {
-      initDraft(db, 'eta', draftsDir, benchmarkDir, researchDir, config);
+      initDraft(db, 'eta', draftsDir, benchmarkDir, researchDir, config, join(dir, '.blogrc.yaml'));
 
       // Write a valid draft (replace placeholders)
       const mdxPath = draftPath(draftsDir, 'eta');
@@ -289,7 +289,7 @@ describe('completeDraft', () => {
 
     const db = getDatabase(dbPath);
     try {
-      initDraft(db, 'eta-placeholders', draftsDir, benchmarkDir, researchDir, config);
+      initDraft(db, 'eta-placeholders', draftsDir, benchmarkDir, researchDir, config, join(dir, '.blogrc.yaml'));
 
       // Replace frontmatter placeholders but leave body placeholders
       const mdxPath = draftPath(draftsDir, 'eta-placeholders');
@@ -315,7 +315,7 @@ describe('completeDraft', () => {
 
     const db = getDatabase(dbPath);
     try {
-      initDraft(db, 'eta-assets', draftsDir, benchmarkDir, researchDir, config);
+      initDraft(db, 'eta-assets', draftsDir, benchmarkDir, researchDir, config, join(dir, '.blogrc.yaml'));
 
       // Fill in draft completely
       const mdxPath = draftPath(draftsDir, 'eta-assets');

@@ -5,7 +5,9 @@ import { dirname, isAbsolute, join, resolve } from 'node:path';
 import Database from 'better-sqlite3';
 
 import { BlogConfig } from '../config/types.js';
-import { expectedSiteCoords, requireOriginMatch } from './origin-guard.js';
+import { assertOriginInSync, expectedSiteCoords, requireOriginMatch } from './origin-guard.js';
+import { PreviewUrls, computePreviewUrls } from './preview-urls.js';
+import { PostRow } from '../db/types.js';
 
 // Steps 3 + 4 of the publish pipeline.
 //
@@ -32,13 +34,19 @@ export interface SitePaths {
   configPath: string; // absolute path to .blogrc.yaml
 }
 
+export interface PreviewGatePaths extends SitePaths {
+  // computePreviewUrls needs the research-pages directory, already in
+  // SitePaths — no additional fields required.
+  _?: undefined;
+}
+
 export interface SitePRResult {
   prNumber: number;
   prUrl: string;
   branchName: string;
 }
 
-export interface PreviewGateResult {
+export interface PreviewGateResult extends PreviewUrls {
   merged: boolean;
   message?: string;
 }
@@ -112,6 +120,12 @@ export interface SitePROverrides {
   commitMessage?: string;
   prTitle?: string;
   prBodyPrefix?: string;
+  // v0.3 dogfood-hardening: when true, skip the origin-sync precondition
+  // (local main ahead of origin/main). The override flag MUST be surfaced
+  // via `blog publish start --allow-main-ahead` which puts the flag on
+  // the plan-step args array, so the SHA256 plan hash binds the operator's
+  // consent. Default (undefined/false) enforces the sync check.
+  allowMainAhead?: boolean;
 }
 
 export function createSitePR(
@@ -202,6 +216,19 @@ export function createSitePR(
   // which passes `update/<slug>-cycle-<N>` as the branch override).
   const expected = expectedSiteCoords(config);
   requireOriginMatch(siteRepoPath, expected.owner, expected.name);
+
+  // v0.3 dogfood-hardening: refuse to cut a feature branch from a local
+  // main that has commits origin/main doesn't yet know about. A branch
+  // cut from ahead-of-origin main carries those unpushed commits into the
+  // PR diff — silently shipping them with this post. The operator either
+  // resolves the divergence (push/rebase) before re-running, or passes
+  // --allow-main-ahead to explicitly opt in. The override propagates
+  // through the plan-file hash so approval re-consents after edit.
+  if (overrides?.allowMainAhead) {
+    console.error(`[WARN] site-pr: --allow-main-ahead bypassed origin sync check`);
+  } else {
+    assertOriginInSync(siteRepoPath, 'main');
+  }
 
   // Determine repo coordinates used for the `--repo` flag on `gh`
   // commands. After requireOriginMatch above, origin is known to match
@@ -384,11 +411,26 @@ export function checkPreviewGate(
   slug: string,
   config: BlogConfig,
   paths: SitePaths,
+  db: Database.Database,
 ): PreviewGateResult {
   const siteRepoPath = resolveSiteRepoPath(paths.configPath, config.site.repo_path);
   if (!existsSync(siteRepoPath)) {
     throw new Error(`Site repo path does not exist: ${siteRepoPath}`);
   }
+  // v0.3 dogfood-hardening: compute the 3 preview URLs up front so every
+  // result branch (merged, unmerged, errored) carries them. The skill's
+  // preview-gate checkpoint renders these back to the operator; a
+  // missing-data branch in the result would silently strip the URLs.
+  const post = db
+    .prepare('SELECT * FROM posts WHERE slug = ?')
+    .get(slug) as PostRow | undefined;
+  const previewUrls: PreviewUrls = post
+    ? computePreviewUrls(post, config, paths.configPath, paths.researchPagesDir)
+    : {
+        canonicalUrl: `${config.site.base_url}/writing/${slug}`,
+        supplementaryUrl: null,
+        companionRepoUrl: null,
+      };
   // Origin trust-boundary check even on a read-only `gh pr view` — a
   // misconfigured remote would cause the status check to poll the wrong
   // repo's PR number and block the pipeline forever on a merged PR that
@@ -408,6 +450,7 @@ export function checkPreviewGate(
     return {
       merged: false,
       message: 'No PR number recorded — run site-pr step first',
+      ...previewUrls,
     };
   }
   const prNumber = readFileSync(prNumberPath, 'utf-8').trim();
@@ -426,12 +469,13 @@ export function checkPreviewGate(
   }
 
   if (state === 'MERGED') {
-    return { merged: true };
+    return { merged: true, ...previewUrls };
   }
   return {
     merged: false,
     message:
       `PR #${prNumber} is ${state} — review the Vercel preview, merge when ready, ` +
       `then re-run blog publish start ${slug}`,
+    ...previewUrls,
   };
 }

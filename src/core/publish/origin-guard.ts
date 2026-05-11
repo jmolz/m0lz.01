@@ -58,7 +58,7 @@ export type OriginState = 'absent' | 'matches';
 // wording — without the locale pin, a French/German/Japanese git would
 // emit a translated message and the guard would mis-classify
 // "origin not configured yet" as an environment failure.
-function readOriginUrl(repoPath: string): string | null {
+export function readOriginUrl(repoPath: string): string | null {
   try {
     return String(
       execFileSync('git', ['-C', repoPath, 'remote', 'get-url', 'origin'], {
@@ -163,6 +163,100 @@ export function requireOriginMatch(
 // No `assertOriginMatches` alias — Pass 3 migrated every caller to the
 // explicit getOriginState (tolerant) or requireOriginMatch (strict)
 // name so call sites document their trust boundary at the import.
+
+// Assert that `<branch>` in `repoPath` has no local commits beyond
+// `origin/<branch>`. Throws `[AGENT_ERROR] ORIGIN_OUT_OF_SYNC` when
+// `git rev-list --count origin/<branch>..<branch>` is non-zero. This
+// closes the dogfood failure where `createSitePR` cut a feature branch
+// from a local main that was ahead of origin/main, so the PR included
+// unpushed commits the operator never meant to ship with this post.
+//
+// Narrows the catch of `git fetch`/`rev-list` failures to the specific
+// "unknown revision or path" case git reports when `origin/<branch>`
+// doesn't exist yet (fresh clone, just-created branch). Any other
+// subprocess failure (network error, auth failure, missing git binary,
+// not a git repo) is re-thrown with context — a network-disconnected
+// operator's laptop should surface the disconnect loudly, not silently
+// bypass the guard.
+export function assertOriginInSync(
+  repoPath: string,
+  branch: string = 'main',
+): void {
+  // Refresh origin/<branch> so the count is against current remote
+  // state. --quiet suppresses progress noise but NOT errors.
+  try {
+    execFileSync('git', ['-C', repoPath, 'fetch', 'origin', branch, '--quiet'], {
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: { ...process.env, LC_ALL: 'C', LANG: 'C' },
+    });
+  } catch (e) {
+    const err = e as Error & { stderr?: Buffer | string; status?: number };
+    const stderr = String(err.stderr ?? '').toLowerCase();
+    // `couldn't find remote ref <branch>` surfaces when the branch
+    // exists locally but not on origin — semantically the same out-of-sync
+    // condition as "local has commits origin doesn't know about", so
+    // surface it with the same ORIGIN_OUT_OF_SYNC sentinel rather than
+    // the generic subprocess-failure wrapper.
+    if (stderr.includes("couldn't find remote ref") || stderr.includes('could not find remote ref')) {
+      throw new Error(
+        `[AGENT_ERROR] ORIGIN_OUT_OF_SYNC: origin has no ref for ${branch} at '${repoPath}'. ` +
+        `Push local ${branch} to establish the remote tracking branch, ` +
+        `or pass --allow-main-ahead to bypass.`,
+      );
+    }
+    throw new Error(
+      `origin-guard: 'git -C ${repoPath} fetch origin ${branch}' failed ` +
+      `(exit ${err.status ?? '?'}): ${String(err.stderr ?? err.message).trim()}. ` +
+      `Resolve the network/auth issue before publishing, or pass --allow-main-ahead ` +
+      `if you've already verified local ${branch} is aligned with remote.`,
+    );
+  }
+
+  let countOut: string;
+  try {
+    countOut = execFileSync(
+      'git',
+      ['-C', repoPath, 'rev-list', '--count', `origin/${branch}..${branch}`],
+      {
+        encoding: 'utf-8',
+        stdio: ['pipe', 'pipe', 'pipe'],
+        env: { ...process.env, LC_ALL: 'C', LANG: 'C' },
+      },
+    );
+  } catch (e) {
+    const err = e as Error & { stderr?: Buffer | string; status?: number };
+    const stderr = String(err.stderr ?? '').toLowerCase();
+    // `unknown revision or path not in the working tree` surfaces when
+    // origin/<branch> doesn't exist (e.g., unpushed local branch). Treat
+    // as out-of-sync rather than pretending the count was 0 — the
+    // operator explicitly asked for origin comparison.
+    if (stderr.includes('unknown revision') || stderr.includes('ambiguous argument')) {
+      throw new Error(
+        `[AGENT_ERROR] ORIGIN_OUT_OF_SYNC: origin/${branch} not found at '${repoPath}'. ` +
+        `Push local ${branch} to establish the remote tracking branch, ` +
+        `or pass --allow-main-ahead to bypass (the unpushed commits will be included in the PR).`,
+      );
+    }
+    throw new Error(
+      `origin-guard: 'git -C ${repoPath} rev-list --count origin/${branch}..${branch}' failed ` +
+      `(exit ${err.status ?? '?'}): ${String(err.stderr ?? err.message).trim()}`,
+    );
+  }
+
+  const ahead = Number(countOut.trim());
+  if (!Number.isFinite(ahead)) {
+    throw new Error(
+      `origin-guard: could not parse rev-list --count output at '${repoPath}': ${JSON.stringify(countOut)}`,
+    );
+  }
+  if (ahead > 0) {
+    throw new Error(
+      `[AGENT_ERROR] ORIGIN_OUT_OF_SYNC: local ${branch} is ${ahead} commit(s) ahead of origin/${branch}. ` +
+      `Push or rebase before publishing, or pass --allow-main-ahead to explicitly include these commits in the PR.`,
+    );
+  }
+}
 
 // Resolve the expected GitHub coordinates for the site repo. Prefers
 // the explicit `config.site.github_repo` field when set; otherwise

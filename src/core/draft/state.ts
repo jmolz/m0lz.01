@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -6,7 +7,7 @@ import Database from 'better-sqlite3';
 import { PostRow, AssetType, AssetRow, ContentType } from '../db/types.js';
 import { BlogConfig } from '../config/types.js';
 import { advancePhase } from '../research/state.js';
-import { generateFrontmatter, parseFrontmatter, validateFrontmatter, PostFrontmatter } from './frontmatter.js';
+import { generateFrontmatter, parseFrontmatter, serializeFrontmatter, validateFrontmatter, PostFrontmatter } from './frontmatter.js';
 import { renderDraftTemplate, DraftContext } from './template.js';
 import { getBenchmarkContext } from './benchmark-data.js';
 import { readExistingTags } from './tags.js';
@@ -40,6 +41,7 @@ export function initDraft(
   benchmarkDir: string,
   researchDir: string,
   config: BlogConfig,
+  configPath: string,
 ): { draftPath: string; frontmatter: PostFrontmatter } {
   const post = getDraftPost(db, slug);
   if (!post) {
@@ -58,7 +60,7 @@ export function initDraft(
 
   mkdirSync(assetsDir, { recursive: true });
 
-  const frontmatter = generateFrontmatter(post, config);
+  const frontmatter = generateFrontmatter(post, config, configPath);
 
   // Build draft context from research and benchmark data
   const contentType = (post.content_type ?? 'technical-deep-dive') as ContentType;
@@ -158,4 +160,174 @@ export function listAssets(db: Database.Database, slug: string): AssetRow[] {
   return db.prepare(
     'SELECT * FROM assets WHERE post_slug = ? ORDER BY id ASC',
   ).all(slug) as AssetRow[];
+}
+
+// Anchored frontmatter-split regex — mirrors `parseFrontmatter` so a
+// thematic break `---` in the body cannot corrupt the split. Matches
+// the leading `---\n<yaml>\n---\n?` block; everything after is body
+// that must be preserved byte-for-byte when rewriting.
+const FRONTMATTER_SPLIT_RE = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n)?/;
+
+export interface RegenerateFrontmatterResult {
+  // Absolute path of the MDX file that was rewritten.
+  draftPath: string;
+  // SHA256 of the frontmatter block (between the two `---` delimiters)
+  // BEFORE the rewrite. Lets operators verify the receipt against the
+  // original file if they kept a backup.
+  previousHash: string;
+  // SHA256 of the frontmatter block AFTER the rewrite.
+  newHash: string;
+  // Field names whose values changed. Empty array when the rewrite was
+  // a no-op (e.g., already current) — receipt still written for audit.
+  fieldsChanged: string[];
+  // Absolute path of the audit-log JSON receipt file written beside the
+  // draft: `.blog-agent/drafts/<slug>/.frontmatter-regenerated.json`.
+  receiptPath: string;
+}
+
+export interface RegenerateFrontmatterOptions {
+  // Optional recovery input for dogfood failures where an existing
+  // project-launch row reached draft/evaluate/publish with project_id=NULL.
+  // When supplied, this updates posts.project_id before deriving frontmatter.
+  projectId?: string;
+}
+
+// v0.3 dogfood-hardening: rewrites the frontmatter block of
+// `.blog-agent/drafts/<slug>/index.mdx` in place from the current
+// (post, config) pair, preserving the body byte-for-byte. Does NOT
+// touch the site repo — the site-repo copy must be fixed separately
+// via the PR branch (or by re-running the publish pipeline if not yet
+// merged). Rejects phase=published because the canonical MDX for a
+// published post lives in the site repo and should be updated there,
+// not here.
+export function regenerateDraftFrontmatter(
+  db: Database.Database,
+  slug: string,
+  draftsDir: string,
+  config: BlogConfig,
+  configPath: string,
+  options: RegenerateFrontmatterOptions = {},
+): RegenerateFrontmatterResult {
+  let post = db.prepare('SELECT * FROM posts WHERE slug = ?').get(slug) as PostRow | undefined;
+  if (!post) {
+    throw new Error(`Post not found: ${slug}`);
+  }
+  if (post.phase === 'published') {
+    throw new Error(
+      `Post '${slug}' is in phase 'published'. Frontmatter lives in the site repo at ` +
+      `{content_dir}/${slug}/index.mdx; update it there on a branch, not in the local draft.`,
+    );
+  }
+
+  const projectIdBefore = post.project_id;
+  let projectIdOverride: string | undefined;
+  if (options.projectId !== undefined) {
+    const nextProjectId = options.projectId.trim();
+    if (nextProjectId.length === 0) {
+      throw new Error('Project ID cannot be empty.');
+    }
+    projectIdOverride = nextProjectId;
+  }
+
+  if (post.content_type === 'project-launch' && !post.project_id && !projectIdOverride) {
+    throw new Error(
+      `[AGENT_ERROR] PROJECT_UNLINKED: project-launch post '${slug}' has no project_id. ` +
+      `Re-run with 'blog draft regenerate-frontmatter ${slug} --project <id>' so ` +
+      `companion_repo can be resolved from .blogrc.yaml projects.`,
+    );
+  }
+
+  const mdxPath = draftPath(draftsDir, slug);
+  if (!existsSync(mdxPath)) {
+    throw new Error(`Draft MDX not found: ${mdxPath}. Run 'blog draft init ${slug}' first.`);
+  }
+
+  const original = readFileSync(mdxPath, 'utf-8');
+  const match = original.match(FRONTMATTER_SPLIT_RE);
+  if (!match) {
+    throw new Error(
+      `Draft MDX at ${mdxPath} has no frontmatter delimiters. ` +
+      `Expected leading '---\\n<yaml>\\n---'.`,
+    );
+  }
+  const body = original.slice(match[0].length);
+
+  const previousFm = parseFrontmatter(original);
+  const previousHash = createHash('sha256').update(match[1]).digest('hex');
+
+  if (projectIdOverride !== undefined && post.project_id !== projectIdOverride) {
+    db.prepare(
+      'UPDATE posts SET project_id = ?, updated_at = CURRENT_TIMESTAMP WHERE slug = ?',
+    ).run(projectIdOverride, slug);
+    post = { ...post, project_id: projectIdOverride };
+  }
+
+  // Compose the new frontmatter from current post+config. Preserve every
+  // operator-authored value on the existing block (title, description,
+  // tags, date, etc.) — we only want to re-apply the fields that
+  // generateFrontmatter resolves from post/config state. Otherwise this
+  // would overwrite the operator's title every time.
+  const derived = generateFrontmatter(post, config, configPath);
+  const merged: PostFrontmatter = {
+    ...previousFm,
+    canonical: derived.canonical ?? previousFm.canonical,
+    // companion_repo: re-resolve EVERY time — that's the whole point of
+    // this command. If the new resolution is null and the previous was
+    // set, keep the previous (no downgrade); if both null, stays null.
+    companion_repo: derived.companion_repo ?? previousFm.companion_repo,
+    project: derived.project ?? previousFm.project,
+  };
+
+  const newFrontmatterBlock = serializeFrontmatter(merged);
+  // serializeFrontmatter returns `---\n<yaml>---` (no trailing newline
+  // after the closing ---). Reassembling: `<block>\n<body>` preserves
+  // the original newline pattern because `body` retains its leading
+  // newline(s) from the source file.
+  const newContent = newFrontmatterBlock + '\n' + body;
+  writeFileSync(mdxPath, newContent, 'utf-8');
+
+  const newMatch = newContent.match(FRONTMATTER_SPLIT_RE);
+  const newHash = newMatch
+    ? createHash('sha256').update(newMatch[1]).digest('hex')
+    : '';
+
+  const fieldsChanged: string[] = [];
+  const keys = new Set<string>([
+    ...Object.keys(previousFm),
+    ...Object.keys(merged),
+  ]);
+  for (const k of keys) {
+    const prev = (previousFm as unknown as Record<string, unknown>)[k];
+    const next = (merged as unknown as Record<string, unknown>)[k];
+    if (JSON.stringify(prev) !== JSON.stringify(next)) {
+      fieldsChanged.push(k);
+    }
+  }
+
+  const receiptPath = join(draftsDir, slug, '.frontmatter-regenerated.json');
+  writeFileSync(
+    receiptPath,
+    JSON.stringify(
+      {
+        timestamp: new Date().toISOString(),
+        slug,
+        previous_hash: previousHash,
+        new_hash: newHash,
+        fields_changed: fieldsChanged,
+        project_id_before: projectIdBefore,
+        project_id_after: post.project_id,
+      },
+      null,
+      2,
+    ) + '\n',
+    'utf-8',
+  );
+
+  return {
+    draftPath: mdxPath,
+    previousHash,
+    newHash,
+    fieldsChanged,
+    receiptPath,
+  };
 }

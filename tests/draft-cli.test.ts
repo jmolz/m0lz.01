@@ -83,7 +83,11 @@ function paths(f: Fixture): DraftPaths {
 function setupDraftSlug(f: Fixture, slug: string, contentType: string = 'technical-deep-dive'): void {
   const db = getDatabase(f.dbPath);
   try {
-    initResearchPost(db, slug, 'test topic', 'directed', contentType as any);
+    // project-launch posts now require a projectId at init time (v0.3
+    // dogfood-hardening guard). Seed a deterministic test.01 ID so the
+    // existing tests exercise the full project-launch path.
+    const projectId = contentType === 'project-launch' ? 'test.01' : null;
+    initResearchPost(db, slug, 'test topic', 'directed', contentType as any, projectId);
     advancePhase(db, slug, 'benchmark');
     advancePhase(db, slug, 'draft');
   } finally {

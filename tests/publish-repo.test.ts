@@ -86,7 +86,8 @@ function seedPost(
   contentType: 'project-launch' | 'technical-deep-dive' | 'analysis-opinion',
   title = 'Repo Title',
 ): void {
-  initResearchPost(db, slug, 'topic', 'directed', contentType);
+  const projectId = contentType === 'project-launch' ? 'test.01' : null;
+  initResearchPost(db, slug, 'topic', 'directed', contentType, projectId);
   advancePhase(db, slug, 'benchmark');
   advancePhase(db, slug, 'draft');
   advancePhase(db, slug, 'evaluate');

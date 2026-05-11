@@ -73,6 +73,7 @@ npx vitest run \
   tests/research-sources.test.ts \
   tests/research-document.test.ts \
   tests/research-cli.test.ts \
+  tests/research-project-linking.test.ts \
   tests/research-set-section.test.ts \
   tests/benchmark-environment.test.ts \
   tests/benchmark-state.test.ts \
@@ -84,6 +85,7 @@ npx vitest run \
   tests/draft-benchmark-data.test.ts \
   tests/draft-tags.test.ts \
   tests/draft-cli.test.ts \
+  tests/draft-regenerate-frontmatter.test.ts \
   tests/evaluate-reviewer.test.ts \
   tests/evaluate-autocheck.test.ts \
   tests/evaluate-synthesize.test.ts \
@@ -100,6 +102,9 @@ npx vitest run \
   tests/publish-repo.test.ts \
   tests/publish-cli.test.ts \
   tests/publish-site-updates.test.ts \
+  tests/publish-origin-divergence.test.ts \
+  tests/publish-seed-on-start.test.ts \
+  tests/preview-gate-urls.test.ts \
   tests/db-migration-v3.test.ts \
   tests/update-cycles.test.ts \
   tests/update-notice.test.ts \
@@ -241,7 +246,19 @@ Ships the v0.1.0-readiness bundle: shared package-root resolver fixing a latent 
 | `tests/cli-json.test.ts` (6 tests) | `--json` envelope surface | versioned `schema_version='1'` envelope with `kind`/`generated_at`/`data`; `WorkspaceStatus`/`PublishPipeline`/`UpdatePipeline`/`UnpublishPipeline`/`EvaluationState` shapes; empty-DB graceful fallback |
 | `tests/plan-file.test.ts` (61 tests) | Plan schema + hash + validator + apply runner + receipt + apply-lock | canonicalPlanJSON stable-stringify; computePlanHash deterministic; schema rejects park-research, abstract commands, empty steps/venues, `blog agent` nesting, flag-like tokens in command, BANNED_ARG_FLAGS in args (--workspace/--help/-h/--version/-V + `=` forms), slug traversal at shared schema layer, namespace-only commands with args-smuggled subcommand, whitespace variants (double-space/tab/newline), workspace-global mutators (blog init, blog ideas add/start/remove), args[0] != plan.slug for slug-bearing commands; accepts blog status + blog metrics (true leaves); validatePlanForApply throws NO_APPROVAL/HASH_MISMATCH/WORKSPACE_MISMATCH/CRASH_RECOVERY_REQUIRED; applyPlan uses DB-authoritative step state (schema v4), tampered receipt is no-op (forged-skip vector closed), RECEIPT_CONFLICT derived from DB not receipt file, RECEIPT_HASH_MISMATCH on re-approved content, --restart clears ALL open runs for slug, crash-recovery sentinel forces --restart; slug-scoped apply lock serializes different plan_ids for same slug, legacy bare-PID tolerated, honest PID-liveness policy |
 | `tests/skill-smoke.test.ts` (22 tests) | Plugin static shape + SKILL discipline + sibling-doc parity + install-docs | plugin.json + frontmatter valid; allowed-tools contains Bash(blog:*) excludes Write/Edit/Bash(gh:*); body ≤200 lines; no `node -e`/`cat `/`head ` in code fences; every read uses `--json`; no bare destructive execs outside `blog agent apply`; sibling docs (JOURNEYS/CHECKPOINTS) share the discipline; skill-content identity hygiene recursive scan with manifest-field whitelist for plugin.json author/homepage; install-docs structural contract (required files ship, plugin.json declares readable SKILL.md, install docs reference files that exist); contributor symlink resolves; `.claude-plugin/**` in package.json#files |
-| `tests/skill-fixture-integration.test.ts` (25 tests) | Real skill-to-CLI handoff + crash recovery + workspace pinning | preflight → plan → verify-unapproved (NO_APPROVAL) → approve (atomic) → verify (pass) → apply (receipt written); tamper → HASH_MISMATCH; cross-workspace → WORKSPACE_MISMATCH; abstract command + `blog agent` nesting rejected; --steps-inline / --steps-json mutex; slug traversal + leaf-level symlink rejected; --workspace smuggled in step args rejected; --output path clamp (outside reject, wrong-ext reject, valid accept); hand-authored traversal slug rejected at verify; completed plan doesn't block later plan for same slug; forged receipt cannot force RECEIPT_CONFLICT (DB authority only); --restart clears stale open-run debt across plan_ids; RECEIPT_HASH_MISMATCH on re-approval; receipt-JSON tampering benign; apply resumable; preflight respects --workspace override from outside the workspace; preflight honors --workspace > BLOG_WORKSPACE precedence; apply pins spawned children to plan.workspace_root (BLOG_WORKSPACE cannot redirect via child env scrub + --workspace prepend); --workspace=/path compact form recognized; empty --workspace= rejected explicitly; startup shim --workspace operand excluded from positional walk |
+| `tests/skill-fixture-integration.test.ts` (27 tests) | Real skill-to-CLI handoff + crash recovery + workspace pinning | preflight → plan → verify-unapproved (NO_APPROVAL) → approve (atomic) → verify (pass) → apply (receipt written); tamper → HASH_MISMATCH; cross-workspace → WORKSPACE_MISMATCH; abstract command + `blog agent` nesting rejected; --steps-inline / --steps-json mutex; slug traversal + leaf-level symlink rejected; --workspace smuggled in step args rejected; --output path clamp (outside reject, wrong-ext reject, valid accept); hand-authored traversal slug rejected at verify; completed plan doesn't block later plan for same slug; forged receipt cannot force RECEIPT_CONFLICT (DB authority only); --restart clears stale open-run debt across plan_ids; RECEIPT_HASH_MISMATCH on re-approval; receipt-JSON tampering benign; apply resumable; preflight respects --workspace override from outside the workspace; preflight honors --workspace > BLOG_WORKSPACE precedence; apply pins spawned children to plan.workspace_root (BLOG_WORKSPACE cannot redirect via child env scrub + --workspace prepend); --workspace=/path compact form recognized; empty --workspace= rejected explicitly; startup shim --workspace operand excluded from positional walk |
+
+#### v0.3 Dogfood Hardening
+
+Five connected fixes from the first live `blog publish` dogfood. See CHANGELOG.md § 0.3.0.
+
+| Test File | Feature | What It Validates |
+| --------- | ------- | ----------------- |
+| `tests/research-project-linking.test.ts` (15 tests) | `--project` flag + prompt-regex + PROJECT_UNLINKED guard | `extractProjectIdFromPrompt` matches generic catalog IDs, returns null for prose without matches and for bare decimals; `initResearchPost` stores `project_id`, throws `[AGENT_ERROR] PROJECT_UNLINKED` when project-launch has no projectId; `runResearchInit` resolves via flag → regex → null, auto-classifies m0lz.N as project-launch via CATALOG_PATTERN. |
+| `tests/publish-origin-divergence.test.ts` (6 tests) | `assertOriginInSync` + `--allow-main-ahead` | Origin+clone bare-repo fixture; passes when matched; `[AGENT_ERROR] ORIGIN_OUT_OF_SYNC` with commit count when ahead; same sentinel when branch missing on origin; re-throws environment errors with context; direct `createSitePR` exercise verifies `allowMainAhead=true` skips the assertion and emits the bypass warning. |
+| `tests/publish-seed-on-start.test.ts` (4 tests) | `runPublishStart` always seeds on phase=publish | Phase=publish with 0 step rows now seeds 11 on start (`seeded N pipeline_steps for <slug>` log); idempotent re-run; phase=evaluate still promotes; phase=published rejected with actionable error. |
+| `tests/preview-gate-urls.test.ts` (9 tests) | `computePreviewUrls` + `publish show --json` envelope | canonicalUrl always emitted; supplementaryUrl null unless `research-pages/<slug>/index.mdx` exists; companionRepoUrl prefers post.repo_url, falls back to config.projects origin lookup, null on miss; envelope surfaces `data.preview_urls`. |
+| `tests/draft-regenerate-frontmatter.test.ts` (9 tests) | `blog draft regenerate-frontmatter` recovery command | Rewrites frontmatter in place preserving body (even with thematic break); `--project <id>` repairs stale project-launch rows with `project_id=NULL`; missing project IDs fail with `PROJECT_UNLINKED`; writes `.frontmatter-regenerated.json` receipt with hashes + fields_changed; preserves operator-authored title/description/tags; rejects phase=published without touching the file; fails on missing MDX; leaves siblings untouched; rejects invalid slugs. |
 
 ### Source files these tests protect
 
@@ -379,7 +396,7 @@ npm test
 npm run build
 ```
 
-Expected baseline: **0 TypeScript errors, 878 tests passing across 66 suites, clean build** (as of feature/blog-skill-plugin after seven adversarial passes converged: +5 new test files — `workspace-root` (11), `cli-json` (6), `plan-file` (61), `skill-smoke` (22), `skill-fixture-integration` (25) = +125 tests across +5 suites over the 730/58 Release Prep baseline; `cli.test.ts` and `db-migration-v3.test.ts` also extended with plan-plugin regressions. Post-merge addenda: `build-bin-executable` (1), `research-set-section` (13), `voice-parity` (4) = +18 tests across +3 suites). Any drift from this baseline is a signal to investigate before merging.
+Expected baseline: **0 TypeScript errors, 929 tests passing across 71 suites, clean build**. v0.3 dogfood-hardening added +43 tests across +5 new suites — `research-project-linking` (15), `publish-origin-divergence` (6), `publish-seed-on-start` (4), `preview-gate-urls` (9), `draft-regenerate-frontmatter` (9) — plus +8 tests in `draft-frontmatter.test.ts` for companion_repo resolution. Prior baseline was 878/66 (post-Phase-8 addenda). Any drift from this baseline is a signal to investigate before merging.
 
 ## Phase 3: Code Review of Current Changes
 
@@ -518,6 +535,13 @@ Release Prep:
   - Shared package-root resolver (4 tests): PASS / FAIL
   - CLI CWD-independence integration (1 test): PASS / FAIL
   - init.ts hard-fail regression — absent shipped templates (2 tests in cli.test.ts): PASS / FAIL
+
+v0.3 Dogfood Hardening:
+  - Research project linking: --project flag + prompt regex + PROJECT_UNLINKED guard (15 tests): ✓ / ✗
+  - Publish site-pr origin-sync divergence + allow-main-ahead (6 tests): ✓ / ✗
+  - runPublishStart always seeds pipeline_steps (4 tests): ✓ / ✗
+  - Preview-gate URLs in --json envelope (9 tests): ✓ / ✗
+  - blog draft regenerate-frontmatter (9 tests): ✓ / ✗
 
 /blog Skill Plugin:
   - Workspace-root detection (11 tests): PASS / FAIL

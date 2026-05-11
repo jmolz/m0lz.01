@@ -66,6 +66,10 @@ The two gates are INDEPENDENT — DB sources do NOT auto-populate the `Sources` 
 
 Phase-boundary guards in the CLI reject a subcommand that doesn't match the post's current phase. Update commands (`blog update benchmark/draft/evaluate/publish`) bypass these guards via an explicit `isUpdateReview`/`isUpdate` flag because the post stays in `published` throughout the update cycle.
 
+## Draft-frontmatter recovery (`blog draft regenerate-frontmatter <slug> [--project <id>]`)
+
+v0.3 dogfood-hardening command. Rewrites the frontmatter block of `.blog-agent/drafts/<slug>/index.mdx` from the current `(post, config)` pair, preserving the body byte-for-byte. Operator-authored fields (`title`, `description`, `tags`, `date`) are preserved; derived fields (`canonical`, `companion_repo`, `project`) are re-resolved from post row + `.blogrc.yaml`. When the row is stale (`content_type=project-launch` with `project_id=NULL` or the wrong ID), pass `--project <id>` to update `posts.project_id` before regeneration. Writes `.blog-agent/drafts/<slug>/.frontmatter-regenerated.json` as an audit receipt. Rejects `phase=published` because the canonical MDX for a shipped post lives in the site repo — update it there on a branch, not here.
+
 ## Plan file schema (v2)
 
 ```json

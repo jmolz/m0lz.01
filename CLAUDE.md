@@ -100,7 +100,7 @@ m0lz.01/
 
 **Claude Code Skills** (interactive, uses subscription): `/blog-research`, `/blog-benchmark`, `/blog-draft`, `/blog-evaluate`, `/blog-pipeline`, `/blog-update` — these handle AI-heavy work in Claude Code sessions.
 
-**Standalone CLI** (mechanical, no AI needed): `blog init`, `blog publish`, `blog unpublish`, `blog status`, `blog metrics`, `blog ideas`, `blog research init|add-source|show|finalize`, `blog benchmark init|env|run|show|skip|complete`, `blog draft init|show|validate|add-asset|complete`, `blog evaluate init|structural-autocheck|record|show|synthesize|complete|reject` — these run independently for API calls, state queries, and pipeline execution.
+**Standalone CLI** (mechanical, no AI needed): `blog init`, `blog publish`, `blog unpublish`, `blog status`, `blog metrics`, `blog ideas`, `blog research init|add-source|show|set-section|finalize`, `blog benchmark init|env|run|show|skip|complete`, `blog draft init|show|validate|add-asset|complete|regenerate-frontmatter`, `blog evaluate init|structural-autocheck|record|show|synthesize|complete|reject` — these run independently for API calls, state queries, and pipeline execution.
 
 **Shared state**: Both layers read/write the same SQLite database and file system artifacts.
 
@@ -239,7 +239,7 @@ const resolvedPath = resolve(dirname(configPath), rawPath);
 - **Framework**: Vitest
 - **Location**: `tests/*.test.ts`
 - **Run**: `npm test`
-- **Baseline**: 878 tests across 66 suites (Phase 1: 48, Phase 2: 54, Phase 3: 44, Phase 4: 79, Phase 5: 163, Phase 6: 195, Phase 7: 140, Phase 8 `/blog` plugin + agent CLI: 137, Phase 8 addenda: voice parity 4, research set-section 13, build-bin-executable 1)
+- **Baseline**: 929 tests across 71 suites (Phase 1: 48, Phase 2: 54, Phase 3: 44, Phase 4: 79 + 8 T4, Phase 5: 163, Phase 6: 195, Phase 7: 140, Phase 8 `/blog` plugin + agent CLI: 137, Phase 8 addenda: voice parity 4, research set-section 13, build-bin-executable 1, v0.3 dogfood-hardening: research-project-linking 15 + publish-origin-divergence 6 + publish-seed-on-start 4 + preview-gate-urls 9 + draft-regenerate-frontmatter 9 + draft-frontmatter T4 companion_repo 8 — 51 total)
 - **Minimum**: Each module needs: 1 happy path, 1 edge case, 1 error case
 - **DB tests**: Use in-memory SQLite (`getDatabase(':memory:')`)
 - **File tests**: Use `mkdtemp` for temporary directories, clean up in `afterEach`

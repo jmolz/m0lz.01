@@ -368,7 +368,10 @@ function seedProjectPost(
   projectId: string | null,
   title = 'Sample Project Post',
 ): void {
-  initResearchPost(db, slug, 'topic', 'directed', 'project-launch');
+  // project-launch requires projectId at init (v0.3). Pass a placeholder
+  // so the init succeeds; downstream UPDATE overwrites project_id to
+  // whatever the test expects.
+  initResearchPost(db, slug, 'topic', 'directed', 'project-launch', projectId ?? 'test.01');
   advancePhase(db, slug, 'benchmark');
   advancePhase(db, slug, 'draft');
   advancePhase(db, slug, 'evaluate');
@@ -376,7 +379,9 @@ function seedProjectPost(
   if (projectId) {
     db.prepare('UPDATE posts SET title = ?, project_id = ? WHERE slug = ?').run(title, projectId, slug);
   } else {
-    db.prepare('UPDATE posts SET title = ? WHERE slug = ?').run(title, slug);
+    // Null out the placeholder project_id inserted by initResearchPost so
+    // readme/skips-when-no-project_id tests see the expected state.
+    db.prepare('UPDATE posts SET title = ?, project_id = NULL WHERE slug = ?').run(title, slug);
   }
 }
 

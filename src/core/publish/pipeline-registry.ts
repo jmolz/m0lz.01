@@ -116,7 +116,7 @@ export const PIPELINE_STEPS: StepDefinition[] = [
         researchPagesDir: ctx.paths.researchPagesDir,
         publishDir: ctx.paths.publishDir,
         configPath: ctx.paths.configPath,
-      }, ctx.db);
+      }, ctx.db, { allowMainAhead: ctx.allowMainAhead });
       return {
         outcome: 'completed',
         message: `PR #${result.prNumber} opened: ${result.prUrl}`,
@@ -174,13 +174,26 @@ export const PIPELINE_STEPS: StepDefinition[] = [
         researchPagesDir: ctx.paths.researchPagesDir,
         publishDir: ctx.paths.publishDir,
         configPath: ctx.paths.configPath,
-      });
+      }, ctx.db);
       if (result.merged) {
-        return { outcome: 'completed', message: 'PR merged -- preview gate passed' };
+        return {
+          outcome: 'completed',
+          message: 'PR merged -- preview gate passed',
+          data: {
+            canonicalUrl: result.canonicalUrl,
+            supplementaryUrl: result.supplementaryUrl,
+            companionRepoUrl: result.companionRepoUrl,
+          },
+        };
       }
       return {
         outcome: 'paused',
         message: result.message ?? 'PR not yet merged -- waiting for review',
+        data: {
+          canonicalUrl: result.canonicalUrl,
+          supplementaryUrl: result.supplementaryUrl,
+          companionRepoUrl: result.companionRepoUrl,
+        },
       };
     },
   },

@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0]
+
+### Added
+
+- **`blog draft regenerate-frontmatter <slug> [--project <id>]`** — recovery command that rewrites the frontmatter block of `.blog-agent/drafts/<slug>/index.mdx` from the current `(post, config)` pair, preserving the body byte-for-byte. Operator-authored fields (title, description, tags, date) are preserved; derived fields (canonical, companion_repo, project) are re-resolved. `--project` patches `posts.project_id` before regeneration, so a stale project-launch row created before the v0.3 guard can be repaired without SQL. Rejects `phase=published` because the canonical MDX for a shipped post lives in the site repo. Writes `.frontmatter-regenerated.json` as an audit receipt. Registered in `SLUG_BEARING_STEP_COMMANDS`, so the `/blog` skill can propose the command through a hash-bound plan (Journey E in `JOURNEYS.md`).
+- **`--project <id>` flag on `blog research init`** — explicit project ID for project-launch posts. Precedence: `--project` flag → prompt-text scan for a generic catalog-style ID (`/\b([a-z][a-z0-9]*\.\d+)\b/i`) → null. project-launch posts without a resolvable project ID fail loudly with `[AGENT_ERROR] PROJECT_UNLINKED` at both the CLI handler and the `initResearchPost` library level. Closes the dogfood bug where a project-launch post shipped with `project_id=null`.
+- **`companion_repo` auto-resolves from `config.projects[project_id]` + git origin** in `generateFrontmatter`. When a project-launch post's registered project directory has a GitHub origin, the frontmatter emitter normalizes SSH/HTTPS shapes to canonical `https://github.com/<owner>/<name>`. Best-effort — missing dir, absent origin, or non-GitHub URL yields no field (no throw). Falls back to the prior `has_benchmarks` heuristic when project resolution produces null.
+- **`blog publish start --allow-main-ahead` + `assertOriginInSync` guard**. The site-pr step now fails loudly with `[AGENT_ERROR] ORIGIN_OUT_OF_SYNC` when local `main` carries commits `origin/main` doesn't know about — those unpushed commits would otherwise ship silently inside the generated PR diff. The `--allow-main-ahead` flag is a plan-step arg, so consent flows through the SHA256 plan hash and re-approval is required after edit.
+- **Preview-gate surfaces three URLs.** `PreviewGateResult` and `blog publish show --json` both carry `canonicalUrl`, `supplementaryUrl` (null when no research page exists), and `companionRepoUrl` (null when unresolvable). Shared `computePreviewUrls` helper keeps step-result and envelope in lockstep. Lets the `/blog` skill render the three operator-facing links at the preview-gate checkpoint without re-inventing the computation.
+
+### Fixed
+
+- **`runPublishStart` now always seeds `pipeline_steps` on phase=publish.** Previously the CLI skipped `initPublish` entirely when a post arrived in `publish` phase, but `completeEvaluation` advances the phase without seeding — a post landing there via evaluate→complete had zero step rows and the pipeline runner's `getNextPendingStep` returned null forever. Recovery required SQL. Now `initPublish` runs for both `evaluate` (promotes + seeds) and `publish` (seed-only, idempotent via `INSERT OR IGNORE`). The handler logs `seeded N pipeline_steps for <slug>` when the recovery path fires so the operator sees it. Rejects `phase=published` with an actionable error pointing at `blog update start` or `blog unpublish start --confirm`.
+
+### Changed
+
+- **`generateFrontmatter` now takes `configPath` as a required parameter** so the companion-repo resolver can anchor `config.projects[id]` paths correctly. `initDraft` threads it through from the CLI boundary.
+- **`readOriginUrl` + `parseGitHubRemoteUrl` exported from `origin-guard`** for reuse in `preview-urls.ts` and `frontmatter.ts`. Origin-guard remains the single-source surface for "parse a git origin into owner+name" per `.claude/rules/lifecycle.md`.
+
 ## [0.2.0] — 2026-04-21
 
 ### Added

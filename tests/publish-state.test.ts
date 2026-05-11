@@ -96,7 +96,7 @@ function seedPublishPost(
   slug: string,
   contentType: 'project-launch' | 'technical-deep-dive' | 'analysis-opinion' = 'technical-deep-dive',
 ): void {
-  initResearchPost(db, slug, 'topic', 'directed', contentType);
+  initResearchPost(db, slug, 'topic', 'directed', contentType, contentType === 'project-launch' ? 'test.01' : null);
   advancePhase(db, slug, 'benchmark');
   advancePhase(db, slug, 'draft');
   advancePhase(db, slug, 'evaluate');
@@ -112,7 +112,7 @@ function seedEvaluatePost(
   evaluationPassed: 0 | 1 = 1,
   contentType: 'project-launch' | 'technical-deep-dive' | 'analysis-opinion' = 'technical-deep-dive',
 ): void {
-  initResearchPost(db, slug, 'topic', 'directed', contentType);
+  initResearchPost(db, slug, 'topic', 'directed', contentType, contentType === 'project-launch' ? 'test.01' : null);
   advancePhase(db, slug, 'benchmark');
   advancePhase(db, slug, 'draft');
   advancePhase(db, slug, 'evaluate');

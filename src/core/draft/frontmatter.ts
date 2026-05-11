@@ -1,7 +1,10 @@
+import { dirname, resolve } from 'node:path';
+
 import yaml from 'js-yaml';
 
 import { PostRow } from '../db/types.js';
 import { BlogConfig } from '../config/types.js';
+import { parseGitHubRemoteUrl, readOriginUrl } from '../publish/origin-guard.js';
 
 export interface PostFrontmatter {
   title: string;
@@ -30,7 +33,45 @@ export interface PostFrontmatter {
   update_count?: number;
 }
 
-export function generateFrontmatter(post: PostRow, config: BlogConfig): PostFrontmatter {
+// Best-effort lookup of a companion repo's HTTPS URL via git origin. Used
+// by project-launch posts where `config.projects[project_id]` points at
+// the local clone of an existing repo. Every failure path (missing dir,
+// absent origin, non-github URL, subprocess error) returns null so the
+// frontmatter generator can fall back silently — this is an enrichment,
+// not a hard contract. The caller chooses whether to skip the field or
+// substitute a default when null is returned.
+function resolveCompanionRepoFromProject(
+  config: BlogConfig,
+  projectId: string,
+  configPath: string,
+): string | null {
+  const projectPath = config.projects?.[projectId];
+  if (!projectPath) return null;
+  const projectDir = resolve(dirname(configPath), projectPath);
+  try {
+    const rawUrl = readOriginUrl(projectDir);
+    if (!rawUrl) return null;
+    const parsed = parseGitHubRemoteUrl(rawUrl);
+    if (!parsed) return null;
+    // Canonical HTTPS form — origin may be SSH (`git@github.com:owner/name.git`)
+    // or HTTPS with or without trailing `.git`. The frontmatter contract
+    // with m0lz.00 expects a stable HTTPS URL; parseGitHubRemoteUrl
+    // already normalized owner+name so we just reassemble.
+    return `https://github.com/${parsed.owner}/${parsed.name}`;
+  } catch {
+    // readOriginUrl re-throws any non-"no such remote" subprocess failure
+    // (missing binary, not a git repo, permission error). For frontmatter
+    // enrichment those are informational — swallow so a degraded
+    // environment doesn't break `blog draft init`.
+    return null;
+  }
+}
+
+export function generateFrontmatter(
+  post: PostRow,
+  config: BlogConfig,
+  configPath: string,
+): PostFrontmatter {
   const fm: PostFrontmatter = {
     title: '{{title}}',
     description: '{{description}}',
@@ -41,7 +82,19 @@ export function generateFrontmatter(post: PostRow, config: BlogConfig): PostFron
 
   fm.canonical = `${config.site.base_url}/writing/${post.slug}`;
 
-  if (post.has_benchmarks) {
+  // project_id + config.projects wins over the has_benchmarks heuristic
+  // because it points at an existing published repo URL (project-launch
+  // content type). The heuristic only fires for technical-deep-dive
+  // posts that will get a NEW companion repo scaffolded at
+  // `github.com/<author>/<slug>` during publish step 8.
+  if (post.project_id) {
+    const resolved = resolveCompanionRepoFromProject(config, post.project_id, configPath);
+    if (resolved) {
+      fm.companion_repo = resolved;
+    }
+  }
+
+  if (!fm.companion_repo && post.has_benchmarks) {
     fm.companion_repo = `https://github.com/${config.author.github}/${post.slug}`;
   }
 

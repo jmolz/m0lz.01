@@ -92,7 +92,8 @@ function seedPost(
   } = {},
 ): PostRow {
   const contentType = opts.contentType ?? 'technical-deep-dive';
-  initResearchPost(db, slug, opts.topic ?? 'some topic', 'directed', contentType);
+  const projectId = contentType === 'project-launch' ? 'test.01' : null;
+  initResearchPost(db, slug, opts.topic ?? 'some topic', 'directed', contentType, projectId);
   advancePhase(db, slug, 'benchmark');
   advancePhase(db, slug, 'draft');
   advancePhase(db, slug, 'evaluate');

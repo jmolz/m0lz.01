@@ -74,6 +74,7 @@ npx vitest run \
   tests/research-document.test.ts \
   tests/research-cli.test.ts \
   tests/research-set-section.test.ts \
+  tests/research-project-linking.test.ts \
   tests/benchmark-environment.test.ts \
   tests/benchmark-state.test.ts \
   tests/benchmark-results.test.ts \
@@ -84,6 +85,7 @@ npx vitest run \
   tests/draft-benchmark-data.test.ts \
   tests/draft-tags.test.ts \
   tests/draft-cli.test.ts \
+  tests/draft-regenerate-frontmatter.test.ts \
   tests/evaluate-reviewer.test.ts \
   tests/evaluate-autocheck.test.ts \
   tests/evaluate-synthesize.test.ts \
@@ -100,6 +102,9 @@ npx vitest run \
   tests/publish-repo.test.ts \
   tests/publish-cli.test.ts \
   tests/publish-site-updates.test.ts \
+  tests/publish-origin-divergence.test.ts \
+  tests/publish-seed-on-start.test.ts \
+  tests/preview-gate-urls.test.ts \
   tests/db-migration-v3.test.ts \
   tests/update-cycles.test.ts \
   tests/update-notice.test.ts \
@@ -245,7 +250,19 @@ Ships the `/blog` Claude Code plugin + `blog agent` CLI subcommand family. Singl
 | `tests/cli-json.test.ts` (6 tests) | `--json` envelope surface | Every `--json` output has `schema_version='1'` + versioned `kind` + ISO `generated_at` + typed `data`; `WorkspaceStatus` / `PublishPipeline` / `UpdatePipeline` / `UnpublishPipeline` / `EvaluationState` shapes; empty-DB graceful fallback for `blog status --json` |
 | `tests/plan-file.test.ts` (61 tests) | Plan schema + SHA256 hash + validator + apply runner + receipt + apply-lock | `canonicalPlanJSON` is key-order independent and drops approved_at/payload_hash; `computePlanHash` deterministic; schema rejects unknown content_type (park-research rejected), unknown depth, abstract step commands (run-panel rejected), bare "research finalize" without blog prefix, empty steps/venues, `blog agent *` nesting, flag-like tokens inside `command` (e.g. "blog status --sneak"), BANNED_ARG_FLAGS in args (--workspace, --help, -h, --version, -V + compact = forms), slug traversal at the shared-schema layer ("../../outside"), namespace-only commands ("blog research" with args=[finalize, beta]), whitespace variants (double-space, tab, newline, leading space), workspace-global mutators ("blog init", "blog ideas add/start/remove"), args[0] != plan.slug for slug-bearing commands; accepts blog status/metrics as read-only leaves (not "blog ideas" which has Commander subcommands via default-action); `validatePlanForApply` throws NO_APPROVAL/HASH_MISMATCH/WORKSPACE_MISMATCH/SCHEMA_INVALID/CRASH_RECOVERY_REQUIRED; DB-authoritative skip state (schema v4 agent_plan_runs + agent_plan_steps); `applyPlan` writes receipt with per-step exit_code/stdout_tail/stderr_tail/duration_ms, tampered receipt JSON is a no-op (DB authoritative — forged-skip vector closed), RECEIPT_CONFLICT derived from DB open runs not receipt file (forgery-resistant), RECEIPT_HASH_MISMATCH on same-plan-id re-approved with different content, --restart clears ALL open runs for slug (not just current plan_id), CRASH_RECOVERY_REQUIRED on attempt-sentinel-without-completion; slug-scoped apply lock serializes different plan_ids for same slug, reclaims legacy bare-PID stale lockfiles, honest PID-liveness policy (no false PID-reuse hardening); stepToArgv strips "blog" prefix + concatenates command words with args |
 | `tests/skill-smoke.test.ts` (22 tests) | Plugin static shape + SKILL.md discipline + sibling-doc parity + install-docs structural contract | plugin.json declares blog skill at skills/blog; SKILL.md frontmatter parses + allowed-tools contains Bash(blog:*) AND explicitly excludes Write/Edit/Bash(gh:*) (CLI-enforced gate, not prose-gated); body ≤ 200 lines; no `node -e` / `cat ` / `head ` in code fences; every read command uses `--json`; no bare destructive execs outside `blog agent apply`; no hardcoded identity values (jmolz/m0lz.dev/DEVTO_API_KEY=); sibling docs (JOURNEYS.md + CHECKPOINTS.md) enforce the same discipline; skill-content identity hygiene scans `.claude-plugin/skills/**` recursively with manifest-field whitelist for plugin.json author/homepage; install-docs structural contract: npm-bundled path ships all required files, plugin.json declares readable SKILL.md, install docs reference files that actually exist; contributor symlink resolves; REFERENCES/JOURNEYS/CHECKPOINTS exist; `.claude-plugin/**` in `package.json#files` |
-| `tests/skill-fixture-integration.test.ts` (25 tests) | Real skill-to-CLI handoff end-to-end + crash recovery + workspace pinning | `beforeAll` unconditionally rebuilds dist; `spawnSync(node, [distPath, ...])` drives the real CLI: preflight → plan → verify-unapproved (exit 2 NO_APPROVAL) → approve (atomic approved_at + payload_hash) → verify-approved (exit 0) → apply (receipt written with plan_id pin, plan_payload_hash binding, step exit/stdout/stderr tail, completed_at, overall_exit=0); tamper plan → verify exits 2 HASH_MISMATCH; cross-workspace plan → verify exits 2 WORKSPACE_MISMATCH; abstract command via --steps-json → plan exits 2 SCHEMA_INVALID; `blog agent` nesting in --steps-inline → plan exits 2 SCHEMA_INVALID; --steps-inline writes a plan whose steps exactly match the payload; --steps-inline + --steps-json → exits 2 (mutually exclusive); slug traversal + leaf-level symlink rejected; --workspace smuggled through step args rejected; --output path clamp (outside plans/ reject, wrong ext reject, valid accept); hand-authored traversal slug rejected at verify; completed prior plan does NOT block a later plan for same slug; RECEIPT_CONFLICT cannot be forced by forged receipt (DB authority only); stale open-run recovery via --restart clears debt across plan_ids; RECEIPT_HASH_MISMATCH on re-approval with different content; receipt-JSON tampering is benign (DB authoritative); apply is resumable (no-op when complete); preflight respects --workspace override from outside the workspace; preflight honors --workspace > BLOG_WORKSPACE precedence; apply pins spawned children to plan.workspace_root (BLOG_WORKSPACE cannot redirect child via child env scrub + --workspace prepend); `--workspace=/path` compact form recognized; empty `--workspace=` rejected with explicit error; startup shim --workspace operand excluded from positional walk so agent preflight classification holds |
+| `tests/skill-fixture-integration.test.ts` (27 tests) | Real skill-to-CLI handoff end-to-end + crash recovery + workspace pinning | `beforeAll` unconditionally rebuilds dist; `spawnSync(node, [distPath, ...])` drives the real CLI: preflight → plan → verify-unapproved (exit 2 NO_APPROVAL) → approve (atomic approved_at + payload_hash) → verify-approved (exit 0) → apply (receipt written with plan_id pin, plan_payload_hash binding, step exit/stdout/stderr tail, completed_at, overall_exit=0); tamper plan → verify exits 2 HASH_MISMATCH; cross-workspace plan → verify exits 2 WORKSPACE_MISMATCH; abstract command via --steps-json → plan exits 2 SCHEMA_INVALID; `blog agent` nesting in --steps-inline → plan exits 2 SCHEMA_INVALID; --steps-inline writes a plan whose steps exactly match the payload; --steps-inline + --steps-json → exits 2 (mutually exclusive); slug traversal + leaf-level symlink rejected; --workspace smuggled through step args rejected; --output path clamp (outside plans/ reject, wrong ext reject, valid accept); hand-authored traversal slug rejected at verify; completed prior plan does NOT block a later plan for same slug; RECEIPT_CONFLICT cannot be forced by forged receipt (DB authority only); stale open-run recovery via --restart clears debt across plan_ids; RECEIPT_HASH_MISMATCH on re-approval with different content; receipt-JSON tampering is benign (DB authoritative); apply is resumable (no-op when complete); preflight respects --workspace override from outside the workspace; preflight honors --workspace > BLOG_WORKSPACE precedence; apply pins spawned children to plan.workspace_root (BLOG_WORKSPACE cannot redirect child via child env scrub + --workspace prepend); `--workspace=/path` compact form recognized; empty `--workspace=` rejected with explicit error; startup shim --workspace operand excluded from positional walk so agent preflight classification holds |
+
+**v0.3 Dogfood Hardening (feature/v0.3.0-dogfood-hardening)**
+
+Five connected fixes surfaced by the first live dogfood run of `blog publish`: project-launch posts now require a resolvable project ID at research-init, `generateFrontmatter` resolves `companion_repo` from `config.projects[id]` + git origin, `createSitePR` refuses when local main is ahead of origin/main, `runPublishStart` always seeds pipeline_steps, the preview-gate surfaces canonical/supplementary/companion URLs in its JSON envelope, and a new `blog draft regenerate-frontmatter` recovery command rewrites the local draft from the current post+config. See CHANGELOG.md § 0.3.0 for the full accounting.
+
+| Test File | Feature | What It Validates |
+| --------- | ------- | ----------------- |
+| `tests/research-project-linking.test.ts` (15 tests) | `--project` flag + prompt-regex fallback + library-level PROJECT_UNLINKED guard | `extractProjectIdFromPrompt` matches `m0lz.01` / `project.42` / `repo.7` and returns lowercased; returns null for bare decimals (`3.14`), prose without catalog IDs, and leading-digit tokens (`2.0`); first-match wins on multi-ID prompts. `initResearchPost` stores `project_id` when provided, leaves it null for non-project-launch types, throws `[AGENT_ERROR] PROJECT_UNLINKED` when project-launch lacks a projectId (including empty string + null); `runResearchInit` resolves projectId via `--project` flag → prompt regex → null, classifies m0lz.N IDs as project-launch via CATALOG_PATTERN, does NOT auto-classify generic catalog IDs like `repo.7`, exits 1 with PROJECT_UNLINKED when project-launch has no resolvable ID and inserts no row. |
+| `tests/publish-origin-divergence.test.ts` (6 tests) | `assertOriginInSync` + site-pr `--allow-main-ahead` override | Self-contained origin + clone bare-repo fixture. Passes silently when local main matches origin/main; throws `[AGENT_ERROR] ORIGIN_OUT_OF_SYNC` when local main is ahead (exact commit count reported for 1 and 3-commit lead); throws ORIGIN_OUT_OF_SYNC when the branch does not exist on origin; re-throws environment errors with context. `createSitePR(..., { allowMainAhead: true })` is exercised directly with mocked subprocesses, verifying the origin-sync assertion is skipped and the bypass warning is emitted. |
+| `tests/publish-seed-on-start.test.ts` (4 tests) | `runPublishStart` always seeds `pipeline_steps` on phase=publish | Post driven to phase=publish WITHOUT running `blog evaluate complete`'s seeding path has 0 rows in pipeline_steps; calling `runPublishStart` seeds 11 rows and logs `seeded 11 pipeline_steps for <slug>`; re-running is idempotent (no duplicate rows, no fresh seed log); phase=evaluate path still promotes + seeds correctly; phase=published rejected with actionable "already published" error pointing at `blog update start` or `blog unpublish start --confirm`. |
+| `tests/preview-gate-urls.test.ts` (9 tests) | `computePreviewUrls` + `blog publish show --json` envelope | `canonicalUrl` always emitted from `config.site.base_url` + slug; `supplementaryUrl` null when no `research-pages/<slug>/index.mdx`, populated otherwise; `companionRepoUrl` resolves from `config.projects[post.project_id]` + git origin when post.repo_url is empty, prefers `post.repo_url` when set, null when neither project_id nor repo_url available, null when project dir has no origin. `blog publish show <slug> --json` envelope includes `data.preview_urls.{canonicalUrl, supplementaryUrl, companionRepoUrl}` with the correct values. |
+| `tests/draft-regenerate-frontmatter.test.ts` (9 tests) | `blog draft regenerate-frontmatter` recovery command | Adds missing `companion_repo` from config.projects + git origin, preserving body (including body with thematic-break `---`); `--project <id>` repairs stale project-launch rows with `project_id=NULL`; missing project IDs now fail with `PROJECT_UNLINKED` instead of silently no-oping; writes `.frontmatter-regenerated.json` receipt with previous/new SHA256 hashes + fields_changed; preserves operator-authored `title`/`description`/`tags`; rejects phase=published without touching the file; fails loudly when draft MDX missing; leaves siblings untouched; rejects invalid slugs. |
 
 ### Source files these tests protect
 
@@ -344,6 +361,24 @@ Ships the `/blog` Claude Code plugin + `blog agent` CLI subcommand family. Singl
 - `.claude/rules/lifecycle.md` — path-scoped rule doc: publishMode dispatch, first-class update_cycles rows, partial-unique-index constraint, explicit isUpdateReview flag, cycle-keyed notice marker, publish guard, shared per-slug lock, shared finalize helper, metrics audit log, unpublish trust boundaries, origin-guard tolerant/strict APIs, readme-revert direct-push policy clarification
 - `docs/spikes/forem-put-semantics.md` — canonical source for Forem PUT body shapes (unpublish + update), referenced by devto.ts implementations
 
+**v0.3 Dogfood Hardening source files:**
+
+- `src/core/draft/content-types.ts` — `extractProjectIdFromPrompt` helper (generic catalog-style `/\b([a-z][a-z0-9]*\.\d+)\b/i` regex, lowercased first match)
+- `src/core/research/state.ts` — `initResearchPost` accepts trailing optional `projectId` parameter, inserts into `posts.project_id`, throws `[AGENT_ERROR] PROJECT_UNLINKED` when contentType is project-launch and projectId is null/empty
+- `src/cli/research.ts` — `runResearchInit` resolves projectId via `--project` flag → prompt-regex fallback → null, threads into `initResearchPost`; `--project <id>` Commander option registered
+- `src/core/draft/frontmatter.ts` — `generateFrontmatter(post, config, configPath)` resolves `companion_repo` via `resolveCompanionRepoFromProject` (reads git origin of `config.projects[post.project_id]`, normalizes to canonical HTTPS, best-effort on failure); falls back to `has_benchmarks` heuristic only when project resolution is null
+- `src/core/draft/state.ts` — `initDraft` threads `configPath` through to `generateFrontmatter`; `regenerateDraftFrontmatter` exported (rewrites frontmatter block in place preserving body byte-for-byte, rejects phase=published, writes `.frontmatter-regenerated.json` audit receipt)
+- `src/core/publish/origin-guard.ts` — `readOriginUrl` + `parseGitHubRemoteUrl` exported for reuse; `assertOriginInSync(repoPath, branch)` fetches + runs `rev-list --count origin/<branch>..<branch>` and throws `[AGENT_ERROR] ORIGIN_OUT_OF_SYNC` on non-zero ahead count or "couldn't find remote ref" fetch error
+- `src/core/publish/site.ts` — `SitePROverrides.allowMainAhead` optional flag; `createSitePR` calls `assertOriginInSync` before mutations unless override set, emits `[WARN] site-pr: --allow-main-ahead bypassed origin sync check` on bypass; `checkPreviewGate` takes `db` parameter and returns `PreviewGateResult extends PreviewUrls`
+- `src/core/publish/preview-urls.ts` — new module: `PreviewUrls` type + `computePreviewUrls(post, config, configPath, researchPagesDir)` helper (canonicalUrl always emitted, supplementaryUrl from research-pages file existence, companionRepoUrl prefers post.repo_url then config.projects origin lookup)
+- `src/core/publish/pipeline-registry.ts` — site-pr step passes `allowMainAhead` from ctx; preview-gate step includes preview URLs in `data`
+- `src/core/publish/pipeline-types.ts` — `PipelineContext.allowMainAhead` optional field
+- `src/cli/publish.ts` — `runPublishStart` removes phase-conditional skip of `initPublish` (now called for both evaluate and publish phases); logs `seeded N pipeline_steps for <slug>` when insertion occurs; rejects phase=published with actionable error; `--allow-main-ahead` Commander option registered; `tryLoadPreviewUrls` helper surfaces `data.preview_urls` in the `PublishPipeline` JSON envelope
+- `src/cli/draft.ts` — `runDraftRegenerateFrontmatter` CLI handler + Commander `regenerate-frontmatter <slug>` registration
+- `src/core/plan-file/schema.ts` — `'blog draft regenerate-frontmatter'` added to `SLUG_BEARING_STEP_COMMANDS` (inherits `KNOWN_LEAF_COMMANDS` via spread)
+- `.claude-plugin/skills/blog/JOURNEYS.md` — Journey E added (frontmatter-recovery pattern)
+- `.claude-plugin/skills/blog/REFERENCES.md` — Draft-frontmatter recovery section documenting `regenerate-frontmatter` semantics
+
 **Release Prep source files:**
 
 - `src/core/paths.ts` — shared package-root resolver: `findPackageRoot(moduleUrl)` walks up from a module URL until it finds a `package.json`, `PACKAGE_ROOT` = the package directory computed eagerly at module load via `import.meta.url`, `TEMPLATES_ROOT` = `resolve(PACKAGE_ROOT, 'templates')`. Every template-reading code path in the repo routes through one of these two constants — no inline `fileURLToPath` / offset-arithmetic incantations remain
@@ -429,7 +464,7 @@ npm test
 npm run build
 ```
 
-Expected baseline: **0 TypeScript errors, 878 tests passing across 66 suites, clean build** (as of feature/blog-skill-plugin after seven adversarial passes converged: +5 new test files — `workspace-root` (11), `cli-json` (6), `plan-file` (61), `skill-smoke` (22 → 25 after placeholder-fence regression), `skill-fixture-integration` (25) = +130 tests across +5 suites over the 730/58 Release Prep baseline; `cli.test.ts` and `db-migration-v3.test.ts` also extended with plan-plugin regressions. Post-merge addenda: `build-bin-executable` (1, tsc-strips-+x fix), `research-set-section` (13, skill-driven research-authoring path), `voice-parity` (4, dev-rule ↔ plugin-skill byte-parity for voice rules) = +18 tests, +3 suites). Any drift from this baseline is a signal to investigate before merging.
+Expected baseline: **0 TypeScript errors, 929 tests passing across 71 suites, clean build**. v0.3 dogfood-hardening added +43 tests across +5 new suites — `research-project-linking` (15), `publish-origin-divergence` (6), `publish-seed-on-start` (4), `preview-gate-urls` (9), `draft-regenerate-frontmatter` (9) — plus +8 tests in `draft-frontmatter.test.ts` for companion_repo resolution. Prior baseline was 878/66 (post-Phase-8 addenda). Any drift from this baseline is a signal to investigate before merging.
 
 ## Phase 3: Code Review of Current Changes
 
@@ -576,7 +611,14 @@ Release Prep:
   - Plugin static shape + SKILL discipline + sibling-doc parity + install-docs (22 tests): ✓ / ✗
   - Real skill-to-CLI handoff end-to-end + crash recovery + workspace pinning (25 tests): ✓ / ✗
 
-Full Suite: X passing, Y failing  (baseline: 874 passing across 65 suites)
+v0.3 Dogfood Hardening:
+  - Research project linking: `--project` flag + prompt regex + PROJECT_UNLINKED guard (15 tests): ✓ / ✗
+  - Publish site-pr origin-sync divergence refusal + allow-main-ahead override (6 tests): ✓ / ✗
+  - runPublishStart always seeds pipeline_steps on phase=publish (4 tests): ✓ / ✗
+  - Preview-gate emits canonical/supplementary/companion URLs in JSON envelope (9 tests): ✓ / ✗
+  - blog draft regenerate-frontmatter recovery command (9 tests): ✓ / ✗
+
+Full Suite: X passing, Y failing  (baseline: 929 passing across 71 suites)
 Lint: {error count} errors  (baseline: 0)
 Build: PASS / FAIL
 ```

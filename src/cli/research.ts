@@ -6,7 +6,7 @@ import { Command } from 'commander';
 import { getDatabase, closeDatabase } from '../core/db/database.js';
 import { Mode, ContentType, SourceType } from '../core/db/types.js';
 import { loadConfig } from '../core/config/loader.js';
-import { detectContentType } from '../core/draft/content-types.js';
+import { detectContentType, extractProjectIdFromPrompt } from '../core/draft/content-types.js';
 import {
   ResearchDocument,
   SECTION_KEYS,
@@ -35,6 +35,7 @@ interface InitOptions {
   mode?: Mode;
   contentType?: ContentType;
   force?: boolean;
+  projectId?: string;
 }
 
 interface AddSourceOptions {
@@ -68,13 +69,21 @@ export function runResearchInit(
   requireDb(dbPath);
 
   const mode: Mode = opts.mode ?? 'exploratory';
-  const contentType: ContentType = opts.contentType ?? detectContentType(opts.topic);
+  // Resolve project ID via precedence: explicit --project flag wins;
+  // otherwise scan the --topic text for a catalog-style ID. A null result
+  // here lets `detectContentType` fall back to keyword routing — when the
+  // caller passes --content-type project-launch explicitly AND the ID is
+  // still null, `initResearchPost` below throws PROJECT_UNLINKED.
+  const resolvedProjectId =
+    opts.projectId ?? extractProjectIdFromPrompt(opts.topic) ?? null;
+  const contentType: ContentType =
+    opts.contentType ?? detectContentType(opts.topic, resolvedProjectId ?? undefined);
 
   const db = getDatabase(dbPath);
   try {
     let result: { created: boolean; post: import('../core/db/types.js').PostRow };
     try {
-      result = initResearchPost(db, slug, opts.topic, mode, contentType);
+      result = initResearchPost(db, slug, opts.topic, mode, contentType, resolvedProjectId);
     } catch (e) {
       console.error((e as Error).message);
       process.exitCode = 1;
@@ -373,12 +382,14 @@ export function registerResearch(program: Command): void {
     .requiredOption('--topic <topic>', 'Topic or prompt for the research')
     .option('--mode <mode>', 'Research mode: directed or exploratory', 'exploratory')
     .option('--content-type <type>', 'Content type (auto-detected if omitted)')
+    .option('--project <id>', 'Project ID (required for project-launch; inferred from topic when omitted)')
     .option('--force', 'Overwrite existing research document')
-    .action((slug: string, opts: { topic: string; mode: string; contentType?: string; force?: boolean }) => {
+    .action((slug: string, opts: { topic: string; mode: string; contentType?: string; project?: string; force?: boolean }) => {
       runResearchInit(slug, {
         topic: opts.topic,
         mode: opts.mode as Mode,
         contentType: opts.contentType as ContentType | undefined,
+        projectId: opts.project,
         force: opts.force,
       });
     });

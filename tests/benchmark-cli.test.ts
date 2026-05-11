@@ -84,7 +84,8 @@ function paths(f: Fixture): BenchmarkPaths {
 function createResearchPost(f: Fixture, slug: string, contentType: string = 'technical-deep-dive'): void {
   const db = getDatabase(f.dbPath);
   try {
-    initResearchPost(db, slug, 'test topic', 'directed', contentType as any);
+    const projectId = contentType === 'project-launch' ? 'test.01' : null;
+    initResearchPost(db, slug, 'test topic', 'directed', contentType as any, projectId);
   } finally {
     closeDatabase(db);
   }

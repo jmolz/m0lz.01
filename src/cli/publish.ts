@@ -15,6 +15,8 @@ import { getOpenUpdateCycle } from '../core/update/cycles.js';
 import { runPipeline } from '../core/publish/pipeline-runner.js';
 import { PipelineContext } from '../core/publish/pipeline-types.js';
 import { PipelineStepRow, PublishUrls } from '../core/publish/types.js';
+import { computePreviewUrls } from '../core/publish/preview-urls.js';
+import { PostRow } from '../core/db/types.js';
 
 // CLI handlers for the publish phase. Mirrors the pattern in `evaluate.ts`
 // and `draft.ts`: `runPublishStart` and `runPublishShow` are exported and
@@ -50,6 +52,11 @@ export interface PublishCliPaths {
   publishDir?: string;
   templatesDir?: string;
   json?: boolean;
+  // v0.3 dogfood-hardening: bypass the local-main-ahead-of-origin guard
+  // in the site-pr step. Surfaced as --allow-main-ahead on the CLI and
+  // forwarded through PipelineContext. The flag is a plan-step arg so
+  // the SHA256 plan hash binds operator consent (see site.ts).
+  allowMainAhead?: boolean;
 }
 
 function requireDb(dbPath: string): void {
@@ -136,37 +143,65 @@ export async function runPublishStart(
       return;
     }
 
-    if (post.phase === 'evaluate') {
-      if (!post.content_type) {
-        console.error(
-          `Post '${slug}' has no content_type. Cannot initialize publish pipeline.`,
-        );
-        process.exitCode = 1;
-        return;
-      }
-      try {
-        initPublish(
-          db,
-          slug,
-          post.content_type as ContentType,
-          config!,
-          publishDir,
-        );
-      } catch (e) {
-        console.error((e as Error).message);
-        process.exitCode = 1;
-        return;
-      }
-    } else if (post.phase === 'publish') {
-      // Resume: no init needed, the existing pipeline_steps rows drive the
-      // runner. Fall through to runPipeline.
-    } else {
+    if (post.phase === 'published') {
+      console.error(
+        `Post '${slug}' is already published. Use 'blog update start ${slug}' to open an update cycle, ` +
+        `or 'blog unpublish start ${slug} --confirm' to revert.`,
+      );
+      process.exitCode = 1;
+      return;
+    }
+    if (post.phase !== 'evaluate' && post.phase !== 'publish') {
       console.error(
         `Post '${slug}' is in phase '${post.phase}' — only 'evaluate' (to initialize) ` +
         `or 'publish' (to resume) are valid starting phases for this command.`,
       );
       process.exitCode = 1;
       return;
+    }
+    if (!post.content_type) {
+      console.error(
+        `Post '${slug}' has no content_type. Cannot initialize publish pipeline.`,
+      );
+      process.exitCode = 1;
+      return;
+    }
+
+    // v0.3 dogfood-hardening: always call initPublish when phase is
+    // `evaluate` (promotes + seeds) OR `publish` (seed-only, idempotent
+    // via INSERT OR IGNORE inside createPipelineSteps). Previously the
+    // handler skipped initPublish on phase=publish entirely — but
+    // `completeEvaluation` advances phase to `publish` WITHOUT seeding
+    // `pipeline_steps`, so a post landing in phase=publish via evaluate→
+    // complete had zero step rows and the pipeline runner's
+    // `getNextPendingStep` returned null forever. Recovery required SQL.
+    // Re-entry on a post that already has seeded rows is safe — the
+    // INSERT OR IGNORE leaves them alone.
+    const countPipelineSteps = (): number =>
+      (db
+        .prepare(
+          'SELECT COUNT(*) as c FROM pipeline_steps WHERE post_slug = ? AND cycle_id = 0',
+        )
+        .get(slug) as { c: number }).c;
+
+    const countBefore = countPipelineSteps();
+    try {
+      initPublish(
+        db,
+        slug,
+        post.content_type as ContentType,
+        config!,
+        publishDir,
+      );
+    } catch (e) {
+      console.error((e as Error).message);
+      process.exitCode = 1;
+      return;
+    }
+    const countAfter = countPipelineSteps();
+    const seeded = countAfter - countBefore;
+    if (seeded > 0) {
+      console.log(`seeded ${seeded} pipeline_steps for ${slug}`);
     }
 
     // Hydrate ctx.urls from the posts row so a resumed run can see URLs
@@ -219,6 +254,7 @@ export async function runPublishStart(
       // cycleId from the open update_cycles row.
       publishMode: 'initial',
       cycleId: 0,
+      allowMainAhead: paths.allowMainAhead,
     };
 
     let result;
@@ -264,6 +300,31 @@ export async function runPublishStart(
 // malformed `.blogrc.yaml` (logs a warning and continues) because the
 // operator is recovering, not mutating. Uses dynamic column widths so
 // long step names and timestamps don't overflow.
+// Helper shared between the text and JSON paths — loads config + post,
+// returns null when either is missing or malformed so callers can choose
+// their own degraded-state behavior. `runPublishShow` is best-effort
+// with config (show is informational, not mutating), so this helper
+// never throws.
+function tryLoadPreviewUrls(
+  db: import('better-sqlite3').Database,
+  slug: string,
+  configPath: string,
+  researchPagesDir: string,
+): ReturnType<typeof computePreviewUrls> | null {
+  if (!existsSync(configPath)) return null;
+  let config;
+  try {
+    config = loadConfig(configPath);
+  } catch {
+    return null;
+  }
+  const post = db
+    .prepare('SELECT * FROM posts WHERE slug = ?')
+    .get(slug) as PostRow | undefined;
+  if (!post) return null;
+  return computePreviewUrls(post, config, configPath, researchPagesDir);
+}
+
 export function runPublishShow(
   slug: string,
   paths: PublishCliPaths = {},
@@ -278,6 +339,7 @@ export function runPublishShow(
 
   const dbPath = paths.dbPath ?? DB_PATH;
   const configPath = paths.configPath ?? CONFIG_PATH;
+  const researchPagesDir = paths.researchPagesDir ?? RESEARCH_PAGES_DIR;
   requireDb(dbPath);
 
   const db = getDatabase(dbPath);
@@ -317,6 +379,16 @@ export function runPublishShow(
     const steps = getPipelineSteps(db, slug);
     if (paths.json) {
       const pausedStep = steps.find((s) => s.status === 'running' || s.status === 'failed');
+      // v0.3 dogfood-hardening: surface the 3 preview URLs under
+      // `preview_urls` so the `/blog` skill can render them at the
+      // preview-gate checkpoint. Falls back to a minimal shape (with
+      // null fields) when config is absent/malformed — the `show`
+      // command must remain informational even in degraded state.
+      const previewUrls = tryLoadPreviewUrls(db, slug, configPath, researchPagesDir) ?? {
+        canonicalUrl: '',
+        supplementaryUrl: null,
+        companionRepoUrl: null,
+      };
       printEnvelope<'PublishPipeline', {
         slug: string;
         phase: string;
@@ -325,6 +397,11 @@ export function runPublishShow(
         evaluation_passed: boolean;
         published_at: string | null;
         paused_step: number | null;
+        preview_urls: {
+          canonicalUrl: string;
+          supplementaryUrl: string | null;
+          companionRepoUrl: string | null;
+        };
         steps: Array<{
           step_number: number;
           step_name: string;
@@ -341,6 +418,7 @@ export function runPublishShow(
         evaluation_passed: post.evaluation_passed === 1,
         published_at: post.published_at,
         paused_step: pausedStep ? pausedStep.step_number : null,
+        preview_urls: previewUrls,
         steps: steps.map((s) => ({
           step_number: s.step_number,
           step_name: s.step_name,
@@ -434,8 +512,12 @@ export function registerPublish(program: Command): void {
   publish
     .command('start <slug>')
     .description('Start or resume the publish pipeline for a post')
-    .action(async (slug: string) => {
-      await runPublishStart(slug);
+    .option(
+      '--allow-main-ahead',
+      "Bypass the site-pr origin-sync check (local main ahead of origin/main). The flag becomes part of the approved plan's hash, so an edit after approval requires re-consent.",
+    )
+    .action(async (slug: string, opts: { allowMainAhead?: boolean }) => {
+      await runPublishStart(slug, { allowMainAhead: opts.allowMainAhead });
     });
 
   publish

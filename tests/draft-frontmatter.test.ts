@@ -1,4 +1,8 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import {
   generateFrontmatter,
@@ -9,6 +13,8 @@ import {
 } from '../src/core/draft/frontmatter.js';
 import { PostRow } from '../src/core/db/types.js';
 import { BlogConfig } from '../src/core/config/types.js';
+
+const DEFAULT_CONFIG_PATH = '/tmp/.blogrc.yaml';
 
 function makePost(overrides: Partial<PostRow> = {}): PostRow {
   return {
@@ -65,34 +71,147 @@ function makeConfig(): BlogConfig {
 
 describe('generateFrontmatter', () => {
   it('produces correct canonical URL', () => {
-    const fm = generateFrontmatter(makePost(), makeConfig());
+    const fm = generateFrontmatter(makePost(), makeConfig(), DEFAULT_CONFIG_PATH);
     expect(fm.canonical).toBe('https://m0lz.dev/writing/test-post');
   });
 
   it('includes companion_repo when has_benchmarks', () => {
-    const fm = generateFrontmatter(makePost({ has_benchmarks: 1 }), makeConfig());
+    const fm = generateFrontmatter(makePost({ has_benchmarks: 1 }), makeConfig(), DEFAULT_CONFIG_PATH);
     expect(fm.companion_repo).toBe('https://github.com/jmolz/test-post');
   });
 
   it('omits companion_repo when no benchmarks', () => {
-    const fm = generateFrontmatter(makePost({ has_benchmarks: 0 }), makeConfig());
+    const fm = generateFrontmatter(makePost({ has_benchmarks: 0 }), makeConfig(), DEFAULT_CONFIG_PATH);
     expect(fm.companion_repo).toBeUndefined();
   });
 
   it('includes project from project_id', () => {
-    const fm = generateFrontmatter(makePost({ project_id: 'm0lz.02' }), makeConfig());
+    const fm = generateFrontmatter(makePost({ project_id: 'm0lz.02' }), makeConfig(), DEFAULT_CONFIG_PATH);
     expect(fm.project).toBe('m0lz.02');
   });
 
   it('sets published to false', () => {
-    const fm = generateFrontmatter(makePost(), makeConfig());
+    const fm = generateFrontmatter(makePost(), makeConfig(), DEFAULT_CONFIG_PATH);
     expect(fm.published).toBe(false);
   });
 
   it('generates placeholder title and description', () => {
-    const fm = generateFrontmatter(makePost(), makeConfig());
+    const fm = generateFrontmatter(makePost(), makeConfig(), DEFAULT_CONFIG_PATH);
     expect(fm.title).toBe('{{title}}');
     expect(fm.description).toBe('{{description}}');
+  });
+});
+
+describe('generateFrontmatter companion_repo resolution (v0.3)', () => {
+  let tempDir: string | undefined;
+
+  afterEach(() => {
+    if (tempDir) {
+      rmSync(tempDir, { recursive: true, force: true });
+      tempDir = undefined;
+    }
+  });
+
+  function makeProjectRepo(originUrl: string): { configPath: string; config: BlogConfig } {
+    tempDir = mkdtempSync(join(tmpdir(), 'frontmatter-companion-'));
+    const projectDir = join(tempDir, 'project');
+    mkdirSync(projectDir, { recursive: true });
+    execFileSync('git', ['init', '--quiet'], { cwd: projectDir });
+    execFileSync('git', ['remote', 'add', 'origin', originUrl], { cwd: projectDir });
+
+    const configPath = join(tempDir, '.blogrc.yaml');
+    // Path inside config is relative — exercises the
+    // `resolve(dirname(configPath), config.projects[id])` contract.
+    writeFileSync(configPath, 'site:\n  repo_path: ./site\n', 'utf-8');
+
+    const config = makeConfig();
+    config.projects = { 'test.01': './project' };
+    return { configPath, config };
+  }
+
+  it('resolves companion_repo from git origin HTTPS URL', () => {
+    const { configPath, config } = makeProjectRepo('https://github.com/x/y.git');
+    const fm = generateFrontmatter(makePost({ project_id: 'test.01' }), config, configPath);
+    expect(fm.companion_repo).toBe('https://github.com/x/y');
+  });
+
+  it('normalizes SSH origin to HTTPS', () => {
+    const { configPath, config } = makeProjectRepo('git@github.com:x/y.git');
+    const fm = generateFrontmatter(makePost({ project_id: 'test.01' }), config, configPath);
+    expect(fm.companion_repo).toBe('https://github.com/x/y');
+  });
+
+  it('omits companion_repo when project dir has no origin (best-effort, no throw)', () => {
+    tempDir = mkdtempSync(join(tmpdir(), 'frontmatter-no-origin-'));
+    const projectDir = join(tempDir, 'project');
+    mkdirSync(projectDir, { recursive: true });
+    execFileSync('git', ['init', '--quiet'], { cwd: projectDir });
+    // No `git remote add origin` — readOriginUrl returns null.
+
+    const configPath = join(tempDir, '.blogrc.yaml');
+    writeFileSync(configPath, 'site:\n  repo_path: ./site\n', 'utf-8');
+
+    const config = makeConfig();
+    config.projects = { 'test.01': './project' };
+
+    const fm = generateFrontmatter(makePost({ project_id: 'test.01' }), config, configPath);
+    expect(fm.companion_repo).toBeUndefined();
+  });
+
+  it('omits companion_repo when project dir does not exist (best-effort, no throw)', () => {
+    tempDir = mkdtempSync(join(tmpdir(), 'frontmatter-no-dir-'));
+    const configPath = join(tempDir, '.blogrc.yaml');
+    writeFileSync(configPath, 'site:\n  repo_path: ./site\n', 'utf-8');
+
+    const config = makeConfig();
+    config.projects = { 'test.01': './nonexistent' };
+
+    const fm = generateFrontmatter(makePost({ project_id: 'test.01' }), config, configPath);
+    expect(fm.companion_repo).toBeUndefined();
+  });
+
+  it('omits companion_repo when project_id is set but not in config.projects', () => {
+    tempDir = mkdtempSync(join(tmpdir(), 'frontmatter-unreg-'));
+    const configPath = join(tempDir, '.blogrc.yaml');
+    writeFileSync(configPath, 'site:\n  repo_path: ./site\n', 'utf-8');
+
+    const config = makeConfig();
+    // projects map entirely absent from config
+    const fm = generateFrontmatter(makePost({ project_id: 'test.01' }), config, configPath);
+    expect(fm.companion_repo).toBeUndefined();
+    expect(fm.project).toBe('test.01');
+  });
+
+  it('project_id resolution wins over has_benchmarks heuristic', () => {
+    const { configPath, config } = makeProjectRepo('https://github.com/x/y');
+    const fm = generateFrontmatter(
+      makePost({ project_id: 'test.01', has_benchmarks: 1 }),
+      config,
+      configPath,
+    );
+    expect(fm.companion_repo).toBe('https://github.com/x/y');
+  });
+
+  it('falls back to has_benchmarks heuristic when project_id resolution fails', () => {
+    tempDir = mkdtempSync(join(tmpdir(), 'frontmatter-fallback-'));
+    const configPath = join(tempDir, '.blogrc.yaml');
+    writeFileSync(configPath, 'site:\n  repo_path: ./site\n', 'utf-8');
+
+    const config = makeConfig();
+    // No projects entry — resolveCompanionRepoFromProject returns null,
+    // has_benchmarks branch takes over.
+    const fm = generateFrontmatter(
+      makePost({ project_id: 'test.01', has_benchmarks: 1 }),
+      config,
+      configPath,
+    );
+    expect(fm.companion_repo).toBe('https://github.com/jmolz/test-post');
+  });
+
+  it('skips silently when origin is non-GitHub (e.g. GitLab)', () => {
+    const { configPath, config } = makeProjectRepo('https://gitlab.com/x/y.git');
+    const fm = generateFrontmatter(makePost({ project_id: 'test.01' }), config, configPath);
+    expect(fm.companion_repo).toBeUndefined();
   });
 });
 

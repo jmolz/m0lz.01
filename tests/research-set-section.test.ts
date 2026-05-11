@@ -54,7 +54,7 @@ afterEach(() => {
 });
 
 function seedDocAndPost(slug: string): void {
-  initResearchPost(db, slug, `topic for ${slug}`, 'directed', 'project-launch');
+  initResearchPost(db, slug, `topic for ${slug}`, 'directed', 'project-launch', 'test.01');
   writeResearchDocument(researchDir, {
     slug,
     topic: `topic for ${slug}`,
@@ -108,7 +108,7 @@ describe('setResearchSection (library)', () => {
   });
 
   it('throws descriptive error if doc not initialized', () => {
-    initResearchPost(db, 'delta', 'topic', 'directed', 'project-launch');
+    initResearchPost(db, 'delta', 'topic', 'directed', 'project-launch', 'test.01');
     // Post row exists but the doc file was never written.
     expect(() =>
       setResearchSection(researchDir, 'delta', 'thesis', 'x'),

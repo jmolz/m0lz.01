@@ -34,6 +34,12 @@ export interface PipelineContext {
   // the 10s default from acquirePublishLock. Documented as test-only
   // in .claude/rules/lifecycle.md.
   lockTimeoutMs?: number;
+  // v0.3 dogfood-hardening: when set, the site-pr step skips the
+  // assertOriginInSync precondition and emits a bypass warning. Flows
+  // in from `blog publish start --allow-main-ahead`, which places the
+  // flag on the plan-step args array so the SHA256 plan hash binds the
+  // operator's consent. Absence or false = origin-sync check enforced.
+  allowMainAhead?: boolean;
 }
 
 export type StepOutcome = 'completed' | 'failed' | 'skipped' | 'paused';
