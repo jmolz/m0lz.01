@@ -29,10 +29,10 @@ export interface DevToResult {
 
 // Dev.to tag rules (documented on dev.to/tags):
 //   - lowercase
-//   - alphanumeric + hyphens
+//   - alphanumeric only
 //   - max 4 tags per article
-// Normalization: lowercase, spaces→hyphens, strip other chars, drop empties,
-// take first 4. Does not dedupe because the tag list is small and the author
+// Normalization: lowercase, strip non-alphanumerics, drop empties, take
+// first 4. Does not dedupe because the tag list is small and the author
 // controls the draft tags — if they included a duplicate, preserve intent.
 export function mapDevToTags(tags: string[]): string[] {
   const result: string[] = [];
@@ -40,8 +40,7 @@ export function mapDevToTags(tags: string[]): string[] {
     if (typeof raw !== 'string') continue;
     const normalized = raw
       .toLowerCase()
-      .replace(/\s+/g, '-')
-      .replace(/[^a-z0-9-]/g, '');
+      .replace(/[^a-z0-9]/g, '');
     if (normalized.length === 0) continue;
     result.push(normalized);
     if (result.length >= 4) break;

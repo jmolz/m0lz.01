@@ -104,9 +104,9 @@ afterEach(() => {
 });
 
 describe('mapDevToTags', () => {
-  it('normalizes: lowercases, spaces→hyphens, preserves order, caps at 4', () => {
+  it('normalizes: lowercases, strips non-alphanumerics, preserves order, caps at 4', () => {
     const result = mapDevToTags(['TypeScript', 'Web Performance', 'benchmark']);
-    expect(result).toEqual(['typescript', 'web-performance', 'benchmark']);
+    expect(result).toEqual(['typescript', 'webperformance', 'benchmark']);
   });
 
   it('caps result at 4 tags', () => {
@@ -115,9 +115,14 @@ describe('mapDevToTags', () => {
     expect(result).toEqual(['a', 'b', 'c', 'd']);
   });
 
-  it('strips non [a-z0-9-] and drops tags that become empty', () => {
+  it('strips non [a-z0-9] and drops tags that become empty', () => {
     const result = mapDevToTags(['!!!', '@@@', 'valid']);
     expect(result).toEqual(['valid']);
+  });
+
+  it('emits Dev.to-compatible alphanumeric tags for dashed source tags', () => {
+    const result = mapDevToTags(['developer-tools', 'open-source', 'AI']);
+    expect(result).toEqual(['developertools', 'opensource', 'ai']);
   });
 });
 
@@ -169,7 +174,7 @@ describe('crosspostToDevTo', () => {
     expect(payload.article.title).toBe('Sample Post');
     expect(payload.article.published).toBe(false);
     expect(payload.article.canonical_url).toBe('https://m0lz.dev/writing/sample');
-    expect(payload.article.tags).toEqual(['typescript', 'web-performance', 'benchmark']);
+    expect(payload.article.tags).toEqual(['typescript', 'webperformance', 'benchmark']);
     expect(payload.article.description).toBe('A one-line description');
     expect(payload.article.main_image).toBeUndefined();
     // Body should contain the heading and code fence, JSX stripped.
