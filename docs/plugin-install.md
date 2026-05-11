@@ -1,4 +1,26 @@
-# Installing the `/blog` Claude Code plugin
+# Authoring surfaces: Claude Code plugin and Codex wrappers
+
+The `blog` binary is the distribution pipeline. Interactive authoring can run
+from Claude Code through the packaged `/blog` plugin, or from Codex through the
+repo-local `.codex/commands/*` wrappers and `.agents/skills/source-command-*`
+skills. This package does not currently ship a separate Codex plugin.
+
+## Codex local workflow
+
+Use this path when you are working in the m0lz.01 repo with Codex:
+
+```text
+.codex/commands/prime.md
+.codex/commands/plan-feature.md <topic>
+.codex/commands/execute.md <plan-file>
+.codex/commands/evaluate.md <plan-file>
+```
+
+Those wrappers call the migrated `source-command-*` skills in `.agents/skills/`.
+They are development-time guidance for Codex; state changes still go through
+the standalone CLI and the hash-verified `blog agent apply` boundary.
+
+## Installing the `/blog` Claude Code plugin
 
 Three install paths, ordered from most common to least.
 

@@ -1,10 +1,11 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 
 import Database from 'better-sqlite3';
 
 import { BlogConfig } from '../config/types.js';
 import { parseFrontmatter } from '../draft/frontmatter.js';
+import { parseGitHubRemoteUrl, readOriginUrl } from './origin-guard.js';
 
 // Step 2 of the publish pipeline: generate the m0lz.00 research-companion
 // MDX page for a post. The page lives alongside the post on the hub and
@@ -29,11 +30,14 @@ export interface ResearchPagePaths {
   researchPagesDir: string; // .blog-agent/research-pages
   templatesDir: string; // templates/
   draftsDir: string; // .blog-agent/drafts — description sourced from draft frontmatter
+  configPath?: string; // .blogrc.yaml — used to resolve config.projects relative paths
 }
 
 interface PostLookupRow {
   content_type: string | null;
   title: string | null;
+  repo_url: string | null;
+  project_id: string | null;
 }
 
 function extractSection(body: string, headingPattern: RegExp): string | null {
@@ -117,6 +121,45 @@ function renderTagsYaml(tags: string[]): string {
   return `[${quoted.join(', ')}]`;
 }
 
+function renderProjectFrontmatter(projectId: string | null): string {
+  if (!projectId) return '';
+  return `project: "${projectId.replace(/"/g, '\\"')}"`;
+}
+
+function renderResearchTitle(title: string, projectId: string | null): string {
+  if (!projectId) return `Research: ${title}`;
+  return title.startsWith(projectId) ? title : `${projectId} Research: ${title}`;
+}
+
+function resolveResearchRepoUrl(
+  slug: string,
+  post: PostLookupRow,
+  config: BlogConfig,
+  configPath: string | undefined,
+): string {
+  if (post.repo_url) {
+    return post.repo_url;
+  }
+
+  if (post.project_id && configPath && config.projects?.[post.project_id]) {
+    try {
+      const projectDir = resolve(dirname(configPath), config.projects[post.project_id]);
+      const raw = readOriginUrl(projectDir);
+      if (raw) {
+        const parsed = parseGitHubRemoteUrl(raw);
+        if (parsed) {
+          return `https://github.com/${parsed.owner}/${parsed.name}`;
+        }
+      }
+    } catch {
+      // Best-effort enrichment. Research pages should still render when a
+      // local project clone is missing or not a git repository.
+    }
+  }
+
+  return `https://github.com/${config.author.github}/${slug}`;
+}
+
 // Fill a single `{{placeholder}}` occurrence globally. The template is a
 // plain text document with no code fences around placeholders (Cluster 5
 // owns the template), so a plain string replace loop is sufficient.
@@ -136,7 +179,7 @@ export function generateResearchPage(
   db: Database.Database,
 ): ResearchPageResult {
   const post = db
-    .prepare('SELECT content_type, title FROM posts WHERE slug = ?')
+    .prepare('SELECT content_type, title, repo_url, project_id FROM posts WHERE slug = ?')
     .get(slug) as PostLookupRow | undefined;
   if (!post) {
     throw new Error(`Post not found: ${slug}`);
@@ -198,14 +241,16 @@ export function generateResearchPage(
     ?? (post.content_type === 'analysis-opinion' ? '' : '(no benchmark)');
   const openQuestions =
     extractSection(researchBody, /^#{1,6}\s+Open\s+Questions\b/i) ?? '(none listed)';
-  const repoUrl = `https://github.com/${config.author.github}/${slug}`;
+  const repoUrl = resolveResearchRepoUrl(slug, post, config, paths.configPath);
   const repoLink = `[companion repo](${repoUrl})`;
 
   const filled = fillTemplate(template, {
     title,
+    research_title: renderResearchTitle(title, post.project_id),
     description,
     date,
     tags: tagsYaml,
+    project_frontmatter: renderProjectFrontmatter(post.project_id),
     thesis,
     findings,
     bibliography,

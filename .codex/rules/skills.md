@@ -1,11 +1,11 @@
 ---
 paths:
-  - ".codex-plugin/skills/**"
+  - ".claude-plugin/skills/**"
 ---
 
 # `/blog` Skill Conventions
 
-Rules that auto-load when editing files under `.codex-plugin/skills/**`. These
+Rules that auto-load when editing files under `.claude-plugin/skills/**`. These
 protect the structural safety boundary between the `/blog` skill (propose,
 review, approve) and the CLI (validate hash, execute steps).
 

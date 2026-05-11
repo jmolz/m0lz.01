@@ -18,6 +18,7 @@ export interface PostFrontmatter {
   medium_url?: string;
   substack_url?: string;
   devto_url?: string;
+  devto_main_image?: string;
   // Phase 7 additions. All optional — present only after the
   // corresponding lifecycle event:
   // - `unpublished_at` set by `blog unpublish` when the site-revert PR
@@ -160,6 +161,7 @@ export function serializeFrontmatter(fm: PostFrontmatter): string {
   if (fm.medium_url !== undefined) obj.medium_url = fm.medium_url;
   if (fm.substack_url !== undefined) obj.substack_url = fm.substack_url;
   if (fm.devto_url !== undefined) obj.devto_url = fm.devto_url;
+  if (fm.devto_main_image !== undefined) obj.devto_main_image = fm.devto_main_image;
   // Phase 7 additions — only emitted when present. The m0lz.00 site
   // parser must tolerate their absence (legacy posts) and their
   // presence (updated/unpublished posts).
@@ -211,6 +213,7 @@ export function parseFrontmatter(mdxContent: string): PostFrontmatter {
     medium_url: obj.medium_url !== undefined ? String(obj.medium_url) : undefined,
     substack_url: obj.substack_url !== undefined ? String(obj.substack_url) : undefined,
     devto_url: obj.devto_url !== undefined ? String(obj.devto_url) : undefined,
+    devto_main_image: obj.devto_main_image !== undefined ? String(obj.devto_main_image) : undefined,
     unpublished_at: obj.unpublished_at !== undefined ? String(obj.unpublished_at) : undefined,
     updated_at: obj.updated_at !== undefined ? String(obj.updated_at) : undefined,
     update_count: updateCount,

@@ -150,6 +150,7 @@ describe('runDraftRegenerateFrontmatter', () => {
       '  - t',
       'published: false',
       'project: test.01',
+      'devto_main_image: ./assets/devto-cover.webp',
     ].join('\n');
     seedDraft(f, 'beta', fm, 'body\n', 'test.01');
 
@@ -248,6 +249,7 @@ describe('runDraftRegenerateFrontmatter', () => {
       '  - t2',
       'published: false',
       'project: test.01',
+      'devto_main_image: ./assets/devto-cover.webp',
     ].join('\n');
     seedDraft(f, 'gamma', fm, 'body\n', 'test.01');
 
@@ -259,6 +261,7 @@ describe('runDraftRegenerateFrontmatter', () => {
     expect(updated).toContain('Preserved description');
     expect(updated).toContain('- t1');
     expect(updated).toContain('- t2');
+    expect(updated).toContain('devto_main_image: ./assets/devto-cover.webp');
   });
 
   it('rejects phase=published with actionable error and does not rewrite the file', () => {

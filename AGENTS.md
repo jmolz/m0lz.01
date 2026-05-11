@@ -75,7 +75,7 @@ m0lz.01/
       workspace/           # Workspace-root detection + user-path resolution
       plan-file/           # Plan schema, hash, validator, apply runner
       json-envelope.ts     # Versioned envelope for --json CLI output
-  .codex-plugin/          # /blog Codex plugin (ships in npm tarball)
+  .claude-plugin/         # /blog Claude Code plugin (ships in npm tarball)
     plugin.json            # Plugin manifest
     skills/blog/           # SKILL.md + REFERENCES/JOURNEYS/CHECKPOINTS
   templates/               # Repo, methodology, social, research-page templates
@@ -98,7 +98,9 @@ m0lz.01/
 
 ### Dual-Layer Design
 
-**Codex Skills** (interactive, uses subscription): `/blog-research`, `/blog-benchmark`, `/blog-draft`, `/blog-evaluate`, `/blog-pipeline`, `/blog-update` — these handle AI-heavy work in Codex sessions.
+**Codex repo guidance** (interactive, uses subscription): `.codex/commands/*` wrappers and `.agents/skills/source-command-*` skills — these handle Codex-first planning, execution, review, and maintenance commands in this repo.
+
+**Claude Code plugin** (interactive, uses subscription): packaged `.claude-plugin/` `/blog` skill for research, drafting, and structural review in Claude Code.
 
 **Standalone CLI** (mechanical, no AI needed): `blog init`, `blog publish`, `blog unpublish`, `blog status`, `blog metrics`, `blog ideas`, `blog research init|add-source|show|set-section|finalize`, `blog benchmark init|env|run|show|skip|complete`, `blog draft init|show|validate|add-asset|complete|regenerate-frontmatter`, `blog evaluate init|structural-autocheck|record|show|synthesize|complete|reject` — these run independently for API calls, state queries, and pipeline execution.
 
@@ -284,8 +286,8 @@ These load automatically when editing files in their scope:
 | `.codex/rules/evaluation.md` | `src/core/evaluate/**`, `src/cli/evaluate.ts` | Deterministic-CLI/judgment-skill split, autocheck determinism, JACCARD_THRESHOLD, mandatory artifact_hashes provenance, DB-authoritative re-derivation with cluster-identity, slug-scoped FS lock, readManifest single-choke-point validation, synthesis receipt, reject sentinel ordering, cycle isolation |
 | `.codex/rules/lifecycle.md` | `src/core/update/**`, `src/core/unpublish/**`, `src/cli/update.ts`, `src/cli/unpublish.ts` | publishMode dispatch, update_cycles first-class rows, partial-unique-index constraint, explicit isUpdateReview flag, cycle-keyed notice marker, publish guard, shared per-slug lock, shared finalize helper, metrics audit log, unpublish trust boundaries |
 | `.codex/rules/release.md` | `RELEASING.md`, `CHANGELOG.md`, `package.json`, `scripts/**`, `.github/**`, `.nvmrc` | Package-root vs CWD-relative path separation, four-layer verify-pack gate (allowlist + denylist + required + src→dist closure), clean-build invariant (`node scripts/clean-dist.mjs`), prepublishOnly chain, `engines.node` tight-pinning, release runbook invariants (main-branch preflight, atomic push, `--verify-tag`, registry-state-check-first recovery, `--mixed` resets), awk flag-based CHANGELOG extraction, adversarial-review convergence cadence, regression suite registration (four-place parity) |
-| `.codex/rules/skills.md` | `.codex-plugin/skills/**` | `/blog` skill discipline — destructive execution only via `blog agent apply`, state reads via `--json`, no `node -e`/`cat`/`head` in code fences, concrete `{command, args}` steps, SHA256 hash binding, canonical-URL permanence citation, no hardcoded identity values |
-| `.codex/rules/voice.md` | `src/core/draft/**`, `src/cli/draft.ts`, `templates/draft/**`, `skills/blog-draft.md`, `skills/blog-evaluate.md`, `.codex-plugin/skills/blog/**`, `src/core/evaluate/**` | Voice rules — direct declaratives, no hedges, no tricolon stacks, no topic-restatement transitions, no smarmy openers, no undefined jargon, ~1 em dash per 500 words max with substitution test, no emojis. Two-test accessibility contract (newcomer + expert). Byte-parity with `.codex-plugin/skills/blog/VOICE.md` enforced by `tests/voice-parity.test.ts`. |
+| `.codex/rules/skills.md` | `.claude-plugin/skills/**` | `/blog` skill discipline — destructive execution only via `blog agent apply`, state reads via `--json`, no `node -e`/`cat`/`head` in code fences, concrete `{command, args}` steps, SHA256 hash binding, canonical-URL permanence citation, no hardcoded identity values |
+| `.codex/rules/voice.md` | `src/core/draft/**`, `src/cli/draft.ts`, `templates/draft/**`, `skills/blog-draft.md`, `skills/blog-evaluate.md`, `.claude-plugin/skills/blog/**`, `src/core/evaluate/**` | Voice rules — direct declaratives, no hedges, no tricolon stacks, no topic-restatement transitions, no smarmy openers, no undefined jargon, ~1 em dash per 500 words max with substitution test, no emojis. Two-test accessibility contract (newcomer + expert). Byte-parity with `.claude-plugin/skills/blog/VOICE.md` enforced by `tests/voice-parity.test.ts`. |
 | `.codex/rules/plan-file.md` | `src/core/plan-file/**`, `src/cli/agent.ts`, `src/cli/index.ts`, `src/core/workspace/**`, `src/core/json-envelope.ts` | Plan-file safety boundary invariants (seven adversarial review passes) — canonical single-space form + `KNOWN_LEAF_COMMANDS` TRUE-leaves-only allowlist, `SLUG_BEARING_STEP_COMMANDS` slug-binding, `validateSlug` at BOTH CLI + schema layers, `--output` realpath + lstat clamp, slug-scoped apply lock with honest PID-liveness policy, DB-authoritative step state + RECEIPT_CONFLICT (schema v4), pre-spawn crash-recovery sentinel, child-workspace pinning (`--workspace` prepend + `BLOG_WORKSPACE` env scrub), startup shim `--workspace=/path` compact form + empty-operand rejection, `BANNED_ARG_FLAGS`, `agent` nesting ban, v0.3 config-hash-binding residual risk |
 
 ### Read on demand
@@ -343,6 +345,7 @@ interface PostFrontmatter {
   medium_url?: string     // Populated after cross-post
   substack_url?: string   // Populated after cross-post
   devto_url?: string      // Populated after cross-post
+  devto_main_image?: string // Optional Dev.to cover URL or draft asset path
   // Phase 7 additions — optional, appear after `published` when present.
   // The site repo's frontmatter parser must accept these without erroring.
   // Round-trip proof (serialize → parse preserves every field) lives in

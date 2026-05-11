@@ -36,11 +36,18 @@ canonical: "https://m0lz.dev/writing/sample"
 Body paragraph with real content.
 `;
 
-function mkFx(slug: string): Fx {
+function mdxWithDevToMainImage(value: string): string {
+  return SAMPLE_MDX.replace(
+    'canonical: "https://m0lz.dev/writing/sample"',
+    `canonical: "https://m0lz.dev/writing/sample"\ndevto_main_image: "${value}"`,
+  );
+}
+
+function mkFx(slug: string, mdx = SAMPLE_MDX): Fx {
   const tempDir = mkdtempSync(join(tmpdir(), 'update-devto-'));
   const draftsDir = join(tempDir, 'drafts');
   mkdirSync(join(draftsDir, slug), { recursive: true });
-  writeFileSync(join(draftsDir, slug, 'index.mdx'), SAMPLE_MDX, 'utf-8');
+  writeFileSync(join(draftsDir, slug, 'index.mdx'), mdx, 'utf-8');
   fx = { tempDir, draftsDir };
   return fx;
 }
@@ -115,6 +122,41 @@ describe('updateDevToArticle — probe then PUT body + frontmatter', () => {
     expect(body.article.tags).toEqual(['typescript', 'benchmarks']);
     // body_markdown must include the MDX body paragraph, not just frontmatter.
     expect(body.article.body_markdown).toMatch(/Body paragraph with real content/);
+    expect(body.article.main_image).toBeUndefined();
+  });
+
+  it('probe-match → PUT carries main_image when draft configures Dev.to cover', async () => {
+    const f = mkFx('sample', mdxWithDevToMainImage('assets/devto-cover.webp'));
+    process.env.DEVTO_API_KEY = 'k';
+
+    const mockFetch = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify([
+        { id: 55, url: 'https://dev.to/u/sample', canonical_url: 'https://m0lz.dev/writing/sample' },
+      ]), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        id: 55, url: 'https://dev.to/u/sample',
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    vi.stubGlobal('fetch', mockFetch);
+
+    await updateDevToArticle('sample', mkConfig(), { draftsDir: f.draftsDir });
+
+    const body = JSON.parse(mockFetch.mock.calls[1][1].body);
+    expect(body.article.main_image).toBe(
+      'https://m0lz.dev/writing/sample/assets/devto-cover.webp',
+    );
+  });
+
+  it('rejects unsafe devto_main_image before PUT', async () => {
+    const f = mkFx('sample', mdxWithDevToMainImage('/tmp/cover.webp'));
+    process.env.DEVTO_API_KEY = 'k';
+    const mockFetch = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify([
+      { id: 55, url: 'https://dev.to/u/sample', canonical_url: 'https://m0lz.dev/writing/sample' },
+    ]), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    vi.stubGlobal('fetch', mockFetch);
+
+    await expect(updateDevToArticle('sample', mkConfig(), { draftsDir: f.draftsDir }))
+      .rejects.toThrow(/devto_main_image/);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 
   it('probe-miss → falls through to POST (recover from manual deletion)', async () => {

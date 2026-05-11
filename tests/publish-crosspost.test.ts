@@ -62,6 +62,13 @@ const x = 1;
 <FancyComponent>gone</FancyComponent>
 `;
 
+function mdxWithDevToMainImage(value: string): string {
+  return SAMPLE_MDX.replace(
+    'canonical: "https://m0lz.dev/writing/sample"',
+    `canonical: "https://m0lz.dev/writing/sample"\ndevto_main_image: "${value}"`,
+  );
+}
+
 interface Fixture {
   tempDir: string;
   draftsDir: string;
@@ -73,12 +80,12 @@ let fixture: Fixture | undefined;
 // restore in afterEach so no test leaks into another.
 const savedDevtoKey = process.env.DEVTO_API_KEY;
 
-function setup(slug: string): Fixture {
+function setup(slug: string, mdx = SAMPLE_MDX): Fixture {
   const tempDir = mkdtempSync(join(tmpdir(), 'publish-xxx-crosspost-'));
   const draftsDir = join(tempDir, 'drafts');
   const socialDir = join(tempDir, 'social');
   mkdirSync(join(draftsDir, slug), { recursive: true });
-  writeFileSync(join(draftsDir, slug, 'index.mdx'), SAMPLE_MDX, 'utf-8');
+  writeFileSync(join(draftsDir, slug, 'index.mdx'), mdx, 'utf-8');
   fixture = { tempDir, draftsDir, socialDir };
   return fixture;
 }
@@ -164,41 +171,191 @@ describe('crosspostToDevTo', () => {
     expect(payload.article.canonical_url).toBe('https://m0lz.dev/writing/sample');
     expect(payload.article.tags).toEqual(['typescript', 'web-performance', 'benchmark']);
     expect(payload.article.description).toBe('A one-line description');
+    expect(payload.article.main_image).toBeUndefined();
     // Body should contain the heading and code fence, JSX stripped.
     expect(payload.article.body_markdown).toContain('# Heading');
     expect(payload.article.body_markdown).toContain('const x = 1;');
     expect(payload.article.body_markdown).not.toContain('<FancyComponent');
   });
 
-  it('probe-then-create: returns existing URL without POSTing when canonical already on Dev.to', async () => {
+  it('adds main_image for safe draft-relative Dev.to cover assets', async () => {
+    const f = setup('sample', mdxWithDevToMainImage('./assets/devto-cover.webp'));
+    process.env.DEVTO_API_KEY = 'test-key-abc';
+    const mockFetch = vi.fn()
+      .mockResolvedValueOnce(new Response('[]', { status: 200 }))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ id: 123, url: 'https://dev.to/jmolz/sample-abc' }), {
+          status: 201,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      );
+    vi.stubGlobal('fetch', mockFetch);
+
+    await crosspostToDevTo('sample', makeConfig(), { draftsDir: f.draftsDir });
+
+    const payload = JSON.parse(mockFetch.mock.calls[1][1].body);
+    expect(payload.article.main_image).toBe(
+      'https://m0lz.dev/writing/sample/assets/devto-cover.webp',
+    );
+  });
+
+  it('passes through absolute http(s) Dev.to cover URLs', async () => {
+    const f = setup('sample', mdxWithDevToMainImage('https://cdn.example.com/cover.webp'));
+    process.env.DEVTO_API_KEY = 'test-key-abc';
+    const mockFetch = vi.fn()
+      .mockResolvedValueOnce(new Response('[]', { status: 200 }))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ id: 123, url: 'https://dev.to/jmolz/sample-abc' }), {
+          status: 201,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      );
+    vi.stubGlobal('fetch', mockFetch);
+
+    await crosspostToDevTo('sample', makeConfig(), { draftsDir: f.draftsDir });
+
+    const payload = JSON.parse(mockFetch.mock.calls[1][1].body);
+    expect(payload.article.main_image).toBe('https://cdn.example.com/cover.webp');
+  });
+
+  it.each([
+    [''],
+    ['../cover.webp'],
+    ['/tmp/cover.webp'],
+    ['assets/../cover.webp'],
+    ['images/cover.webp'],
+  ])('rejects unsafe devto_main_image value %s before network calls', async (unsafeValue) => {
+    const f = setup('sample', mdxWithDevToMainImage(unsafeValue));
+    process.env.DEVTO_API_KEY = 'test-key-abc';
+    const mockFetch = vi.fn().mockResolvedValueOnce(new Response('[]', { status: 200 }));
+    vi.stubGlobal('fetch', mockFetch);
+
+    await expect(crosspostToDevTo('sample', makeConfig(), { draftsDir: f.draftsDir }))
+      .rejects.toThrow(/devto_main_image/);
+    expect(mockFetch).toHaveBeenCalledTimes(0);
+  });
+
+  it('probe-then-converge: PUTs an existing unpublished canonical match without POSTing', async () => {
     // Regression for Codex Pass 2 Critical: a prior run may have succeeded
     // at POST /api/articles but died before the local DB transaction.
     // On resume the runner re-executes crosspost-devto; without the probe,
     // this would create a duplicate Dev.to draft. The probe must find the
-    // existing article and return its URL instead.
+    // one unpublished article and update it in place.
     const f = setup('duplicate');
     process.env.DEVTO_API_KEY = 'retry-key';
     const existingArticles = [
       { id: 999, url: 'https://dev.to/jmolz/unrelated', canonical_url: 'https://m0lz.dev/writing/other' },
-      { id: 777, url: 'https://dev.to/jmolz/duplicate-abc', canonical_url: 'https://m0lz.dev/writing/duplicate' },
+      {
+        id: 777,
+        url: 'https://dev.to/jmolz/duplicate-abc',
+        canonical_url: 'https://m0lz.dev/writing/duplicate',
+        published: false,
+      },
     ];
-    const mockFetch = vi.fn().mockResolvedValueOnce(
-      new Response(JSON.stringify(existingArticles), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      }),
-    );
+    const mockFetch = vi.fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify(existingArticles), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ id: 777, url: 'https://dev.to/jmolz/duplicate-abc' }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      );
     vi.stubGlobal('fetch', mockFetch);
 
     const result = await crosspostToDevTo('duplicate', makeConfig(), { draftsDir: f.draftsDir });
     expect(result.id).toBe(777);
     expect(result.url).toBe('https://dev.to/jmolz/duplicate-abc');
 
-    // Critical assertion: only the probe was called. No POST.
-    expect(mockFetch).toHaveBeenCalledTimes(1);
+    // Critical assertion: probe + PUT only. No POST.
+    expect(mockFetch).toHaveBeenCalledTimes(2);
     const [probeUrl, probeInit] = mockFetch.mock.calls[0];
     expect(probeUrl).toMatch(/articles\/me\/all/);
     expect(probeInit.method).toBe('GET');
+    const [putUrl, putInit] = mockFetch.mock.calls[1];
+    expect(putUrl).toBe('https://dev.to/api/articles/777');
+    expect(putInit.method).toBe('PUT');
+    const payload = JSON.parse(putInit.body);
+    expect(payload.article.canonical_url).toBe('https://m0lz.dev/writing/duplicate');
+    expect(payload.article.published).toBe(false);
+  });
+
+  it('rejects duplicate canonical matches instead of choosing one arbitrarily', async () => {
+    const f = setup('duplicate');
+    process.env.DEVTO_API_KEY = 'retry-key';
+    const mockFetch = vi.fn().mockResolvedValueOnce(
+      new Response(JSON.stringify([
+        {
+          id: 777,
+          url: 'https://dev.to/jmolz/duplicate-a',
+          canonical_url: 'https://m0lz.dev/writing/duplicate',
+          published: false,
+        },
+        {
+          id: 778,
+          url: 'https://dev.to/jmolz/duplicate-b',
+          canonical_url: 'https://m0lz.dev/writing/duplicate',
+          published: false,
+        },
+      ]), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+    vi.stubGlobal('fetch', mockFetch);
+
+    await expect(crosspostToDevTo('duplicate', makeConfig(), { draftsDir: f.draftsDir }))
+      .rejects.toThrow(/duplicate canonical articles found/);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects a canonical match unless the probe confirms it is unpublished', async () => {
+    const f = setup('published');
+    process.env.DEVTO_API_KEY = 'retry-key';
+    const mockFetch = vi.fn().mockResolvedValueOnce(
+      new Response(JSON.stringify([
+        {
+          id: 777,
+          url: 'https://dev.to/jmolz/published',
+          canonical_url: 'https://m0lz.dev/writing/published',
+          published: true,
+        },
+      ]), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+    vi.stubGlobal('fetch', mockFetch);
+
+    await expect(crosspostToDevTo('published', makeConfig(), { draftsDir: f.draftsDir }))
+      .rejects.toThrow(/not a confirmed unpublished draft/);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects a canonical match with unknown publication state during initial crosspost', async () => {
+    const f = setup('unknown-state');
+    process.env.DEVTO_API_KEY = 'retry-key';
+    const mockFetch = vi.fn().mockResolvedValueOnce(
+      new Response(JSON.stringify([
+        {
+          id: 778,
+          url: 'https://dev.to/jmolz/unknown-state',
+          canonical_url: 'https://m0lz.dev/writing/unknown-state',
+        },
+      ]), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+    vi.stubGlobal('fetch', mockFetch);
+
+    await expect(crosspostToDevTo('unknown-state', makeConfig(), { draftsDir: f.draftsDir }))
+      .rejects.toThrow(/not a confirmed unpublished draft/);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 
   it('probe paginates beyond 1000 articles and matches on a later page', async () => {
@@ -218,25 +375,36 @@ describe('crosspostToDevTo', () => {
     // Page 2: a few entries, the last of which matches.
     const page2 = [
       { id: 1001, url: 'https://dev.to/jmolz/filler', canonical_url: 'https://m0lz.dev/writing/filler' },
-      { id: 1002, url: 'https://dev.to/jmolz/paginated-match', canonical_url: 'https://m0lz.dev/writing/paginated' },
+      {
+        id: 1002,
+        url: 'https://dev.to/jmolz/paginated-match',
+        canonical_url: 'https://m0lz.dev/writing/paginated',
+        published: false,
+      },
     ];
     const mockFetch = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify(page1), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify(page2), { status: 200 }));
+      .mockResolvedValueOnce(new Response(JSON.stringify(page2), { status: 200 }))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ id: 1002, url: 'https://dev.to/jmolz/paginated-match' }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      );
     vi.stubGlobal('fetch', mockFetch);
 
     const result = await crosspostToDevTo('paginated', makeConfig(), { draftsDir: f.draftsDir });
     expect(result.id).toBe(1002);
     expect(result.url).toBe('https://dev.to/jmolz/paginated-match');
 
-    // Two probe GETs (page 1 + page 2), no POST.
-    expect(mockFetch).toHaveBeenCalledTimes(2);
+    // Two probe GETs (page 1 + page 2), then PUT. No POST.
+    expect(mockFetch).toHaveBeenCalledTimes(3);
     const [url1] = mockFetch.mock.calls[0];
     const [url2] = mockFetch.mock.calls[1];
     expect(url1).toMatch(/[?&]page=1\b/);
     expect(url2).toMatch(/[?&]page=2\b/);
     const methods = mockFetch.mock.calls.map((c) => c[1]?.method);
-    expect(methods).toEqual(['GET', 'GET']);
+    expect(methods).toEqual(['GET', 'GET', 'PUT']);
   });
 
   it('probe stops on short page: page 1 has <1000 entries => no page 2 fetch', async () => {
@@ -274,15 +442,26 @@ describe('crosspostToDevTo', () => {
     const mockFetch = vi.fn().mockResolvedValueOnce(
       new Response(
         JSON.stringify([
-          { id: 55, url: 'https://dev.to/jmolz/slashed', canonical_url: 'https://m0lz.dev/writing/slashed/' },
+          {
+            id: 55,
+            url: 'https://dev.to/jmolz/slashed',
+            canonical_url: 'https://m0lz.dev/writing/slashed/',
+            published: false,
+          },
         ]),
         { status: 200 },
       ),
+    ).mockResolvedValueOnce(
+      new Response(JSON.stringify({ id: 55, url: 'https://dev.to/jmolz/slashed' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
     );
     vi.stubGlobal('fetch', mockFetch);
     const result = await crosspostToDevTo('slashed', makeConfig(), { draftsDir: f.draftsDir });
     expect(result.id).toBe(55);
-    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(mockFetch.mock.calls.map((c) => c[1]?.method)).toEqual(['GET', 'PUT']);
   });
 
   it('throws with probe context when the probe endpoint returns non-200', async () => {
