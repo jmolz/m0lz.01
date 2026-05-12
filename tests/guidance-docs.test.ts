@@ -77,4 +77,22 @@ describe('guidance docs', () => {
       expect(codexLine).toContain(field);
     }
   });
+
+  it('Claude and Codex publish rules capture platform-image review regressions', () => {
+    const claudeRule = read('.claude/rules/publish.md');
+    const codexRule = read('.codex/rules/publish.md');
+    expect(claudeRule).toBe(codexRule);
+    for (const required of [
+      'updateFrontmatter: false',
+      'writeReceipt: false',
+      'http(s)',
+      'configured external references',
+      'blog draft platform-images <slug>',
+      'config.site.base_url',
+      'config.author.github',
+      'same-path source/output',
+    ]) {
+      expect(codexRule).toContain(required);
+    }
+  });
 });

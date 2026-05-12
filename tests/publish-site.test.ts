@@ -274,9 +274,45 @@ describe('createSitePR — happy path', () => {
     expect(existsSync(join(f.siteRepoPath, 'content/posts/withassets/assets/medium-featured.png'))).toBe(true);
     expect(existsSync(join(f.siteRepoPath, 'content/posts/withassets/assets/substack-header.png'))).toBe(true);
     expect(readFileSync(sourceDraftPath, 'utf-8')).toBe(sourceBefore);
+    expect(existsSync(join(f.draftsDir, 'withassets', '.platform-images.json'))).toBe(false);
     const copiedMdx = readFileSync(join(f.siteRepoPath, 'content/posts/withassets/index.mdx'), 'utf-8');
     expect(copiedMdx).toContain('medium_featured_image: ./assets/medium-featured.png');
     expect(copiedMdx).toContain('substack_header_image: ./assets/substack-header.png');
+  });
+
+  it('refuses missing platform image frontmatter before branch checkout or site copy', async () => {
+    const f = setup();
+    seedPost(f.db, 'missingimages');
+    seedDraftMdx(f.draftsDir, 'missingimages', `---
+title: "Sample Title"
+description: "Description"
+date: "2026-05-12"
+tags:
+  - test
+published: false
+canonical: "https://m0lz.dev/writing/missingimages"
+---
+
+# Hello
+`);
+    const sourceDraftPath = join(f.draftsDir, 'missingimages', 'index.mdx');
+    const sourceBefore = readFileSync(sourceDraftPath, 'utf-8');
+    const execCalls: string[] = [];
+
+    installExec((cmd, args) => {
+      execCalls.push(`${cmd} ${args.join(' ')}`);
+      if (cmd === 'git' && args.includes('--get')) return 'git@github.com:jmolz/m0lz.00.git';
+      return null;
+    });
+
+    await expect(createSitePR('missingimages', f.config, f.paths, f.db))
+      .rejects.toThrow(/Missing medium_featured_image.*blog draft platform-images missingimages/s);
+
+    expect(execCalls.some((call) => call.includes(' checkout '))).toBe(false);
+    expect(existsSync(join(f.siteRepoPath, 'content/posts/missingimages'))).toBe(false);
+    expect(existsSync(join(f.draftsDir, 'missingimages', '.platform-images.json'))).toBe(false);
+    expect(existsSync(join(f.draftsDir, 'missingimages', 'assets'))).toBe(false);
+    expect(readFileSync(sourceDraftPath, 'utf-8')).toBe(sourceBefore);
   });
 
   it('copies research page when researchPagesDir/slug/index.mdx exists', async () => {
