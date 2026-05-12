@@ -19,12 +19,12 @@ export interface SiteUpdateResult extends SitePRResult {
   cycleNumber: number;
 }
 
-export function createSiteUpdate(
+export async function createSiteUpdate(
   slug: string,
   config: BlogConfig,
   paths: SitePaths,
   db: Database.Database,
-): SiteUpdateResult {
+): Promise<SiteUpdateResult> {
   // site-update is an update-mode-only step. If no open cycle exists, this
   // is an operator bug — either the pipeline-runner was invoked with
   // publishMode='update' but no cycle was opened, or the cycle was closed
@@ -43,7 +43,7 @@ export function createSiteUpdate(
     .get(slug) as { title: string | null } | undefined;
   const title = post?.title ?? slug;
 
-  const result = createSitePR(slug, config, paths, db, {
+  const result = await createSitePR(slug, config, paths, db, {
     branchName: `update/${slug}-cycle-${cycle.cycle_number}`,
     commitMessage: `chore(site): update ${slug} (cycle ${cycle.cycle_number})`,
     prTitle: `Update ${title} (cycle ${cycle.cycle_number})`,

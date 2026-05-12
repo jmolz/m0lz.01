@@ -69,6 +69,13 @@ function mdxWithDevToMainImage(value: string): string {
   );
 }
 
+function mdxWithPlatformImage(field: 'medium_featured_image' | 'substack_header_image', value: string): string {
+  return SAMPLE_MDX.replace(
+    'canonical: "https://m0lz.dev/writing/sample"',
+    `canonical: "https://m0lz.dev/writing/sample"\n${field}: "${value}"`,
+  );
+}
+
 interface Fixture {
   tempDir: string;
   draftsDir: string;
@@ -537,8 +544,31 @@ describe('generateMediumPaste', () => {
     expect(content.startsWith('# Sample Post')).toBe(true);
     expect(content).toContain('A one-line description');
     expect(content).toContain('# Heading');
+    expect(content).toContain(
+      '![Sample Post featured image](https://m0lz.dev/writing/mpost/assets/medium-featured.png)',
+    );
+    expect(content.indexOf('medium-featured.png')).toBeLessThan(content.indexOf('# Heading'));
     // Display URL strips the protocol — "m0lz.dev" appears without "https://".
     expect(content).toContain('[m0lz.dev](https://m0lz.dev/writing/mpost)');
+  });
+
+  it('uses a safe explicit Medium featured image field when present', () => {
+    const f = setup('mpost', mdxWithPlatformImage('medium_featured_image', './assets/custom-medium.png'));
+    generateMediumPaste('mpost', makeConfig(), {
+      draftsDir: f.draftsDir,
+      socialDir: f.socialDir,
+    });
+    const content = readFileSync(join(f.socialDir, 'mpost', 'medium-paste.md'), 'utf-8');
+    expect(content).toContain('https://m0lz.dev/writing/mpost/assets/custom-medium.png');
+  });
+
+  it('rejects unsafe Medium featured image values before writing paste output', () => {
+    const f = setup('mpost', mdxWithPlatformImage('medium_featured_image', '../cover.png'));
+    expect(() => generateMediumPaste('mpost', makeConfig(), {
+      draftsDir: f.draftsDir,
+      socialDir: f.socialDir,
+    })).toThrow(/medium_featured_image/);
+    expect(existsSync(join(f.socialDir, 'mpost', 'medium-paste.md'))).toBe(false);
   });
 
   it('creates nested socialDir/slug directory recursively', () => {
@@ -574,6 +604,20 @@ describe('generateSubstackPaste', () => {
     const content = readFileSync(expectedPath, 'utf-8');
     // Substack layout: H1 then H2 (distinct from Medium's H1 + paragraph).
     expect(content).toMatch(/^# Sample Post\n\n## A one-line description/);
+    expect(content).toContain(
+      '![Sample Post Substack header](https://m0lz.dev/writing/sspost/assets/substack-header.png)',
+    );
+    expect(content.indexOf('substack-header.png')).toBeLessThan(content.indexOf('# Heading'));
+  });
+
+  it('uses a safe explicit Substack header image field when present', () => {
+    const f = setup('sspost', mdxWithPlatformImage('substack_header_image', './assets/custom-header.png'));
+    generateSubstackPaste('sspost', makeConfig(), {
+      draftsDir: f.draftsDir,
+      socialDir: f.socialDir,
+    });
+    const content = readFileSync(join(f.socialDir, 'sspost', 'substack-paste.md'), 'utf-8');
+    expect(content).toContain('https://m0lz.dev/writing/sspost/assets/custom-header.png');
   });
 
   it('applies mdxToMarkdown — JSX stripped outside fences, code blocks preserved', () => {

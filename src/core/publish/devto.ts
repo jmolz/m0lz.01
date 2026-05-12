@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { BlogConfig } from '../config/types.js';
 import { parseFrontmatter } from '../draft/frontmatter.js';
 import { mdxToMarkdown } from './convert.js';
+import { resolvePostAssetReference } from './platform-images.js';
 
 // Step 5 of the publish pipeline: cross-post to Dev.to via the Forem API.
 // Drafts are posted with `published: false` so the author can review the
@@ -93,49 +94,7 @@ function resolveDevToMainImage(
   slug: string,
   baseUrl: string,
 ): string | undefined {
-  if (rawValue === undefined) {
-    return undefined;
-  }
-
-  const raw = rawValue.trim();
-  if (raw.length === 0) {
-    throw new Error('Invalid devto_main_image: value cannot be empty');
-  }
-
-  if (/^https?:\/\//i.test(raw)) {
-    try {
-      const url = new URL(raw);
-      if (url.protocol === 'http:' || url.protocol === 'https:') {
-        return raw;
-      }
-    } catch {
-      throw new Error(`Invalid devto_main_image URL: ${raw}`);
-    }
-  }
-
-  if (/^[a-z][a-z0-9+.-]*:/i.test(raw) || raw.startsWith('/') || raw.startsWith('\\')) {
-    throw new Error(
-      'Invalid devto_main_image: expected an http(s) URL or assets/<filename>',
-    );
-  }
-
-  const assetPath = raw.startsWith('./assets/') ? raw.slice(2) : raw;
-  if (assetPath.startsWith('assets/')) {
-    const filename = assetPath.slice('assets/'.length);
-    if (
-      filename.length === 0 ||
-      filename.includes('/') ||
-      filename.includes('\\') ||
-      filename.includes('..')
-    ) {
-      throw new Error(`Invalid devto_main_image asset path: ${raw}`);
-    }
-    return `${baseUrl.replace(/\/+$/, '')}/writing/${slug}/assets/${encodeURIComponent(filename)}`;
-  }
-
-  throw new Error(
-    'Invalid devto_main_image: expected an http(s) URL or assets/<filename>',
-  );
+  return resolvePostAssetReference(rawValue, slug, baseUrl, 'devto_main_image')?.publicUrl;
 }
 
 // Each article in the /me/all listing exposes its canonical_url and the

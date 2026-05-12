@@ -117,12 +117,13 @@ without `--ignore-scripts` (which we do not document and do not support).
 
 ## `engines.node` must pin to the minimum version of APIs we actually use
 
-`readdirSync(dir, { recursive: true })` requires Node ≥ 20.1. Therefore
-`engines.node: ">=20.1.0"`, not `">=20.0.0"`. Whenever a new stdlib
-feature lands in `src/**` or `scripts/**`, update `engines.node` to
-match. `npm install` enforces this at install time — a looser pin lets
-a 20.0.x user install and crash later; a tight pin surfaces the
-incompatibility immediately.
+`sharp` requires Node `^20.3.0 || >=21.0.0`, and packaging uses
+`readdirSync(dir, { recursive: true })`. Therefore
+`engines.node: ">=20.3.0"`, not `">=20.0.0"`. Whenever a new stdlib feature or runtime
+dependency lands in `src/**` or `scripts/**`, update `engines.node` to
+match. `npm install` enforces this at install time — a looser pin lets a
+user install and crash later; a tight pin surfaces the incompatibility
+immediately.
 
 ## Release runbook invariants (`RELEASING.md`)
 

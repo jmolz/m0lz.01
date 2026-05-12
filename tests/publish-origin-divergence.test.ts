@@ -115,7 +115,19 @@ describe('site-pr --allow-main-ahead override', () => {
     mkdirSync(join(draftsDir, 'alpha'), { recursive: true });
     mkdirSync(researchPagesDir, { recursive: true });
     mkdirSync(publishDir, { recursive: true });
-    writeFileSync(join(draftsDir, 'alpha', 'index.mdx'), '---\ntitle: Alpha\n---\n\nbody\n');
+    writeFileSync(
+      join(draftsDir, 'alpha', 'index.mdx'),
+      [
+        '---',
+        'title: Alpha',
+        'medium_featured_image: ./assets/medium-featured.png',
+        'substack_header_image: ./assets/substack-header.png',
+        '---',
+        '',
+        'body',
+        '',
+      ].join('\n'),
+    );
 
     const db = getDatabase(':memory:');
     try {
@@ -157,7 +169,7 @@ describe('site-pr --allow-main-ahead override', () => {
 
       const warnSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
       const { createSitePR } = await import('../src/core/publish/site.js');
-      const result = createSitePR(
+      const result = await createSitePR(
         'alpha',
         {
           site: {

@@ -20,6 +20,7 @@ import {
 import { parseFrontmatter, validateFrontmatter } from '../core/draft/frontmatter.js';
 import { getBenchmarkContext } from '../core/draft/benchmark-data.js';
 import { readExistingTags } from '../core/draft/tags.js';
+import { ensurePlatformImages } from '../core/publish/platform-images.js';
 
 const DB_PATH = resolve('.blog-agent', 'state.db');
 const DRAFTS_DIR = resolve('.blog-agent', 'drafts');
@@ -380,6 +381,71 @@ export function runDraftRegenerateFrontmatter(
   }
 }
 
+export async function runDraftPlatformImages(slug: string, paths: DraftPaths = {}): Promise<void> {
+  try {
+    validateSlug(slug);
+  } catch (e) {
+    console.error((e as Error).message);
+    process.exitCode = 1;
+    return;
+  }
+
+  const dbPath = paths.dbPath ?? DB_PATH;
+  const draftsDir = paths.draftsDir ?? DRAFTS_DIR;
+  const configPath = paths.configPath ?? CONFIG_PATH;
+  requireDb(dbPath);
+
+  if (!existsSync(configPath)) {
+    console.error(`Config not found: ${configPath}. Run 'blog init' first.`);
+    process.exitCode = 1;
+    return;
+  }
+
+  let config;
+  try {
+    config = loadConfig(configPath);
+  } catch (e) {
+    console.error((e as Error).message);
+    process.exitCode = 1;
+    return;
+  }
+
+  const db = getDatabase(dbPath);
+  try {
+    try {
+      const post = getDraftPost(db, slug);
+      if (!post) {
+        console.error(`Post not found: ${slug}`);
+        process.exitCode = 1;
+        return;
+      }
+    } catch (e) {
+      console.error((e as Error).message);
+      process.exitCode = 1;
+      return;
+    }
+
+    let result;
+    try {
+      result = await ensurePlatformImages(slug, config, { draftsDir });
+    } catch (e) {
+      console.error((e as Error).message);
+      process.exitCode = 1;
+      return;
+    }
+
+    console.log(`Platform images ready for ${slug}`);
+    for (const image of result.images) {
+      console.log(
+        `${image.field}: ${image.output_path} (${image.width}x${image.height}, ${image.source})`,
+      );
+    }
+    console.log(`Receipt: ${result.receiptPath}`);
+  } finally {
+    closeDatabase(db);
+  }
+}
+
 export function runDraftComplete(slug: string, paths: DraftPaths = {}): void {
   try {
     validateSlug(slug);
@@ -446,6 +512,13 @@ export function registerDraft(program: Command): void {
     .description('Validate draft and advance to evaluate phase')
     .action((slug: string) => {
       runDraftComplete(slug);
+    });
+
+  draft
+    .command('platform-images <slug>')
+    .description('Generate Medium and Substack platform images for a draft')
+    .action((slug: string) => {
+      return runDraftPlatformImages(slug);
     });
 
   draft

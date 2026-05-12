@@ -65,7 +65,15 @@ describe('guidance docs', () => {
     const claudeLine = postFrontmatterContractLine(read('.claude/rules/drafting.md'));
     const codexLine = postFrontmatterContractLine(read('.codex/rules/drafting.md'));
     expect(claudeLine).toBe(codexLine);
-    for (const field of ['substack_url', 'devto_main_image', 'unpublished_at', 'updated_at', 'update_count']) {
+    for (const field of [
+      'substack_url',
+      'devto_main_image',
+      'medium_featured_image',
+      'substack_header_image',
+      'unpublished_at',
+      'updated_at',
+      'update_count',
+    ]) {
       expect(codexLine).toContain(field);
     }
   });

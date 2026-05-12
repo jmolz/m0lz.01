@@ -325,6 +325,8 @@ describe('serializeFrontmatter / parseFrontmatter', () => {
       companion_repo: 'https://github.com/jmolz/test-post',
       project: 'm0lz.02',
       devto_main_image: './assets/devto-cover.webp',
+      medium_featured_image: './assets/medium-featured.png',
+      substack_header_image: './assets/substack-header.png',
     };
 
     const serialized = serializeFrontmatter(original);
@@ -341,6 +343,8 @@ describe('serializeFrontmatter / parseFrontmatter', () => {
     expect(parsed.companion_repo).toBe(original.companion_repo);
     expect(parsed.project).toBe(original.project);
     expect(parsed.devto_main_image).toBe(original.devto_main_image);
+    expect(parsed.medium_featured_image).toBe(original.medium_featured_image);
+    expect(parsed.substack_header_image).toBe(original.substack_header_image);
   });
 
   it('omits undefined optional fields', () => {
@@ -355,6 +359,8 @@ describe('serializeFrontmatter / parseFrontmatter', () => {
     expect(serialized).not.toContain('companion_repo');
     expect(serialized).not.toContain('medium_url');
     expect(serialized).not.toContain('devto_main_image');
+    expect(serialized).not.toContain('medium_featured_image');
+    expect(serialized).not.toContain('substack_header_image');
   });
 });
 

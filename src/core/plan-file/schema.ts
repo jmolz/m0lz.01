@@ -104,6 +104,7 @@ export const SLUG_BEARING_STEP_COMMANDS: readonly string[] = [
   'blog draft validate',
   'blog draft add-asset',
   'blog draft complete',
+  'blog draft platform-images',
   'blog draft regenerate-frontmatter',
   'blog evaluate init',
   'blog evaluate structural-autocheck',

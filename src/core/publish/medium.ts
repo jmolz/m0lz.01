@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path';
 import { BlogConfig } from '../config/types.js';
 import { parseFrontmatter } from '../draft/frontmatter.js';
 import { mdxToMarkdown } from './convert.js';
+import { MEDIUM_FEATURED_IMAGE, resolvePlatformImageUrl } from './platform-images.js';
 
 // Step 6 of the publish pipeline: generate a paste-ready Markdown file for
 // Medium. The Medium Integration Token API has been deprecated, so this step
@@ -42,6 +43,10 @@ function splitMdx(mdx: string): { frontmatter: string; body: string } {
   };
 }
 
+function imageAlt(title: string, suffix: string): string {
+  return `${title} ${suffix}`.replace(/[\[\]]/g, '');
+}
+
 export function generateMediumPaste(
   slug: string,
   config: BlogConfig,
@@ -56,11 +61,19 @@ export function generateMediumPaste(
 
   const canonicalUrl = `${config.site.base_url.replace(/\/+$/, '')}/writing/${slug}`;
   const display = displayBaseUrl(config.site.base_url);
+  const imageUrl = resolvePlatformImageUrl(
+    fm.medium_featured_image,
+    slug,
+    config.site.base_url,
+    MEDIUM_FEATURED_IMAGE,
+  );
 
   const paste = [
     `# ${fm.title}`,
     '',
     fm.description,
+    '',
+    `![${imageAlt(fm.title, MEDIUM_FEATURED_IMAGE.altSuffix)}](${imageUrl})`,
     '',
     markdownBody.trim(),
     '',

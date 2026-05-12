@@ -252,6 +252,20 @@ describe('validatePlanSchema', () => {
     expect(() => validatePlanSchema(plan3)).not.toThrow();
   });
 
+  it('allows blog draft platform-images only in slug-bearing form', () => {
+    const plan = basePlan() as unknown as Record<string, unknown>;
+    plan.steps = [{ command: 'blog draft platform-images', args: ['test-post'] }];
+    expect(() => validatePlanSchema(plan)).not.toThrow();
+
+    const wrongSlug = basePlan() as unknown as Record<string, unknown>;
+    wrongSlug.steps = [{ command: 'blog draft platform-images', args: ['other-post'] }];
+    expect(() => validatePlanSchema(wrongSlug)).toThrow(/must equal plan\.slug/);
+
+    const missingSlug = basePlan() as unknown as Record<string, unknown>;
+    missingSlug.steps = [{ command: 'blog draft platform-images', args: [] }];
+    expect(() => validatePlanSchema(missingSlug)).toThrow(/must equal plan\.slug/);
+  });
+
   it('rejects commands with >2 positional words (smuggled positional via command field)', () => {
     // Related to Codex Pass-3 High: the attacker could also try
     //   { command: "blog research finalize pwned-slug", args: [] }

@@ -97,6 +97,7 @@ npx vitest run \
   tests/publish-convert.test.ts \
   tests/publish-site.test.ts \
   tests/publish-crosspost.test.ts \
+  tests/platform-images.test.ts \
   tests/publish-social.test.ts \
   tests/publish-research-page.test.ts \
   tests/publish-repo.test.ts \
@@ -171,11 +172,11 @@ npx vitest run \
 
 | Test File | Feature | What It Validates |
 | --------- | ------- | ----------------- |
-| `tests/draft-frontmatter.test.ts` (24 tests) | PostFrontmatter schema | `generateFrontmatter` produces canonical URL, companion_repo when has_benchmarks, project from project_id, published=false, placeholder title/description; `validateFrontmatter` passes valid, fails missing/placeholder title/description/date/tags/published, rejects invalid date format, empty tags, non-boolean published; `serializeFrontmatter`/`parseFrontmatter` round-trip with optional fields omitted; `parseFrontmatter` extracts from MDX, throws on missing delimiters and invalid YAML, does not coerce `"false"` to true, does not mis-split on body thematic break |
+| `tests/draft-frontmatter.test.ts` (32 tests) | PostFrontmatter schema | `generateFrontmatter` produces canonical URL, companion_repo when has_benchmarks, project from project_id, published=false, placeholder title/description; `validateFrontmatter` passes valid, fails missing/placeholder title/description/date/tags/published, rejects invalid date format, empty tags, non-boolean published; `serializeFrontmatter`/`parseFrontmatter` round-trip with optional platform image fields and lifecycle fields omitted/preserved; `parseFrontmatter` extracts from MDX, throws on missing delimiters and invalid YAML, does not coerce `"false"` to true, does not mis-split on body thematic break |
 | `tests/draft-state.test.ts` (16 tests) | Draft state lifecycle | `getDraftPost` returns draft-phase post, throws for wrong phase, undefined for missing; `initDraft` creates directory structure and template MDX, is idempotent, includes content-type-specific sections (technical-deep-dive has benchmarks, analysis-opinion has analysis), throws for missing post; `completeDraft` advances to evaluate, rejects placeholder sections, rejects missing asset files, throws for wrong phase and missing post; `registerAsset` inserts and is idempotent (transactional); `listAssets` returns ordered list, empty for unknown slug |
 | `tests/draft-benchmark-data.test.ts` (8 tests) | Benchmark data formatting | `formatBenchmarkTable` produces markdown from simple key-value, handles empty data, array values as rows, nested objects flattened one level; `formatMethodologyRef` produces correct reference string and honors `githubUser` from config (no hardcoded user); `getBenchmarkContext` reads existing results/environment, returns nulls for missing files |
 | `tests/draft-tags.test.ts` (6 tests) | Tag taxonomy reader | `readExistingTags` reads tags from MDX files, subdirectory-based posts, deduplicates, returns sorted; returns empty for missing directory, no MDX files, files without tags field |
-| `tests/draft-cli.test.ts` (25 tests) | Draft CLI handlers | `runDraftInit` creates draft directory and template MDX with content-type-aware sections (technical-deep-dive, analysis-opinion, project-launch, project-launch with benchmarks), errors for wrong phase; `runDraftShow` prints status, errors for wrong phase, treats malformed config as best-effort; `runDraftValidate` fails for placeholders, passes for complete draft, fails for missing assets; `runDraftAddAsset` registers existing file, errors for missing file and invalid type, rejects path traversal and subdirectory filenames; `runDraftComplete` advances to evaluate, errors for wrong phase; rejects 6 invalid slug patterns |
+| `tests/draft-cli.test.ts` (28 tests) | Draft CLI handlers | `runDraftInit` creates draft directory and template MDX with content-type-aware sections (technical-deep-dive, analysis-opinion, project-launch, project-launch with benchmarks), errors for wrong phase; `runDraftShow` prints status, errors for wrong phase, treats malformed config as best-effort; `runDraftValidate` fails for placeholders, passes for complete draft, fails for missing assets; `runDraftAddAsset` registers existing file, errors for missing file and invalid type, rejects path traversal and subdirectory filenames; `runDraftPlatformImages` generates platform assets, updates frontmatter, rejects missing posts and non-draft phases without writing assets; `runDraftComplete` advances to evaluate, errors for wrong phase; rejects 6 invalid slug patterns |
 
 #### Phase 5 — Evaluate
 
@@ -196,7 +197,8 @@ npx vitest run \
 | `tests/publish-pipeline.test.ts` (20 tests) | `runPipeline` orchestrator + crash-safety | Runs steps in order; skips completed; re-runs failed; stops on paused/failed/thrown; merges urlUpdates into ctx.urls AND per-step transactional persistence; completes and advances phase via `completePublishUnderLock`; does NOT advance on failure/pause; releases lock on all terminal paths; reclaims stuck running on resume; does not deadlock at completion (no release-then-reacquire); reconciles pending rows against current config |
 | `tests/publish-convert.test.ts` (12 tests) | MDX → Markdown converter | Strips frontmatter, imports, JSX self-closing tags; preserves text children of block JSX; resolves relative asset URLs to absolute `{base}/writing/{slug}/assets/x`; preserves code blocks verbatim (no JSX stripping / no URL resolution inside ``` fences, including nested backtick fences); preserves tables/headings/lists; collapses 3+ blank lines to 2 |
 | `tests/publish-site.test.ts` (18 tests) | Site PR + preview gate + dirty-state + rename/copy guardrail | `createSitePR` copies MDX + assets + research page to site repo; branch `post/{slug}` idempotent; `feat(post):` commit; `gh pr create` idempotent on existing PR; `pr-number.txt` written for preview-gate; dirty-state guardrail throws on uncommitted unrelated changes; tolerates dirty state under pipeline-owned paths; stages only `content/posts/{slug}` + optional `content/research/{slug}`; rename/copy porcelain parsing rejects R/C records that escape owned prefixes; `checkPreviewGate` polls gh pr view; all subprocess via execFileSync (no shell) |
-| `tests/publish-crosspost.test.ts` (29 tests) | Dev.to probe-then-create + Medium + Substack paste | `mapDevToTags` lowercases, strips non-alphanumerics for Dev.to alphanumeric-only tags, caps at 4, drops empty, maps dashed source tags like `developer-tools` → `developertools`; `crosspostToDevTo` skips when DEVTO_API_KEY unset; builds POST with api-key header, canonical_url, published:false, tags, description, optional `main_image` for safe draft-relative or absolute cover URLs; throws on unsafe cover paths, 422, and 503+; probe-then-converge GETs `/api/articles/me/all` before POST, PUTs existing unpublished canonical match, rejects duplicate/published/unknown-state canonical matches, normalizes trailing slash, fails closed on probe errors, paginates beyond page 1, and stops on a short page; `generateMediumPaste` / `generateSubstackPaste` write H1/H2 layouts with canonical footer preserving code blocks |
+| `tests/publish-crosspost.test.ts` (32 tests) | Dev.to probe-then-create + Medium + Substack paste | `mapDevToTags` lowercases, strips non-alphanumerics for Dev.to alphanumeric-only tags, caps at 4, drops empty, maps dashed source tags like `developer-tools` → `developertools`; `crosspostToDevTo` skips when DEVTO_API_KEY unset; builds POST with api-key header, canonical_url, published:false, tags, description, optional `main_image` for safe draft-relative or absolute cover URLs; throws on unsafe cover paths, 422, and 503+; probe-then-converge GETs `/api/articles/me/all` before POST, PUTs existing unpublished canonical match, rejects duplicate/published/unknown-state canonical matches, normalizes trailing slash, fails closed on probe errors, paginates beyond page 1, and stops on a short page; `generateMediumPaste` / `generateSubstackPaste` write H1/H2 layouts with canonical footer and platform image markdown before body while preserving code blocks |
+| `tests/platform-images.test.ts` (18 tests) | Deterministic platform image generation | `ensurePlatformImages` emits exact 1200x675 Medium PNG and 1100x220 Substack PNG from `devto_main_image`, `assets/devto-cover.webp`, or deterministic fallback SVG; validates and preserves explicit platform assets including URLs and default filenames; rejects unsafe paths before writes/receipts/frontmatter rewrites; handles same-path source/output safely; keeps fallback labels config-derived; throws on wrong dimensions; proves stable filenames with no numbered duplicates |
 | `tests/publish-social.test.ts` (14 tests) | LinkedIn + Hacker News text generation | `containsEmoji` detects emoji ranges; `generateLinkedIn` fills template, throws on emojis in output, includes timing when configured; `generateHackerNews` title ≤80 chars (truncate with ellipsis); `Show HN:` prefix ONLY for project-launch; includes first-comment, canonical_url, repo link; throws on emoji; writes linkedin.md/hackernews.md |
 | `tests/publish-research-page.test.ts` (10 tests) | Research page MDX generator | Generates from research doc + benchmark results; includes thesis/findings/bibliography; cross-links to post canonical + companion repo; skips analysis-opinion without research doc; generates for analysis-opinion when research doc present; fills template placeholders; reads description from draft frontmatter (schema has no description column); idempotent; throws when template or post missing |
 | `tests/publish-repo.test.ts` (21 tests) | Companion repo probe-then-create + origin-URL guardrail | Skips analysis-opinion / project-launch; probes with gh repo view → ensures remote + push, or gh repo create --public --source=. --push; race fallback on "already exists"; repo name from config.author.github (not hardcoded); origin-URL guardrail throws on different GitHub repo (SSH or HTTPS), non-GitHub remotes, wrong owner/name — applied on race-fallback branch too; parseGitHubRemoteUrl handles SSH-with/without-.git, HTTPS, non-GitHub |
@@ -290,7 +292,7 @@ Five connected fixes from the first live `blog publish` dogfood. See CHANGELOG.m
 - `src/core/publish/phase.ts` — getPublishPost, initPublishFromEvaluate, initPublish, completePublishUnderLock (no lock re-entry, idempotent on published, runtime lock-ownership guardrail), persistPublishUrls (COALESCE first-writer-wins)
 - `src/core/publish/steps-crud.ts` — createPipelineSteps (content-type + config pre-skips), reclaimStaleRunning, reconcilePipelineSteps (resume-time re-application of config-driven skips)
 - `src/core/publish/convert.ts` — mdxToMarkdown, stripFrontmatter, removeImports, removeJsxComponents, resolveAssetUrls, fence-aware state machine with nested-backtick handling
-- `src/core/publish/research-page.ts`, `src/core/publish/site.ts` (dirty-state guardrail with rename/copy-aware porcelain parsing + path-scoped staging), `src/core/publish/devto.ts`, `src/core/publish/medium.ts`, `src/core/publish/substack.ts`, `src/core/publish/repo.ts` (origin-URL guardrail + parseGitHubRemoteUrl + assertOriginMatches)
+- `src/core/publish/research-page.ts`, `src/core/publish/platform-images.ts`, `src/core/publish/site.ts` (dirty-state guardrail with rename/copy-aware porcelain parsing + path-scoped staging), `src/core/publish/devto.ts`, `src/core/publish/medium.ts`, `src/core/publish/substack.ts`, `src/core/publish/repo.ts` (origin-URL guardrail + parseGitHubRemoteUrl + assertOriginMatches)
 - `src/core/publish/frontmatter.ts` — updateFrontmatter (direct push to main, `chore(post):` prefix, checkout-before-mutation, assertIndexClean precheck, inspectAheadCommits strict subject+file match)
 - `src/core/publish/readme.ts` — updateProjectReadme (direct push, `chore:` prefix, config.projects[id] resolved against configPath dir, same guardrails)
 - `src/core/publish/social.ts`, `src/core/publish/pipeline-types.ts`, `src/core/publish/pipeline-registry.ts`, `src/core/publish/pipeline-runner.ts` (acquires lock, reclaims stale running, reconciles pending rows, per-step transactional URL persistence)
@@ -325,7 +327,7 @@ Five connected fixes from the first live `blog publish` dogfood. See CHANGELOG.m
 - `scripts/verify-pack.mjs` — four-layer packaging gate wired into both `npm run verify-pack` and `prepublishOnly`: (1) ALLOWED_PATTERNS whitelist, (2) FORBIDDEN_PATTERNS denylist (no secrets, `.js.map`, `state.db`, `.blog-agent/`, `src/`, `tests/`, `.claude/`), (3) REQUIRED_FILES manifest of 12 runtime-critical paths, (4) src→dist compiled-closure check walking `src/**/*.ts` and asserting every corresponding `dist/**/*.js` is in the tarball
 - `scripts/clean-dist.mjs` — cross-platform `rm -rf dist` via `fs.rmSync` (replaces the POSIX-only form that broke on Windows cmd/PowerShell)
 - `scripts/chmod-bin.mjs` — post-tsc step that `chmodSync(dist/cli/index.js, 0o755)`. Covers the failure mode where `tsc` regenerates `dist/cli/index.js` as 0644 and a pre-existing `npm link` symlink dereferences to a non-executable target. `tests/build-bin-executable.test.ts` asserts the final mode bit.
-- `package.json` — `build: "node scripts/clean-dist.mjs && tsc && node scripts/chmod-bin.mjs"` (clean build + owner-executable restore); `prepublishOnly: "lint && build && test && verify-pack"` (publish-time gate); `files` uses globs; publish surface fields (repository, homepage, bugs, keywords, author); `engines.node: ">=20.1.0"` (pinned for `readdirSync(..., { recursive: true })`)
+- `package.json` — `build: "node scripts/clean-dist.mjs && tsc && node scripts/chmod-bin.mjs"` (clean build + owner-executable restore); `prepublishOnly: "lint && build && test && verify-pack"` (publish-time gate); `files` uses globs; publish surface fields (repository, homepage, bugs, keywords, author); `engines.node: ">=20.3.0"` (pinned for `sharp` + recursive `readdirSync`)
 - `.claude/rules/voice.md` — dev-facing voice rule (path-scoped auto-load for draft/evaluate/skill files). Hard rules: no hedges, no tricolon stacks, no topic-restatement transitions, no smarmy openers, no undefined jargon, ~1 em dash per 500 words max with period/comma/parens/cut substitution test, no emojis. Two accessibility tests (newcomer + expert). Must stay byte-parity with `.claude-plugin/skills/blog/VOICE.md` (enforced by `tests/voice-parity.test.ts`).
 - `.claude-plugin/skills/blog/VOICE.md` — plugin-shipped voice rule (no frontmatter; plugin skills don't path-scope). Loaded by `/blog` SKILL.md when composing `blog research set-section` prose so hash-bound section content is voice-compliant before entering the hash gate.
 - `src/core/research/document.ts` — adds `SECTION_KEYS` const + `setResearchSection(researchDir, slug, section, content)`: read → mutate → write-with-force preserving frontmatter + unchanged sections.
@@ -335,7 +337,7 @@ Five connected fixes from the first live `blog publish` dogfood. See CHANGELOG.m
 - `CHANGELOG.md` — Keep-a-Changelog format, single [0.1.0] section covering Phases 1–7 plus template-path fix
 - `RELEASING.md` — literal v0.1.0 sequence + subsequent-releases template; both with main-branch + clean-tree fail-fast preflight guards; pre-publish `git push --atomic --dry-run`; atomic `git push --atomic origin main refs/tags/vX.Y.Z` (not --follow-tags); `gh release create --verify-tag`; Recovery section around `npm view m0lz-01@X.Y.Z` three-case check (A=live/push-only-with-rebase-and-re-tag, B=E404/retry, C=abandon with --mixed reset + preflights); subsequent-release two-commit recovery with HEAD~2
 - `.github/PULL_REQUEST_TEMPLATE.md` — ≤10 line checklist with absolute GitHub URLs to CLAUDE.md
-- `.nvmrc` — `20` (contributor convenience)
+- `.nvmrc` — `20.3.0` (contributor convenience; matches the package `engines.node` floor required by `sharp`)
 - `README.md` — CI badge; `## Install` leads with `npx m0lz-01 init --import`; `## Development`, `## Changelog`, `## Project Status` sections
 
 **/blog Skill Plugin source files:**
@@ -400,7 +402,7 @@ npm test
 npm run build
 ```
 
-Expected baseline: **0 TypeScript errors, 929 tests passing across 71 suites, clean build**. v0.3 dogfood-hardening added +43 tests across +5 new suites — `research-project-linking` (15), `publish-origin-divergence` (6), `publish-seed-on-start` (4), `preview-gate-urls` (9), `draft-regenerate-frontmatter` (9) — plus +8 tests in `draft-frontmatter.test.ts` for companion_repo resolution. Prior baseline was 878/66 (post-Phase-8 addenda). Any drift from this baseline is a signal to investigate before merging.
+Expected baseline: **0 TypeScript errors, 975 tests passing across 73 suites, clean build**. v0.3 dogfood-hardening added +43 tests across +5 new suites — `research-project-linking` (15), `publish-origin-divergence` (6), `publish-seed-on-start` (4), `preview-gate-urls` (9), `draft-regenerate-frontmatter` (9) — plus +8 tests in `draft-frontmatter.test.ts` for companion_repo resolution. Medium/Substack platform images added `platform-images` coverage and expanded draft/crosspost coverage. Any drift from this baseline is a signal to investigate before merging.
 
 ## Phase 3: Code Review of Current Changes
 
@@ -488,11 +490,11 @@ Phase 3 — Benchmark:
   - Benchmark CLI handlers (14 tests): PASS / FAIL
 
 Phase 4 — Draft:
-  - PostFrontmatter schema (24 tests): PASS / FAIL
+  - PostFrontmatter schema (32 tests): PASS / FAIL
   - Draft state lifecycle (16 tests): PASS / FAIL
   - Benchmark data formatting (8 tests): PASS / FAIL
   - Tag taxonomy reader (6 tests): PASS / FAIL
-  - Draft CLI handlers (25 tests): PASS / FAIL
+  - Draft CLI handlers (28 tests): PASS / FAIL
 
 Phase 5 — Evaluate:
   - ReviewerOutput schema (21 tests): PASS / FAIL
@@ -507,7 +509,8 @@ Phase 6 — Publish:
   - Pipeline runner + crash-safety + reconcile regressions (20 tests): PASS / FAIL
   - MDX → Markdown converter (12 tests): PASS / FAIL
   - Site PR + preview gate + dirty-state + rename/copy guardrail (18 tests): PASS / FAIL
-  - Dev.to probe-then-create + Medium + Substack paste (18 tests): PASS / FAIL
+  - Dev.to probe-then-create + Medium + Substack paste (32 tests): PASS / FAIL
+  - Deterministic platform image generation (18 tests): PASS / FAIL
   - Social text: LinkedIn + Hacker News (14 tests): PASS / FAIL
   - Research page generator (10 tests): PASS / FAIL
   - Companion repo probe-then-create + origin-URL guardrail (21 tests): PASS / FAIL
@@ -554,7 +557,7 @@ v0.3 Dogfood Hardening:
   - Plugin static shape + SKILL discipline + sibling-doc parity + install-docs (22 tests): PASS / FAIL
   - Real skill-to-CLI handoff end-to-end + crash recovery + workspace pinning (25 tests): PASS / FAIL
 
-Full Suite: X passing, Y failing  (baseline: 874 passing across 65 suites)
+Full Suite: X passing, Y failing  (baseline: 975 passing across 73 suites)
 Lint: {error count} errors  (baseline: 0)
 Build: PASS / FAIL
 ```

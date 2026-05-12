@@ -3,6 +3,8 @@ import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync, mkdirSync
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
+import sharp from 'sharp';
+
 import { getDatabase, closeDatabase } from '../src/core/db/database.js';
 import { initResearchPost, advancePhase } from '../src/core/research/state.js';
 import { writeResearchDocument, ResearchDocument } from '../src/core/research/document.js';
@@ -12,6 +14,7 @@ import {
   runDraftValidate,
   runDraftAddAsset,
   runDraftComplete,
+  runDraftPlatformImages,
   DraftPaths,
 } from '../src/cli/draft.js';
 
@@ -466,6 +469,78 @@ describe('runDraftAddAsset', () => {
       runDraftAddAsset('test-slug', { file: 'subdir/file.svg', type: 'image' }, {});
       expect(process.exitCode).toBe(1);
       expect(errors.join('\n')).toContain('Invalid asset filename');
+    } finally {
+      process.exitCode = savedExitCode;
+    }
+  });
+});
+
+describe('runDraftPlatformImages', () => {
+  it('generates Medium/Substack assets and updates draft frontmatter', async () => {
+    const f = setupFixture();
+    setupDraftSlug(f, 'platform-ok');
+    captureLogs();
+    runDraftInit('platform-ok', paths(f));
+
+    const { logs } = captureLogs();
+    const savedExitCode = process.exitCode;
+    try {
+      await runDraftPlatformImages('platform-ok', paths(f));
+
+      expect(process.exitCode).not.toBe(1);
+      expect(logs.join('\n')).toContain('Platform images ready');
+      const mediumPath = join(f.draftsDir, 'platform-ok', 'assets', 'medium-featured.png');
+      const substackPath = join(f.draftsDir, 'platform-ok', 'assets', 'substack-header.png');
+      expect(existsSync(mediumPath)).toBe(true);
+      expect(existsSync(substackPath)).toBe(true);
+      expect((await sharp(mediumPath).metadata()).width).toBe(1200);
+      expect((await sharp(substackPath).metadata()).height).toBe(220);
+
+      const mdx = readFileSync(join(f.draftsDir, 'platform-ok', 'index.mdx'), 'utf-8');
+      expect(mdx).toContain('medium_featured_image: ./assets/medium-featured.png');
+      expect(mdx).toContain('substack_header_image: ./assets/substack-header.png');
+      expect(existsSync(join(f.draftsDir, 'platform-ok', '.platform-images.json'))).toBe(true);
+    } finally {
+      process.exitCode = savedExitCode;
+    }
+  });
+
+  it('reports missing posts without writing assets', async () => {
+    const f = setupFixture();
+    const { errors } = captureLogs();
+    const savedExitCode = process.exitCode;
+    try {
+      process.exitCode = 0;
+      await runDraftPlatformImages('missing-post', paths(f));
+      expect(process.exitCode).toBe(1);
+      expect(errors.join('\n')).toContain('Post not found');
+      expect(existsSync(join(f.draftsDir, 'missing-post'))).toBe(false);
+    } finally {
+      process.exitCode = savedExitCode;
+    }
+  });
+
+  it('rejects posts outside the draft phase without writing assets', async () => {
+    const f = setupFixture();
+    setupDraftSlug(f, 'platform-wrong-phase');
+    captureLogs();
+    runDraftInit('platform-wrong-phase', paths(f));
+    const db = getDatabase(f.dbPath);
+    try {
+      advancePhase(db, 'platform-wrong-phase', 'evaluate');
+    } finally {
+      closeDatabase(db);
+    }
+
+    const { errors } = captureLogs();
+    const savedExitCode = process.exitCode;
+    try {
+      process.exitCode = 0;
+      await runDraftPlatformImages('platform-wrong-phase', paths(f));
+      expect(process.exitCode).toBe(1);
+      expect(errors.join('\n')).toContain("not 'draft'");
+      expect(existsSync(join(f.draftsDir, 'platform-wrong-phase', 'assets', 'medium-featured.png'))).toBe(false);
+      expect(existsSync(join(f.draftsDir, 'platform-wrong-phase', '.platform-images.json'))).toBe(false);
     } finally {
       process.exitCode = savedExitCode;
     }

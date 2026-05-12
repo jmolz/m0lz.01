@@ -89,7 +89,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `npm pack` validation script (`scripts/verify-pack.mjs`) enforcing an explicit allowlist of shipped files and denylist of secret-carrying paths.
 - GitHub Actions CI workflow running lint, tests, build, and pack verification on Node 20.
 - Release runbook (`RELEASING.md`) with a literal v0.1.0 command sequence and a template for subsequent releases.
-- `.nvmrc` pinning Node 20 for contributors.
+- `.nvmrc` pinning Node 20.3.0 for contributors.
 
 ### Fixed
 

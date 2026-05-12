@@ -30,13 +30,14 @@ All identity values (`<your-user>`, `<your-domain>`, etc.) come from `.blogrc.ya
 | 1h..1j+ | `blog research add-source` | `[<slug>, --url, "<...>", --title, "<...>", --excerpt, "<why it matters>"]` | Approve this source citation? (at least `config.evaluation.min_sources` = 3; omit entirely if the operator has already added sources interactively) |
 | 2 | `blog research finalize` | `[<slug>]` | Finalize research (both gates: sections + source count)? |
 | 3 | `blog draft init` | `[<slug>]` | Scaffold MDX draft? |
-| 4 | `blog draft complete` | `[<slug>]` | Advance to evaluate? |
-| 5 | `blog evaluate init` | `[<slug>]` | Open evaluation cycle? |
-| 6 | `blog evaluate structural-autocheck` | `[<slug>]` | Run deterministic lints? |
-| 7 | `blog evaluate record` | `[<slug>, --reviewer, structural, --report, <path>, --issues, <path>]` | Record structural reviewer output? |
-| 8 | `blog evaluate synthesize` | `[<slug>]` | Compute verdict? |
-| 9 | `blog evaluate complete` | `[<slug>]` | Gate pass → publish-ready? |
-| 10 | `blog publish start` | `[<slug>]` | Run the 11-step publish pipeline? |
+| 4 | `blog draft platform-images` | `[<slug>]` | Generate Medium/Substack platform images? |
+| 5 | `blog draft complete` | `[<slug>]` | Advance to evaluate? |
+| 6 | `blog evaluate init` | `[<slug>]` | Open evaluation cycle? |
+| 7 | `blog evaluate structural-autocheck` | `[<slug>]` | Run deterministic lints? |
+| 8 | `blog evaluate record` | `[<slug>, --reviewer, structural, --report, <path>, --issues, <path>]` | Record structural reviewer output? |
+| 9 | `blog evaluate synthesize` | `[<slug>]` | Compute verdict? |
+| 10 | `blog evaluate complete` | `[<slug>]` | Gate pass → publish-ready? |
+| 11 | `blog publish start` | `[<slug>]` | Run the 11-step publish pipeline? |
 
 None of these rows is a direct shell invocation. Each is a JSON object inside the inline payload; they execute only via `blog agent apply` after hash-verified approval.
 
@@ -63,6 +64,7 @@ Live dogfood transcript will be captured in `docs/journeys/launch.md` once a rea
 - `blog benchmark run [<slug>, --results, <path>]`
 - `blog benchmark complete [<slug>]`
 - `blog draft init [<slug>]`
+- `blog draft platform-images [<slug>]`
 - `blog draft complete [<slug>]`
 - `blog evaluate init [<slug>]`
 - `blog evaluate record [<slug>, --reviewer, structural, ...]`

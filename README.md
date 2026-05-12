@@ -27,7 +27,7 @@ Runs locally. No server, no SaaS. The mechanical pipeline is the standalone `blo
 
 ### Required
 
-- **Node.js ≥ 20.1** — `readdirSync` recursive mode is used in packaging. Check: `node --version`.
+- **Node.js ≥ 20.3** — required by the local `sharp` image pipeline and packaging checks. Check: `node --version`.
 - **git** — publish/update/unpublish steps invoke git directly.
 - **GitHub CLI (`gh`)** — PR creation, companion-repo scaffolding, release verification. Install from [cli.github.com](https://cli.github.com/). Run `gh auth login` once before first publish.
 - **A hub site repo** — somewhere on GitHub to commit canonical MDX. Must have a posts directory (default `content/posts/`) and optionally a research directory (default `content/research/`). See [Configuration](#configuration) for the full shape.

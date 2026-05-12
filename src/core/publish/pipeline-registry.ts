@@ -111,8 +111,8 @@ export const PIPELINE_STEPS: StepDefinition[] = [
   {
     number: 3,
     name: 'site-pr',
-    execute: (ctx: PipelineContext): StepResult => {
-      const result = createSitePR(ctx.slug, ctx.config, {
+    execute: async (ctx: PipelineContext): Promise<StepResult> => {
+      const result = await createSitePR(ctx.slug, ctx.config, {
         draftsDir: ctx.paths.draftsDir,
         researchPagesDir: ctx.paths.researchPagesDir,
         publishDir: ctx.paths.publishDir,
@@ -140,8 +140,8 @@ export const PIPELINE_STEPS: StepDefinition[] = [
   {
     number: 3,
     name: 'site-update',
-    execute: (ctx: PipelineContext): StepResult => {
-      const result = createSiteUpdate(ctx.slug, ctx.config, {
+    execute: async (ctx: PipelineContext): Promise<StepResult> => {
+      const result = await createSiteUpdate(ctx.slug, ctx.config, {
         draftsDir: ctx.paths.draftsDir,
         researchPagesDir: ctx.paths.researchPagesDir,
         publishDir: ctx.paths.publishDir,

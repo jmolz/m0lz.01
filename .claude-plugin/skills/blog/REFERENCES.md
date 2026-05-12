@@ -70,6 +70,10 @@ Phase-boundary guards in the CLI reject a subcommand that doesn't match the post
 
 v0.3 dogfood-hardening command. Rewrites the frontmatter block of `.blog-agent/drafts/<slug>/index.mdx` from the current `(post, config)` pair, preserving the body byte-for-byte. Operator-authored fields (`title`, `description`, `tags`, `date`) are preserved; derived fields (`canonical`, `companion_repo`, `project`) are re-resolved from post row + `.blogrc.yaml`. When the row is stale (`content_type=project-launch` with `project_id=NULL` or the wrong ID), pass `--project <id>` to update `posts.project_id` before regeneration. Writes `.blog-agent/drafts/<slug>/.frontmatter-regenerated.json` as an audit receipt. Rejects `phase=published` because the canonical MDX for a shipped post lives in the site repo — update it there on a branch, not here.
 
+## Platform images (`blog draft platform-images <slug>`)
+
+Generates deterministic local distribution images under `.blog-agent/drafts/<slug>/assets/`: `medium-featured.png` (`1200x675`) and `substack-header.png` (`1100x220`). The command updates draft frontmatter with `medium_featured_image: ./assets/medium-featured.png` and `substack_header_image: ./assets/substack-header.png`, then writes `.blog-agent/drafts/<slug>/.platform-images.json`. It uses local assets only: explicit platform-image fields when valid, `devto_main_image`, `assets/devto-cover.webp`, then a deterministic fallback SVG rendered through `sharp`.
+
 ## Plan file schema (v2)
 
 ```json

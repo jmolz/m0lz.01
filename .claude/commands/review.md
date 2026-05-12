@@ -399,7 +399,7 @@ Five connected fixes surfaced by the first live dogfood run of `blog publish`: p
 - `CHANGELOG.md` — Keep-a-Changelog format, single `[0.1.0]` section covering Phases 1–7 plus the template-path fix
 - `RELEASING.md` — literal v0.1.0 sequence + subsequent-releases template; both sections have `main`-branch + clean-tree fail-fast preflight guards; pre-publish `git push --atomic --dry-run` check; atomic `git push --atomic origin main refs/tags/vX.Y.Z` (not `--follow-tags`) so branch + tag move together; `gh release create --verify-tag` prevents silent wrong-commit tag creation; Recovery section structured around registry-state check (`npm view m0lz-01@X.Y.Z version`) with three cases: A=live/push-only-with-rebase-and-re-tag, B=E404/safe-retry, C=abandon (uses `--mixed` reset with `git status`/`git log` preflights); subsequent-release flow has its own two-commit recovery block with `HEAD~2` (not `HEAD~1`)
 - `.github/PULL_REQUEST_TEMPLATE.md` — ≤10 line checklist with absolute GitHub URLs to CLAUDE.md (relative paths 404 in GitHub's PR body rendering)
-- `.nvmrc` — `20` (contributor convenience; complements `engines.node: ">=20.0.0"`)
+- `.nvmrc` — `20.3.0` (contributor convenience; matches the package `engines.node` floor required by `sharp`)
 - `README.md` — CI badge at top; `## Install` leads with `npx m0lz-01 init --import` (dev install moved to new `## Development` section); `## Changelog` + `## Project Status` one-liners
 
 **/blog Skill Plugin source files:**

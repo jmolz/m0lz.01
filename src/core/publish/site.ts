@@ -6,6 +6,7 @@ import Database from 'better-sqlite3';
 
 import { BlogConfig } from '../config/types.js';
 import { assertOriginInSync, expectedSiteCoords, requireOriginMatch } from './origin-guard.js';
+import { ensurePlatformImages } from './platform-images.js';
 import { PreviewUrls, computePreviewUrls } from './preview-urls.js';
 import { PostRow } from '../db/types.js';
 
@@ -128,13 +129,13 @@ export interface SitePROverrides {
   allowMainAhead?: boolean;
 }
 
-export function createSitePR(
+export async function createSitePR(
   slug: string,
   config: BlogConfig,
   paths: SitePaths,
   db: Database.Database,
   overrides?: SitePROverrides,
-): SitePRResult {
+): Promise<SitePRResult> {
   const siteRepoPath = resolveSiteRepoPath(paths.configPath, config.site.repo_path);
   if (!existsSync(siteRepoPath)) {
     throw new Error(`Site repo path does not exist: ${siteRepoPath}`);
@@ -243,6 +244,20 @@ export function createSitePR(
   const coords = parseRepoCoords(remoteUrl);
   const repoFlag = `${coords.owner}/${coords.name}`;
 
+  // Verify or generate platform images before mutating the site repo. In
+  // publish/update mode this must not rewrite the already-evaluated draft
+  // frontmatter; missing fields are fixed by `blog draft platform-images`
+  // while the post is still in draft phase.
+  const sourceDraftMdx = join(paths.draftsDir, slug, 'index.mdx');
+  if (!existsSync(sourceDraftMdx)) {
+    throw new Error(`Draft MDX not found: ${sourceDraftMdx}`);
+  }
+  await ensurePlatformImages(slug, config, {
+    draftsDir: paths.draftsDir,
+    updateFrontmatter: false,
+    writeReceipt: false,
+  });
+
   const branchName = overrides?.branchName ?? `post/${slug}`;
 
   // Branch detection: `git branch --list` returns 0 whether the branch
@@ -263,10 +278,6 @@ export function createSitePR(
   }
 
   // Copy draft MDX into the site repo's content directory.
-  const sourceDraftMdx = join(paths.draftsDir, slug, 'index.mdx');
-  if (!existsSync(sourceDraftMdx)) {
-    throw new Error(`Draft MDX not found: ${sourceDraftMdx}`);
-  }
   const targetContentDir = join(siteRepoPath, config.site.content_dir, slug);
   mkdirSync(targetContentDir, { recursive: true });
   cpSync(sourceDraftMdx, join(targetContentDir, 'index.mdx'));

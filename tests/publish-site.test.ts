@@ -109,7 +109,25 @@ function seedPost(db: Database.Database, slug: string, title: string | null = 'S
 
 // Write a draft MDX for the post under the configured drafts directory so
 // createSitePR's cpSync sees a real source file.
-function seedDraftMdx(draftsDir: string, slug: string, content = '# Hello\n\nBody.'): void {
+function seedDraftMdx(
+  draftsDir: string,
+  slug: string,
+  content = `---
+title: "Sample Title"
+description: "Description"
+date: "2026-05-12"
+tags:
+  - test
+published: false
+canonical: "https://m0lz.dev/writing/sample"
+medium_featured_image: ./assets/medium-featured.png
+substack_header_image: ./assets/substack-header.png
+---
+
+# Hello
+
+Body.`,
+): void {
   const dir = join(draftsDir, slug);
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, 'index.mdx'), content, 'utf-8');
@@ -178,7 +196,7 @@ function makeExecError(status: number, stdout = '', stderr = ''): Error {
 }
 
 describe('createSitePR — happy path', () => {
-  it('copies MDX, creates branch, pushes, opens PR, returns structured result', () => {
+  it('copies MDX, creates branch, pushes, opens PR, returns structured result', async () => {
     const f = setup();
     seedPost(f.db, 'alpha');
     seedDraftMdx(f.draftsDir, 'alpha');
@@ -218,7 +236,7 @@ describe('createSitePR — happy path', () => {
       return null;
     });
 
-    const result = createSitePR('alpha', f.config, f.paths, f.db);
+    const result = await createSitePR('alpha', f.config, f.paths, f.db);
 
     expect(result.prNumber).toBe(42);
     expect(result.prUrl).toBe('https://github.com/jmolz/m0lz.00/pull/42');
@@ -228,13 +246,15 @@ describe('createSitePR — happy path', () => {
     expect(existsSync(join(f.siteRepoPath, 'content/posts/alpha/index.mdx'))).toBe(true);
   });
 
-  it('copies assets directory when present', () => {
+  it('copies assets directory when present', async () => {
     const f = setup();
     seedPost(f.db, 'withassets');
     seedDraftMdx(f.draftsDir, 'withassets');
     const assetsDir = join(f.draftsDir, 'withassets', 'assets');
     mkdirSync(assetsDir, { recursive: true });
     writeFileSync(join(assetsDir, 'diagram.svg'), '<svg/>');
+    const sourceDraftPath = join(f.draftsDir, 'withassets', 'index.mdx');
+    const sourceBefore = readFileSync(sourceDraftPath, 'utf-8');
 
     installExec((cmd, args) => {
       if (cmd === 'git' && args.includes('--get')) return 'git@github.com:jmolz/m0lz.00.git';
@@ -249,11 +269,17 @@ describe('createSitePR — happy path', () => {
       return null;
     });
 
-    createSitePR('withassets', f.config, f.paths, f.db);
+    await createSitePR('withassets', f.config, f.paths, f.db);
     expect(existsSync(join(f.siteRepoPath, 'content/posts/withassets/assets/diagram.svg'))).toBe(true);
+    expect(existsSync(join(f.siteRepoPath, 'content/posts/withassets/assets/medium-featured.png'))).toBe(true);
+    expect(existsSync(join(f.siteRepoPath, 'content/posts/withassets/assets/substack-header.png'))).toBe(true);
+    expect(readFileSync(sourceDraftPath, 'utf-8')).toBe(sourceBefore);
+    const copiedMdx = readFileSync(join(f.siteRepoPath, 'content/posts/withassets/index.mdx'), 'utf-8');
+    expect(copiedMdx).toContain('medium_featured_image: ./assets/medium-featured.png');
+    expect(copiedMdx).toContain('substack_header_image: ./assets/substack-header.png');
   });
 
-  it('copies research page when researchPagesDir/slug/index.mdx exists', () => {
+  it('copies research page when researchPagesDir/slug/index.mdx exists', async () => {
     const f = setup();
     seedPost(f.db, 'withresearch');
     seedDraftMdx(f.draftsDir, 'withresearch');
@@ -274,11 +300,11 @@ describe('createSitePR — happy path', () => {
       return null;
     });
 
-    createSitePR('withresearch', f.config, f.paths, f.db);
+    await createSitePR('withresearch', f.config, f.paths, f.db);
     expect(existsSync(join(f.siteRepoPath, 'content/research/withresearch/index.mdx'))).toBe(true);
   });
 
-  it('skips research page copy when researchPagesDir/slug/index.mdx is absent', () => {
+  it('skips research page copy when researchPagesDir/slug/index.mdx is absent', async () => {
     const f = setup();
     seedPost(f.db, 'noresearch');
     seedDraftMdx(f.draftsDir, 'noresearch');
@@ -296,11 +322,11 @@ describe('createSitePR — happy path', () => {
       return null;
     });
 
-    createSitePR('noresearch', f.config, f.paths, f.db);
+    await createSitePR('noresearch', f.config, f.paths, f.db);
     expect(existsSync(join(f.siteRepoPath, 'content/research/noresearch'))).toBe(false);
   });
 
-  it('writes pr-number.txt to publishDir/slug after PR creation', () => {
+  it('writes pr-number.txt to publishDir/slug after PR creation', async () => {
     const f = setup();
     seedPost(f.db, 'prnumber');
     seedDraftMdx(f.draftsDir, 'prnumber');
@@ -318,7 +344,7 @@ describe('createSitePR — happy path', () => {
       return null;
     });
 
-    createSitePR('prnumber', f.config, f.paths, f.db);
+    await createSitePR('prnumber', f.config, f.paths, f.db);
     const prPath = join(f.publishDir, 'prnumber', 'pr-number.txt');
     expect(existsSync(prPath)).toBe(true);
     expect(readFileSync(prPath, 'utf-8').trim()).toBe('77');
@@ -326,7 +352,7 @@ describe('createSitePR — happy path', () => {
 });
 
 describe('createSitePR — idempotency', () => {
-  it('reuses existing branch when `git branch --list` returns non-empty', () => {
+  it('reuses existing branch when `git branch --list` returns non-empty', async () => {
     const f = setup();
     seedPost(f.db, 'existbranch');
     seedDraftMdx(f.draftsDir, 'existbranch');
@@ -351,13 +377,13 @@ describe('createSitePR — idempotency', () => {
       return null;
     });
 
-    createSitePR('existbranch', f.config, f.paths, f.db);
+    await createSitePR('existbranch', f.config, f.paths, f.db);
     // Exactly one checkout call and it must NOT include the `-b` flag (reuse path).
     expect(checkoutArgs).toHaveLength(1);
     expect(checkoutArgs[0]).not.toContain('-b');
   });
 
-  it('reuses existing PR when `gh pr list` returns an entry (no pr create)', () => {
+  it('reuses existing PR when `gh pr list` returns an entry (no pr create)', async () => {
     const f = setup();
     seedPost(f.db, 'existingpr');
     seedDraftMdx(f.draftsDir, 'existingpr');
@@ -381,13 +407,13 @@ describe('createSitePR — idempotency', () => {
       return null;
     });
 
-    const result = createSitePR('existingpr', f.config, f.paths, f.db);
+    const result = await createSitePR('existingpr', f.config, f.paths, f.db);
     expect(result.prNumber).toBe(99);
     expect(result.prUrl).toBe('https://github.com/jmolz/m0lz.00/pull/99');
     expect(createCalls).toBe(0);
   });
 
-  it('skips commit call when `git diff --cached` exits 0 (no staged changes)', () => {
+  it('skips commit call when `git diff --cached` exits 0 (no staged changes)', async () => {
     const f = setup();
     seedPost(f.db, 'nochanges');
     seedDraftMdx(f.draftsDir, 'nochanges');
@@ -409,13 +435,13 @@ describe('createSitePR — idempotency', () => {
       return null;
     });
 
-    createSitePR('nochanges', f.config, f.paths, f.db);
+    await createSitePR('nochanges', f.config, f.paths, f.db);
     expect(commitCalls).toBe(0);
   });
 });
 
 describe('createSitePR — git remote parsing', () => {
-  it('accepts HTTPS remote URL shape', () => {
+  it('accepts HTTPS remote URL shape', async () => {
     const f = setup();
     seedPost(f.db, 'https');
     seedDraftMdx(f.draftsDir, 'https');
@@ -433,11 +459,11 @@ describe('createSitePR — git remote parsing', () => {
       return null;
     });
 
-    const result = createSitePR('https', f.config, f.paths, f.db);
+    const result = await createSitePR('https', f.config, f.paths, f.db);
     expect(result.prNumber).toBe(3);
   });
 
-  it('throws on unparseable git remote URL', () => {
+  it('throws on unparseable git remote URL', async () => {
     const f = setup();
     seedPost(f.db, 'weirdremote');
     seedDraftMdx(f.draftsDir, 'weirdremote');
@@ -447,12 +473,13 @@ describe('createSitePR — git remote parsing', () => {
       return null;
     });
 
-    expect(() => createSitePR('weirdremote', f.config, f.paths, f.db)).toThrow(/Could not parse git remote URL/);
+    await expect(createSitePR('weirdremote', f.config, f.paths, f.db))
+      .rejects.toThrow(/Could not parse git remote URL/);
   });
 });
 
 describe('createSitePR — dirty-state guardrail (Codex Pass 4 regression)', () => {
-  it('throws when the site repo has uncommitted changes unrelated to this post', () => {
+  it('throws when the site repo has uncommitted changes unrelated to this post', async () => {
     const f = setup();
     seedPost(f.db, 'dirty');
     seedDraftMdx(f.draftsDir, 'dirty');
@@ -467,12 +494,11 @@ describe('createSitePR — dirty-state guardrail (Codex Pass 4 regression)', () 
       throw new Error(`Unexpected exec call: ${cmd} ${args.join(' ')}`);
     });
 
-    expect(() => createSitePR('dirty', f.config, f.paths, f.db)).toThrow(
-      /uncommitted changes unrelated to this post/,
-    );
+    await expect(createSitePR('dirty', f.config, f.paths, f.db))
+      .rejects.toThrow(/uncommitted changes unrelated to this post/);
   });
 
-  it('tolerates dirty state that is entirely under content/posts/<slug>/ (pipeline-owned)', () => {
+  it('tolerates dirty state that is entirely under content/posts/<slug>/ (pipeline-owned)', async () => {
     const f = setup();
     seedPost(f.db, 'ownedonly');
     seedDraftMdx(f.draftsDir, 'ownedonly');
@@ -504,10 +530,10 @@ describe('createSitePR — dirty-state guardrail (Codex Pass 4 regression)', () 
       throw new Error(`Unexpected exec call: ${cmd} ${args.join(' ')}`);
     });
 
-    expect(() => createSitePR('ownedonly', f.config, f.paths, f.db)).not.toThrow();
+    await expect(createSitePR('ownedonly', f.config, f.paths, f.db)).resolves.toBeDefined();
   });
 
-  it('rejects rename/copy records whose destination escapes owned prefixes (Codex Pass 5 regression)', () => {
+  it('rejects rename/copy records whose destination escapes owned prefixes (Codex Pass 5 regression)', async () => {
     // A staged rename like:
     //   R  content/posts/alpha/foo.ts -> static/leaked.ts
     // has an owned SOURCE but an UNOWNED DESTINATION. The naive slice(3) +
@@ -525,12 +551,11 @@ describe('createSitePR — dirty-state guardrail (Codex Pass 4 regression)', () 
       throw new Error(`Unexpected exec call: ${cmd} ${args.join(' ')}`);
     });
 
-    expect(() => createSitePR('renamed', f.config, f.paths, f.db)).toThrow(
-      /uncommitted changes unrelated to this post/,
-    );
+    await expect(createSitePR('renamed', f.config, f.paths, f.db))
+      .rejects.toThrow(/uncommitted changes unrelated to this post/);
   });
 
-  it('tolerates rename/copy entries whose both sides live under owned prefixes', () => {
+  it('tolerates rename/copy entries whose both sides live under owned prefixes', async () => {
     const f = setup();
     seedPost(f.db, 'owned-rename');
     seedDraftMdx(f.draftsDir, 'owned-rename');
@@ -562,10 +587,10 @@ describe('createSitePR — dirty-state guardrail (Codex Pass 4 regression)', () 
       throw new Error(`Unexpected exec call: ${cmd} ${args.join(' ')}`);
     });
 
-    expect(() => createSitePR('owned-rename', f.config, f.paths, f.db)).not.toThrow();
+    await expect(createSitePR('owned-rename', f.config, f.paths, f.db)).resolves.toBeDefined();
   });
 
-  it('stages only pipeline-owned paths — not `git add .`', () => {
+  it('stages only pipeline-owned paths — not `git add .`', async () => {
     const f = setup();
     seedPost(f.db, 'scoped');
     seedDraftMdx(f.draftsDir, 'scoped');
@@ -587,7 +612,7 @@ describe('createSitePR — dirty-state guardrail (Codex Pass 4 regression)', () 
       return null;
     });
 
-    createSitePR('scoped', f.config, f.paths, f.db);
+    await createSitePR('scoped', f.config, f.paths, f.db);
 
     // Critical: no `git add .` call — staging must be path-scoped.
     const addCalls = mockExec.mock.calls.filter(

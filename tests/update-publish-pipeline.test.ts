@@ -146,6 +146,8 @@ tags:
   - TypeScript
 published: true
 canonical: "https://m0lz.dev/writing/alpha"
+medium_featured_image: ./assets/medium-featured.png
+substack_header_image: ./assets/substack-header.png
 ---
 
 # Heading
@@ -156,7 +158,7 @@ The throughput delta is +18% under the new compiler toolchain.
 `;
 
 describe('createSiteUpdate — update-branch commit carries body + frontmatter', () => {
-  it('branch = update/<slug>-cycle-<N>; MDX copied into content/posts/<slug>/index.mdx with body intact', () => {
+  it('branch = update/<slug>-cycle-<N>; MDX copied into content/posts/<slug>/index.mdx with body intact', async () => {
     const f = setup();
     seedPublishedPost(f.db, 'alpha');
     openUpdateCycle(f.db, 'alpha', 'Re-ran benchmarks');
@@ -201,7 +203,7 @@ describe('createSiteUpdate — update-branch commit carries body + frontmatter',
       return null;
     });
 
-    const result = createSiteUpdate('alpha', f.config, {
+    const result = await createSiteUpdate('alpha', f.config, {
       draftsDir: f.draftsDir,
       researchPagesDir: f.researchPagesDir,
       publishDir: f.publishDir,
@@ -226,18 +228,18 @@ describe('createSiteUpdate — update-branch commit carries body + frontmatter',
     expect(landed).toMatch(/^---\n[\s\S]*?title: "Sample Title"[\s\S]*?---/);
   });
 
-  it('throws when there is no open update cycle (operator/runner bug)', () => {
+  it('throws when there is no open update cycle (operator/runner bug)', async () => {
     const f = setup();
     seedPublishedPost(f.db, 'orphan');
     seedDraftMdx(f.draftsDir, 'orphan', UPDATED_MDX);
 
     // No openUpdateCycle call — createSiteUpdate should fail fast.
-    expect(() => createSiteUpdate('orphan', f.config, {
+    await expect(createSiteUpdate('orphan', f.config, {
       draftsDir: f.draftsDir,
       researchPagesDir: f.researchPagesDir,
       publishDir: f.publishDir,
       configPath: f.configPath,
-    }, f.db)).toThrow(/no open update cycle/);
+    }, f.db)).rejects.toThrow(/no open update cycle/);
   });
 });
 
