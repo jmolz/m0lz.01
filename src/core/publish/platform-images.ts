@@ -1,10 +1,36 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 import sharp from 'sharp';
 
 import { BlogConfig } from '../config/types.js';
 import { parseFrontmatter, PostFrontmatter, serializeFrontmatter } from '../draft/frontmatter.js';
+
+type PlatformName = 'devto' | 'medium' | 'substack';
+type GeneratedPlatformImageField = 'devto_main_image' | 'medium_featured_image' | 'substack_preview_image';
+export type PlatformImageField = GeneratedPlatformImageField | 'substack_header_image';
+
+interface PlatformImageSpecBase {
+  platform: PlatformName;
+  field: PlatformImageField;
+  filename: string;
+  width: number;
+  height: number;
+  altSuffix: string;
+  allowedFormats?: readonly string[];
+  legacyDefaultFilenames?: readonly string[];
+}
+
+export const DEVTO_MAIN_IMAGE = {
+  platform: 'devto',
+  field: 'devto_main_image',
+  filename: 'devto-cover.png',
+  width: 1000,
+  height: 420,
+  altSuffix: 'Dev.to cover image',
+  allowedFormats: ['png', 'webp'],
+  legacyDefaultFilenames: ['devto-cover.webp'],
+} as const satisfies PlatformImageSpecBase;
 
 export const MEDIUM_FEATURED_IMAGE = {
   platform: 'medium',
@@ -13,8 +39,24 @@ export const MEDIUM_FEATURED_IMAGE = {
   width: 1200,
   height: 675,
   altSuffix: 'featured image',
-} as const;
+  allowedFormats: ['png'],
+  legacyDefaultFilenames: [],
+} as const satisfies PlatformImageSpecBase;
 
+export const SUBSTACK_PREVIEW_IMAGE = {
+  platform: 'substack',
+  field: 'substack_preview_image',
+  filename: 'substack-preview.png',
+  width: 1200,
+  height: 630,
+  altSuffix: 'Substack preview image',
+  allowedFormats: ['png'],
+  legacyDefaultFilenames: [],
+} as const satisfies PlatformImageSpecBase;
+
+// Legacy compatibility only. Substack's persistent email banner/header is a
+// publication-level asset, not a per-article asset, so the generator no longer
+// emits this spec. Paste generation can still read old drafts that used it.
 export const SUBSTACK_HEADER_IMAGE = {
   platform: 'substack',
   field: 'substack_header_image',
@@ -22,15 +64,18 @@ export const SUBSTACK_HEADER_IMAGE = {
   width: 1100,
   height: 220,
   altSuffix: 'Substack header',
-} as const;
+  allowedFormats: ['png'],
+  legacyDefaultFilenames: [],
+} as const satisfies PlatformImageSpecBase;
 
 export const PLATFORM_IMAGE_SPECS = [
+  DEVTO_MAIN_IMAGE,
   MEDIUM_FEATURED_IMAGE,
-  SUBSTACK_HEADER_IMAGE,
+  SUBSTACK_PREVIEW_IMAGE,
 ] as const;
 
 export type PlatformImageSpec = typeof PLATFORM_IMAGE_SPECS[number];
-export type PlatformImageField = PlatformImageSpec['field'] | 'devto_main_image';
+type AnyPlatformImageSpec = PlatformImageSpec | typeof SUBSTACK_HEADER_IMAGE;
 
 export interface ResolvedAssetReference {
   kind: 'asset' | 'url';
@@ -53,8 +98,6 @@ export interface PlatformImageResult {
   source:
     | 'configured-platform-image'
     | 'configured-platform-url'
-    | 'devto_main_image'
-    | 'devto-cover.webp'
     | 'fallback-template';
   source_path?: string;
   generated: boolean;
@@ -72,12 +115,6 @@ interface PlatformImagePaths {
   draftsDir: string;
   updateFrontmatter?: boolean;
   writeReceipt?: boolean;
-}
-
-interface LocalSource {
-  path: string;
-  source: 'devto_main_image' | 'devto-cover.webp';
-  sourcePath: string;
 }
 
 type PlatformReferenceMap = Map<PlatformImageSpec['field'], ResolvedAssetReference | undefined>;
@@ -153,7 +190,7 @@ export function resolvePlatformImageUrl(
   rawValue: string | undefined,
   slug: string,
   baseUrl: string,
-  spec: PlatformImageSpec,
+  spec: AnyPlatformImageSpec,
 ): string {
   const resolved = resolvePostAssetReference(rawValue, slug, baseUrl, spec.field);
   return resolved?.publicUrl ?? publicAssetUrl(baseUrl, slug, spec.filename);
@@ -167,7 +204,7 @@ function escapeXml(value: string): string {
     .replace(/"/g, '&quot;');
 }
 
-function wrapTitle(title: string, maxChars: number): string[] {
+function wrapTitle(title: string, maxChars: number, maxLines = 3): string[] {
   const words = title.trim().split(/\s+/).filter(Boolean);
   const lines: string[] = [];
   let current = '';
@@ -179,12 +216,12 @@ function wrapTitle(title: string, maxChars: number): string[] {
       lines.push(current);
       current = word;
     }
-    if (lines.length === 2) break;
+    if (lines.length === maxLines - 1) break;
   }
-  if (current.length > 0 && lines.length < 3) {
+  if (current.length > 0 && lines.length < maxLines) {
     lines.push(current);
   }
-  return lines.length > 0 ? lines.slice(0, 3) : ['site'];
+  return lines.length > 0 ? lines.slice(0, maxLines) : ['site'];
 }
 
 function displayHost(baseUrl: string): string {
@@ -199,22 +236,30 @@ function fallbackSvg(spec: PlatformImageSpec, fm: PostFrontmatter, config: BlogC
   const host = displayHost(config.site.base_url);
   const title = fm.title && fm.title !== '{{title}}' ? fm.title : host;
   const label = fm.project ?? config.author.github;
-  const titleLines = wrapTitle(title, spec.platform === 'substack' ? 64 : 34);
-  const titleStart = spec.platform === 'substack' ? 88 : 250;
-  const titleSize = spec.platform === 'substack' ? 34 : 68;
-  const titleGap = spec.platform === 'substack' ? 42 : 78;
-  const markSize = spec.platform === 'substack' ? 72 : 120;
-  const markX = spec.platform === 'substack' ? 42 : 72;
-  const markY = spec.platform === 'substack' ? 38 : 72;
-  const labelY = spec.platform === 'substack' ? 174 : 574;
+  const marginX = Math.round(spec.width * 0.07);
+  const marginY = Math.round(spec.height * 0.11);
+  const markSize = Math.round(Math.min(spec.width * 0.13, spec.height * 0.24));
+  const markX = marginX;
+  const markY = marginY;
+  const textX = markX + markSize + Math.round(spec.width * 0.045);
+  const textWidth = Math.max(320, spec.width - textX - marginX);
+  const titleSize = Math.round(Math.min(spec.height * 0.13, spec.width * 0.055, 68));
+  const titleGap = Math.round(titleSize * 1.14);
+  const titleLines = wrapTitle(title, Math.max(20, Math.floor(textWidth / (titleSize * 0.54))), 3);
+  const titleBlockHeight = (titleLines.length - 1) * titleGap;
+  const titleStart = Math.round(spec.height * 0.45 - titleBlockHeight / 2);
+  const labelY = Math.round(spec.height - marginY - Math.max(22, spec.height * 0.045));
+  const labelSize = Math.round(Math.max(18, Math.min(30, spec.height * 0.048)));
+  const ruleY = Math.round(spec.height - marginY);
   const titleText = titleLines
     .map((line, idx) =>
-      `<text x="${spec.platform === 'substack' ? 150 : 240}" y="${titleStart + idx * titleGap}" fill="#f5f5f0" font-family="Inter, Arial, sans-serif" font-size="${titleSize}" font-weight="700">${escapeXml(line)}</text>`,
+      `<text x="${textX}" y="${titleStart + idx * titleGap}" fill="#f5f5f0" font-family="Inter, Arial, sans-serif" font-size="${titleSize}" font-weight="700">${escapeXml(line)}</text>`,
     )
     .join('\n');
 
   return `<svg width="${spec.width}" height="${spec.height}" viewBox="0 0 ${spec.width} ${spec.height}" fill="none" xmlns="http://www.w3.org/2000/svg">
 <rect width="${spec.width}" height="${spec.height}" fill="#090909"/>
+<rect x="${marginX}" y="${ruleY}" width="${spec.width - marginX * 2}" height="2" fill="#2b2b2b"/>
 <rect x="${markX}" y="${markY}" width="${markSize}" height="${markSize}" rx="${markSize / 9}" fill="#000000" stroke="#3a3a3a" stroke-width="${Math.max(2, markSize / 48)}"/>
 <line x1="${markX + markSize * 0.38}" y1="${markY + markSize * 0.14}" x2="${markX + markSize * 0.38}" y2="${markY + markSize * 0.86}" stroke="#ffffff" stroke-width="${markSize * 0.056}" stroke-linecap="round"/>
 <line x1="${markX + markSize * 0.62}" y1="${markY + markSize * 0.14}" x2="${markX + markSize * 0.62}" y2="${markY + markSize * 0.86}" stroke="#ffffff" stroke-width="${markSize * 0.056}" stroke-linecap="round"/>
@@ -222,46 +267,25 @@ function fallbackSvg(spec: PlatformImageSpec, fm: PostFrontmatter, config: BlogC
 <line x1="${markX + markSize * 0.62}" y1="${markY + markSize * 0.40}" x2="${markX + markSize * 0.84}" y2="${markY + markSize * 0.40}" stroke="#ffffff" stroke-width="${markSize * 0.056}" stroke-linecap="round"/>
 <line x1="${markX + markSize * 0.62}" y1="${markY + markSize * 0.65}" x2="${markX + markSize * 0.84}" y2="${markY + markSize * 0.65}" stroke="#ffffff" stroke-width="${markSize * 0.056}" stroke-linecap="round"/>
 ${titleText}
-<text x="${spec.platform === 'substack' ? 150 : 240}" y="${labelY}" fill="#b7b7ad" font-family="Inter, Arial, sans-serif" font-size="${spec.platform === 'substack' ? 20 : 30}" font-weight="600">${escapeXml(label)} / ${escapeXml(host)}</text>
+<text x="${textX}" y="${labelY}" fill="#b7b7ad" font-family="Inter, Arial, sans-serif" font-size="${labelSize}" font-weight="600">${escapeXml(label)} / ${escapeXml(host)}</text>
 </svg>`;
 }
 
 async function assertImageDimensions(path: string, spec: PlatformImageSpec): Promise<void> {
   const metadata = await sharp(path).metadata();
-  if (metadata.width !== spec.width || metadata.height !== spec.height || metadata.format !== 'png') {
+  const formats: readonly string[] = spec.allowedFormats;
+  const actualFormat = metadata.format ?? 'unknown';
+  if (
+    metadata.width !== spec.width ||
+    metadata.height !== spec.height ||
+    !formats.includes(actualFormat)
+  ) {
+    const expectedFormat = formats.map((format) => format.toUpperCase()).join(' or ');
     throw new Error(
-      `Invalid ${spec.field}: expected ${spec.width}x${spec.height} PNG, got ` +
-      `${metadata.width ?? 'unknown'}x${metadata.height ?? 'unknown'} ${metadata.format ?? 'unknown'}`,
+      `Invalid ${spec.field}: expected ${spec.width}x${spec.height} ${expectedFormat}, got ` +
+      `${metadata.width ?? 'unknown'}x${metadata.height ?? 'unknown'} ${actualFormat}`,
     );
   }
-}
-
-function findLocalSource(
-  devto: ResolvedAssetReference | undefined,
-  slug: string,
-  paths: PlatformImagePaths,
-): LocalSource | undefined {
-  if (devto?.kind === 'asset') {
-    if (!devto.localPath || !existsSync(devto.localPath)) {
-      throw new Error(`devto_main_image asset not found: ${devto.normalizedAssetPath}`);
-    }
-    return {
-      path: devto.localPath,
-      source: 'devto_main_image',
-      sourcePath: devto.normalizedAssetPath ?? devto.raw,
-    };
-  }
-
-  const defaultCover = join(paths.draftsDir, slug, 'assets', 'devto-cover.webp');
-  if (existsSync(defaultCover)) {
-    return {
-      path: defaultCover,
-      source: 'devto-cover.webp',
-      sourcePath: 'assets/devto-cover.webp',
-    };
-  }
-
-  return undefined;
 }
 
 async function resolveAndValidatePlatformReferences(
@@ -291,6 +315,13 @@ async function resolveAndValidatePlatformReferences(
     }
     refs.set(spec.field, resolved);
   }
+  resolvePostAssetReference(
+    fm.substack_header_image,
+    slug,
+    config.site.base_url,
+    'substack_header_image',
+    paths,
+  );
   return refs;
 }
 
@@ -299,27 +330,7 @@ async function generatePlatformImage(
   fm: PostFrontmatter,
   config: BlogConfig,
   outputPath: string,
-  source: LocalSource | undefined,
 ): Promise<Pick<PlatformImageResult, 'source' | 'source_path'>> {
-  if (source) {
-    const samePath = source.path === outputPath;
-    const writePath = samePath
-      ? join(dirname(outputPath), `.${spec.filename}.${process.pid}.${Date.now()}.tmp`)
-      : outputPath;
-    await sharp(source.path)
-      .resize(spec.width, spec.height, {
-        fit: spec.platform === 'substack' ? 'contain' : 'cover',
-        position: 'center',
-        background: '#000000',
-      })
-      .png()
-      .toFile(writePath);
-    if (samePath) {
-      renameSync(writePath, outputPath);
-    }
-    return { source: source.source, source_path: source.sourcePath };
-  }
-
   await sharp(Buffer.from(fallbackSvg(spec, fm, config)))
     .png()
     .toFile(outputPath);
@@ -350,14 +361,6 @@ export async function ensurePlatformImages(
   const originalMdx = readFileSync(draftPath, 'utf-8');
   const fm = parseFrontmatter(originalMdx);
   const platformRefs = await resolveAndValidatePlatformReferences(fm, slug, config, paths);
-  const devto = resolvePostAssetReference(
-    fm.devto_main_image,
-    slug,
-    config.site.base_url,
-    'devto_main_image',
-    paths,
-  );
-  const source = findLocalSource(devto, slug, paths);
 
   const assetsDir = join(paths.draftsDir, slug, 'assets');
   const results: PlatformImageResult[] = [];
@@ -404,6 +407,13 @@ export async function ensurePlatformImages(
       if (!localPath) {
         throw new Error(`${spec.field} asset path could not be resolved`);
       }
+      const isDefaultFilename = resolved.filename === spec.filename;
+      const legacyDefaultFilenames: readonly string[] = spec.legacyDefaultFilenames;
+      const isLegacyDefaultFilename =
+        resolved.filename !== undefined &&
+        legacyDefaultFilenames.includes(resolved.filename);
+      const shouldRegenerateDefault =
+        updateFrontmatter && (isDefaultFilename || isLegacyDefaultFilename);
       if (existsSync(localPath)) {
         if (fm[spec.field] !== resolved.frontmatterValue) {
           if (!updateFrontmatter) {
@@ -414,24 +424,33 @@ export async function ensurePlatformImages(
           fm[spec.field] = resolved.frontmatterValue;
           frontmatterUpdated = true;
         }
-        results.push({
-          platform: spec.platform,
-          field: spec.field,
-          filename: resolved.filename ?? spec.filename,
-          width: spec.width,
-          height: spec.height,
-          output_path: localPath,
-          public_url: resolved.publicUrl,
-          source: 'configured-platform-image',
-          source_path: resolved.normalizedAssetPath,
-          generated: false,
-        });
-        continue;
+        if (shouldRegenerateDefault) {
+          // Fall through to render the current deterministic template into
+          // the canonical output filename. Custom filenames and external URLs
+          // are preserved; generator-owned defaults are refreshable in draft
+          // phase so visual framework changes can actually take effect.
+        } else {
+          results.push({
+            platform: spec.platform,
+            field: spec.field,
+            filename: resolved.filename ?? spec.filename,
+            width: spec.width,
+            height: spec.height,
+            output_path: localPath,
+            public_url: resolved.publicUrl,
+            source: 'configured-platform-image',
+            source_path: resolved.normalizedAssetPath,
+            generated: false,
+          });
+          continue;
+        }
       }
-      if (resolved.filename !== spec.filename) {
+      if (resolved.filename !== spec.filename && !shouldRegenerateDefault) {
         throw new Error(`${spec.field} asset not found: ${resolved.normalizedAssetPath}`);
       }
-      if (fm[spec.field] !== resolved.frontmatterValue) {
+      if (isLegacyDefaultFilename && updateFrontmatter) {
+        frontmatterUpdated = true;
+      } else if (fm[spec.field] !== resolved.frontmatterValue) {
         if (!updateFrontmatter) {
           throw new Error(
             `${spec.field} must use normalized ./assets/<filename> form before publishing`,
@@ -443,7 +462,7 @@ export async function ensurePlatformImages(
     }
 
     const outputPath = join(assetsDir, spec.filename);
-    const generation = await generatePlatformImage(spec, fm, config, outputPath, source);
+    const generation = await generatePlatformImage(spec, fm, config, outputPath);
     await assertImageDimensions(outputPath, spec);
     const nextValue = `./assets/${spec.filename}`;
     if (fm[spec.field] !== nextValue) {

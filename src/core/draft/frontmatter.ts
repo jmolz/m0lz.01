@@ -20,6 +20,7 @@ export interface PostFrontmatter {
   devto_url?: string;
   devto_main_image?: string;
   medium_featured_image?: string;
+  substack_preview_image?: string;
   substack_header_image?: string;
   // Phase 7 additions. All optional — present only after the
   // corresponding lifecycle event:
@@ -165,6 +166,7 @@ export function serializeFrontmatter(fm: PostFrontmatter): string {
   if (fm.devto_url !== undefined) obj.devto_url = fm.devto_url;
   if (fm.devto_main_image !== undefined) obj.devto_main_image = fm.devto_main_image;
   if (fm.medium_featured_image !== undefined) obj.medium_featured_image = fm.medium_featured_image;
+  if (fm.substack_preview_image !== undefined) obj.substack_preview_image = fm.substack_preview_image;
   if (fm.substack_header_image !== undefined) obj.substack_header_image = fm.substack_header_image;
   // Phase 7 additions — only emitted when present. The m0lz.00 site
   // parser must tolerate their absence (legacy posts) and their
@@ -219,6 +221,7 @@ export function parseFrontmatter(mdxContent: string): PostFrontmatter {
     devto_url: obj.devto_url !== undefined ? String(obj.devto_url) : undefined,
     devto_main_image: obj.devto_main_image !== undefined ? String(obj.devto_main_image) : undefined,
     medium_featured_image: obj.medium_featured_image !== undefined ? String(obj.medium_featured_image) : undefined,
+    substack_preview_image: obj.substack_preview_image !== undefined ? String(obj.substack_preview_image) : undefined,
     substack_header_image: obj.substack_header_image !== undefined ? String(obj.substack_header_image) : undefined,
     unpublished_at: obj.unpublished_at !== undefined ? String(obj.unpublished_at) : undefined,
     updated_at: obj.updated_at !== undefined ? String(obj.updated_at) : undefined,

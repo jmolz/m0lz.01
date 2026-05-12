@@ -4,7 +4,11 @@ import { dirname, join } from 'node:path';
 import { BlogConfig } from '../config/types.js';
 import { parseFrontmatter } from '../draft/frontmatter.js';
 import { mdxToMarkdown } from './convert.js';
-import { SUBSTACK_HEADER_IMAGE, resolvePlatformImageUrl } from './platform-images.js';
+import {
+  SUBSTACK_HEADER_IMAGE,
+  SUBSTACK_PREVIEW_IMAGE,
+  resolvePlatformImageUrl,
+} from './platform-images.js';
 
 // Step 7 of the publish pipeline: generate a paste-ready Markdown file for
 // Substack. Substack has no official publishing API; the author pastes this
@@ -54,11 +58,14 @@ export function generateSubstackPaste(
 
   const canonicalUrl = `${config.site.base_url.replace(/\/+$/, '')}/writing/${slug}`;
   const display = displayBaseUrl(config.site.base_url);
+  const substackImage = fm.substack_preview_image !== undefined
+    ? { rawValue: fm.substack_preview_image, spec: SUBSTACK_PREVIEW_IMAGE }
+    : { rawValue: fm.substack_header_image, spec: fm.substack_header_image ? SUBSTACK_HEADER_IMAGE : SUBSTACK_PREVIEW_IMAGE };
   const imageUrl = resolvePlatformImageUrl(
-    fm.substack_header_image,
+    substackImage.rawValue,
     slug,
     config.site.base_url,
-    SUBSTACK_HEADER_IMAGE,
+    substackImage.spec,
   );
 
   const paste = [
@@ -66,7 +73,7 @@ export function generateSubstackPaste(
     '',
     `## ${fm.description}`,
     '',
-    `![${imageAlt(fm.title, SUBSTACK_HEADER_IMAGE.altSuffix)}](${imageUrl})`,
+    `![${imageAlt(fm.title, substackImage.spec.altSuffix)}](${imageUrl})`,
     '',
     markdownBody.trim(),
     '',

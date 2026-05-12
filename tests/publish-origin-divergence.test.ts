@@ -120,8 +120,9 @@ describe('site-pr --allow-main-ahead override', () => {
       [
         '---',
         'title: Alpha',
+        'devto_main_image: ./assets/devto-cover.png',
         'medium_featured_image: ./assets/medium-featured.png',
-        'substack_header_image: ./assets/substack-header.png',
+        'substack_preview_image: ./assets/substack-preview.png',
         '---',
         '',
         'body',

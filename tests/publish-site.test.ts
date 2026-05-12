@@ -120,8 +120,9 @@ tags:
   - test
 published: false
 canonical: "https://m0lz.dev/writing/sample"
+devto_main_image: ./assets/devto-cover.png
 medium_featured_image: ./assets/medium-featured.png
-substack_header_image: ./assets/substack-header.png
+substack_preview_image: ./assets/substack-preview.png
 ---
 
 # Hello
@@ -271,13 +272,15 @@ describe('createSitePR — happy path', () => {
 
     await createSitePR('withassets', f.config, f.paths, f.db);
     expect(existsSync(join(f.siteRepoPath, 'content/posts/withassets/assets/diagram.svg'))).toBe(true);
+    expect(existsSync(join(f.siteRepoPath, 'content/posts/withassets/assets/devto-cover.png'))).toBe(true);
     expect(existsSync(join(f.siteRepoPath, 'content/posts/withassets/assets/medium-featured.png'))).toBe(true);
-    expect(existsSync(join(f.siteRepoPath, 'content/posts/withassets/assets/substack-header.png'))).toBe(true);
+    expect(existsSync(join(f.siteRepoPath, 'content/posts/withassets/assets/substack-preview.png'))).toBe(true);
     expect(readFileSync(sourceDraftPath, 'utf-8')).toBe(sourceBefore);
     expect(existsSync(join(f.draftsDir, 'withassets', '.platform-images.json'))).toBe(false);
     const copiedMdx = readFileSync(join(f.siteRepoPath, 'content/posts/withassets/index.mdx'), 'utf-8');
+    expect(copiedMdx).toContain('devto_main_image: ./assets/devto-cover.png');
     expect(copiedMdx).toContain('medium_featured_image: ./assets/medium-featured.png');
-    expect(copiedMdx).toContain('substack_header_image: ./assets/substack-header.png');
+    expect(copiedMdx).toContain('substack_preview_image: ./assets/substack-preview.png');
   });
 
   it('refuses missing platform image frontmatter before branch checkout or site copy', async () => {
@@ -306,7 +309,7 @@ canonical: "https://m0lz.dev/writing/missingimages"
     });
 
     await expect(createSitePR('missingimages', f.config, f.paths, f.db))
-      .rejects.toThrow(/Missing medium_featured_image.*blog draft platform-images missingimages/s);
+      .rejects.toThrow(/Missing devto_main_image.*blog draft platform-images missingimages/s);
 
     expect(execCalls.some((call) => call.includes(' checkout '))).toBe(false);
     expect(existsSync(join(f.siteRepoPath, 'content/posts/missingimages'))).toBe(false);

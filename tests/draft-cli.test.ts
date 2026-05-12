@@ -476,7 +476,7 @@ describe('runDraftAddAsset', () => {
 });
 
 describe('runDraftPlatformImages', () => {
-  it('generates Medium/Substack assets and updates draft frontmatter', async () => {
+  it('generates Dev.to/Medium/Substack preview assets and updates draft frontmatter', async () => {
     const f = setupFixture();
     setupDraftSlug(f, 'platform-ok');
     captureLogs();
@@ -489,16 +489,20 @@ describe('runDraftPlatformImages', () => {
 
       expect(process.exitCode).not.toBe(1);
       expect(logs.join('\n')).toContain('Platform images ready');
+      const devtoPath = join(f.draftsDir, 'platform-ok', 'assets', 'devto-cover.png');
       const mediumPath = join(f.draftsDir, 'platform-ok', 'assets', 'medium-featured.png');
-      const substackPath = join(f.draftsDir, 'platform-ok', 'assets', 'substack-header.png');
+      const substackPath = join(f.draftsDir, 'platform-ok', 'assets', 'substack-preview.png');
+      expect(existsSync(devtoPath)).toBe(true);
       expect(existsSync(mediumPath)).toBe(true);
       expect(existsSync(substackPath)).toBe(true);
+      expect((await sharp(devtoPath).metadata()).width).toBe(1000);
       expect((await sharp(mediumPath).metadata()).width).toBe(1200);
-      expect((await sharp(substackPath).metadata()).height).toBe(220);
+      expect((await sharp(substackPath).metadata()).height).toBe(630);
 
       const mdx = readFileSync(join(f.draftsDir, 'platform-ok', 'index.mdx'), 'utf-8');
+      expect(mdx).toContain('devto_main_image: ./assets/devto-cover.png');
       expect(mdx).toContain('medium_featured_image: ./assets/medium-featured.png');
-      expect(mdx).toContain('substack_header_image: ./assets/substack-header.png');
+      expect(mdx).toContain('substack_preview_image: ./assets/substack-preview.png');
       expect(existsSync(join(f.draftsDir, 'platform-ok', '.platform-images.json'))).toBe(true);
     } finally {
       process.exitCode = savedExitCode;

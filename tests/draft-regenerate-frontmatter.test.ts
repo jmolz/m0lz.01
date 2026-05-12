@@ -152,6 +152,7 @@ describe('runDraftRegenerateFrontmatter', () => {
       'project: test.01',
       'devto_main_image: ./assets/devto-cover.webp',
       'medium_featured_image: ./assets/medium-featured.png',
+      'substack_preview_image: ./assets/substack-preview.png',
       'substack_header_image: ./assets/substack-header.png',
     ].join('\n');
     seedDraft(f, 'beta', fm, 'body\n', 'test.01');
@@ -253,6 +254,7 @@ describe('runDraftRegenerateFrontmatter', () => {
       'project: test.01',
       'devto_main_image: ./assets/devto-cover.webp',
       'medium_featured_image: ./assets/medium-featured.png',
+      'substack_preview_image: ./assets/substack-preview.png',
       'substack_header_image: ./assets/substack-header.png',
     ].join('\n');
     seedDraft(f, 'gamma', fm, 'body\n', 'test.01');
@@ -267,6 +269,7 @@ describe('runDraftRegenerateFrontmatter', () => {
     expect(updated).toContain('- t2');
     expect(updated).toContain('devto_main_image: ./assets/devto-cover.webp');
     expect(updated).toContain('medium_featured_image: ./assets/medium-featured.png');
+    expect(updated).toContain('substack_preview_image: ./assets/substack-preview.png');
     expect(updated).toContain('substack_header_image: ./assets/substack-header.png');
   });
 

@@ -324,8 +324,9 @@ describe('serializeFrontmatter / parseFrontmatter', () => {
       canonical: 'https://m0lz.dev/writing/test-post',
       companion_repo: 'https://github.com/jmolz/test-post',
       project: 'm0lz.02',
-      devto_main_image: './assets/devto-cover.webp',
+      devto_main_image: './assets/devto-cover.png',
       medium_featured_image: './assets/medium-featured.png',
+      substack_preview_image: './assets/substack-preview.png',
       substack_header_image: './assets/substack-header.png',
     };
 
@@ -344,6 +345,7 @@ describe('serializeFrontmatter / parseFrontmatter', () => {
     expect(parsed.project).toBe(original.project);
     expect(parsed.devto_main_image).toBe(original.devto_main_image);
     expect(parsed.medium_featured_image).toBe(original.medium_featured_image);
+    expect(parsed.substack_preview_image).toBe(original.substack_preview_image);
     expect(parsed.substack_header_image).toBe(original.substack_header_image);
   });
 
@@ -360,6 +362,7 @@ describe('serializeFrontmatter / parseFrontmatter', () => {
     expect(serialized).not.toContain('medium_url');
     expect(serialized).not.toContain('devto_main_image');
     expect(serialized).not.toContain('medium_featured_image');
+    expect(serialized).not.toContain('substack_preview_image');
     expect(serialized).not.toContain('substack_header_image');
   });
 });

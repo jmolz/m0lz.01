@@ -8,9 +8,10 @@ import sharp from 'sharp';
 import { BlogConfig } from '../src/core/config/types.js';
 import { parseFrontmatter } from '../src/core/draft/frontmatter.js';
 import {
+  DEVTO_MAIN_IMAGE,
   ensurePlatformImages,
   MEDIUM_FEATURED_IMAGE,
-  SUBSTACK_HEADER_IMAGE,
+  SUBSTACK_PREVIEW_IMAGE,
 } from '../src/core/publish/platform-images.js';
 
 let tempDir: string | undefined;
@@ -83,6 +84,17 @@ async function writeImage(path: string, width: number, height: number, color = '
   }).png().toFile(path);
 }
 
+async function writeWebpImage(path: string, width: number, height: number, color = '#336699'): Promise<void> {
+  await sharp({
+    create: {
+      width,
+      height,
+      channels: 4,
+      background: color,
+    },
+  }).webp().toFile(path);
+}
+
 async function expectDimensions(path: string, width: number, height: number): Promise<void> {
   const metadata = await sharp(path).metadata();
   expect(metadata.format).toBe('png');
@@ -98,37 +110,64 @@ afterEach(() => {
 });
 
 describe('ensurePlatformImages', () => {
-  it('generates exact Medium and Substack PNGs from a local devto_main_image', async () => {
-    const f = setup('from-devto', ['devto_main_image: ./assets/source.png']);
-    await writeImage(join(f.draftsDir, f.slug, 'assets', 'source.png'), 1600, 900);
+  it('generates exact Dev.to, Medium, and Substack preview PNGs from the shared article-card template', async () => {
+    const f = setup('fallback');
 
     const result = await ensurePlatformImages(f.slug, makeConfig(), { draftsDir: f.draftsDir });
 
+    const devto = join(f.draftsDir, f.slug, 'assets', DEVTO_MAIN_IMAGE.filename);
     const medium = join(f.draftsDir, f.slug, 'assets', MEDIUM_FEATURED_IMAGE.filename);
-    const substack = join(f.draftsDir, f.slug, 'assets', SUBSTACK_HEADER_IMAGE.filename);
+    const substack = join(f.draftsDir, f.slug, 'assets', SUBSTACK_PREVIEW_IMAGE.filename);
+    await expectDimensions(devto, 1000, 420);
     await expectDimensions(medium, 1200, 675);
-    await expectDimensions(substack, 1100, 220);
-    expect(result.images.map((i) => i.source)).toEqual(['devto_main_image', 'devto_main_image']);
+    await expectDimensions(substack, 1200, 630);
+    expect(result.images.map((i) => i.source)).toEqual([
+      'fallback-template',
+      'fallback-template',
+      'fallback-template',
+    ]);
 
     const fm = parseFrontmatter(readFileSync(join(f.draftsDir, f.slug, 'index.mdx'), 'utf-8'));
+    expect(fm.devto_main_image).toBe('./assets/devto-cover.png');
     expect(fm.medium_featured_image).toBe('./assets/medium-featured.png');
-    expect(fm.substack_header_image).toBe('./assets/substack-header.png');
+    expect(fm.substack_preview_image).toBe('./assets/substack-preview.png');
     expect(existsSync(join(f.draftsDir, f.slug, '.platform-images.json'))).toBe(true);
   });
 
-  it('generates both PNGs from the deterministic fallback when no source image exists', async () => {
-    const f = setup('fallback');
+  it('upgrades the legacy generated WebP Dev.to cover to the shared article-card PNG', async () => {
+    const f = setup('existing-devto', ['devto_main_image: assets/devto-cover.webp']);
+    await writeWebpImage(join(f.draftsDir, f.slug, 'assets', 'devto-cover.webp'), 1000, 420);
 
-    await ensurePlatformImages(f.slug, makeConfig(), { draftsDir: f.draftsDir });
+    const result = await ensurePlatformImages(f.slug, makeConfig(), { draftsDir: f.draftsDir });
 
+    const fm = parseFrontmatter(readFileSync(join(f.draftsDir, f.slug, 'index.mdx'), 'utf-8'));
+    expect(fm.devto_main_image).toBe('./assets/devto-cover.png');
+    expect(result.images.map((i) => i.source)).toEqual([
+      'fallback-template',
+      'fallback-template',
+      'fallback-template',
+    ]);
+    await expectDimensions(join(f.draftsDir, f.slug, 'assets', 'devto-cover.png'), 1000, 420);
     await expectDimensions(join(f.draftsDir, f.slug, 'assets', 'medium-featured.png'), 1200, 675);
-    await expectDimensions(join(f.draftsDir, f.slug, 'assets', 'substack-header.png'), 1100, 220);
+    await expectDimensions(join(f.draftsDir, f.slug, 'assets', 'substack-preview.png'), 1200, 630);
+  });
+
+  it('preserves custom WebP Dev.to covers', async () => {
+    const f = setup('custom-devto-webp', ['devto_main_image: assets/custom-devto.webp']);
+    await writeWebpImage(join(f.draftsDir, f.slug, 'assets', 'custom-devto.webp'), 1000, 420);
+
+    const result = await ensurePlatformImages(f.slug, makeConfig(), { draftsDir: f.draftsDir });
+
+    const fm = parseFrontmatter(readFileSync(join(f.draftsDir, f.slug, 'index.mdx'), 'utf-8'));
+    expect(fm.devto_main_image).toBe('./assets/custom-devto.webp');
+    expect(result.images[0].source).toBe('configured-platform-image');
   });
 
   it('preserves explicit platform image URLs without rewriting frontmatter', async () => {
     const f = setup('external-urls', [
+      'devto_main_image: "https://cdn.example.com/posts/devto.png"',
       'medium_featured_image: "https://cdn.example.com/posts/medium.png"',
-      'substack_header_image: "https://cdn.example.com/posts/substack.png"',
+      'substack_preview_image: "https://cdn.example.com/posts/substack.png"',
     ]);
     const draftPath = join(f.draftsDir, f.slug, 'index.mdx');
     const originalMdx = readFileSync(draftPath, 'utf-8');
@@ -139,9 +178,11 @@ describe('ensurePlatformImages', () => {
     expect(result.images.map((i) => i.source)).toEqual([
       'configured-platform-url',
       'configured-platform-url',
+      'configured-platform-url',
     ]);
-    expect(result.images[0].public_url).toBe('https://cdn.example.com/posts/medium.png');
-    expect(result.images[1].public_url).toBe('https://cdn.example.com/posts/substack.png');
+    expect(result.images[0].public_url).toBe('https://cdn.example.com/posts/devto.png');
+    expect(result.images[1].public_url).toBe('https://cdn.example.com/posts/medium.png');
+    expect(result.images[2].public_url).toBe('https://cdn.example.com/posts/substack.png');
     expect(readFileSync(draftPath, 'utf-8')).toBe(originalMdx);
     expect(readdirSync(join(f.draftsDir, f.slug, 'assets'))).toEqual([]);
   });
@@ -152,9 +193,10 @@ describe('ensurePlatformImages', () => {
     ['medium_featured_image', '/tmp/cover.png'],
     ['medium_featured_image', 'assets/../cover.png'],
     ['medium_featured_image', 'assets/nested/cover.png'],
-    ['substack_header_image', 'file:///tmp/cover.png'],
-    ['substack_header_image', 'data:image/png;base64,abc'],
-    ['substack_header_image', 'assets\\cover.png'],
+    ['substack_preview_image', 'file:///tmp/cover.png'],
+    ['substack_preview_image', 'data:image/png;base64,abc'],
+    ['substack_preview_image', 'assets\\cover.png'],
+    ['substack_header_image', 'assets\\legacy-cover.png'],
   ])('rejects unsafe %s value %s', async (field, value) => {
     const f = setup('unsafe', [`${field}: "${value}"`]);
 
@@ -163,12 +205,12 @@ describe('ensurePlatformImages', () => {
   });
 
   it('rejects unsafe platform fields before writing generated assets or receipts', async () => {
-    const f = setup('unsafe-no-writes', ['substack_header_image: "../bad.png"']);
+    const f = setup('unsafe-no-writes', ['substack_preview_image: "../bad.png"']);
     const draftPath = join(f.draftsDir, f.slug, 'index.mdx');
     const originalMdx = readFileSync(draftPath, 'utf-8');
 
     await expect(ensurePlatformImages(f.slug, makeConfig(), { draftsDir: f.draftsDir }))
-      .rejects.toThrow(/substack_header_image/);
+      .rejects.toThrow(/substack_preview_image/);
 
     expect(readdirSync(join(f.draftsDir, f.slug, 'assets'))).toEqual([]);
     expect(existsSync(join(f.draftsDir, f.slug, '.platform-images.json'))).toBe(false);
@@ -177,51 +219,89 @@ describe('ensurePlatformImages', () => {
 
   it('keeps valid explicit platform image assets and normalizes draft-relative frontmatter', async () => {
     const f = setup('explicit', [
+      'devto_main_image: assets/custom-devto.png',
       'medium_featured_image: assets/custom-medium.png',
-      'substack_header_image: ./assets/custom-substack.png',
+      'substack_preview_image: ./assets/custom-substack.png',
     ]);
+    await writeImage(join(f.draftsDir, f.slug, 'assets', 'custom-devto.png'), 1000, 420);
     await writeImage(join(f.draftsDir, f.slug, 'assets', 'custom-medium.png'), 1200, 675);
-    await writeImage(join(f.draftsDir, f.slug, 'assets', 'custom-substack.png'), 1100, 220);
+    await writeImage(join(f.draftsDir, f.slug, 'assets', 'custom-substack.png'), 1200, 630);
 
     const result = await ensurePlatformImages(f.slug, makeConfig(), { draftsDir: f.draftsDir });
 
     expect(result.images.every((i) => i.generated === false)).toBe(true);
     const fm = parseFrontmatter(readFileSync(join(f.draftsDir, f.slug, 'index.mdx'), 'utf-8'));
+    expect(fm.devto_main_image).toBe('./assets/custom-devto.png');
     expect(fm.medium_featured_image).toBe('./assets/custom-medium.png');
-    expect(fm.substack_header_image).toBe('./assets/custom-substack.png');
+    expect(fm.substack_preview_image).toBe('./assets/custom-substack.png');
   });
 
-  it('keeps valid explicit platform image assets when they use default filenames', async () => {
+  it('refreshes generator-owned default filenames in draft phase', async () => {
     const f = setup('explicit-defaults', [
+      'devto_main_image: ./assets/devto-cover.png',
       'medium_featured_image: ./assets/medium-featured.png',
-      'substack_header_image: ./assets/substack-header.png',
+      'substack_preview_image: ./assets/substack-preview.png',
     ]);
+    const devtoPath = join(f.draftsDir, f.slug, 'assets', 'devto-cover.png');
     const mediumPath = join(f.draftsDir, f.slug, 'assets', 'medium-featured.png');
-    const substackPath = join(f.draftsDir, f.slug, 'assets', 'substack-header.png');
+    const substackPath = join(f.draftsDir, f.slug, 'assets', 'substack-preview.png');
+    await writeImage(devtoPath, 1000, 420, '#111111');
     await writeImage(mediumPath, 1200, 675, '#112233');
-    await writeImage(substackPath, 1100, 220, '#445566');
+    await writeImage(substackPath, 1200, 630, '#445566');
+    const devtoBefore = readFileSync(devtoPath);
     const mediumBefore = readFileSync(mediumPath);
     const substackBefore = readFileSync(substackPath);
 
     const result = await ensurePlatformImages(f.slug, makeConfig(), { draftsDir: f.draftsDir });
 
+    expect(result.images.every((i) => i.generated === true)).toBe(true);
+    expect(readFileSync(devtoPath)).not.toEqual(devtoBefore);
+    expect(readFileSync(mediumPath)).not.toEqual(mediumBefore);
+    expect(readFileSync(substackPath)).not.toEqual(substackBefore);
+  });
+
+  it('keeps default filename assets untouched during publish-phase verification', async () => {
+    const f = setup('explicit-defaults-publish', [
+      'devto_main_image: ./assets/devto-cover.png',
+      'medium_featured_image: ./assets/medium-featured.png',
+      'substack_preview_image: ./assets/substack-preview.png',
+    ]);
+    const devtoPath = join(f.draftsDir, f.slug, 'assets', 'devto-cover.png');
+    const mediumPath = join(f.draftsDir, f.slug, 'assets', 'medium-featured.png');
+    const substackPath = join(f.draftsDir, f.slug, 'assets', 'substack-preview.png');
+    await writeImage(devtoPath, 1000, 420, '#111111');
+    await writeImage(mediumPath, 1200, 675, '#112233');
+    await writeImage(substackPath, 1200, 630, '#445566');
+    const devtoBefore = readFileSync(devtoPath);
+    const mediumBefore = readFileSync(mediumPath);
+    const substackBefore = readFileSync(substackPath);
+
+    const result = await ensurePlatformImages(f.slug, makeConfig(), {
+      draftsDir: f.draftsDir,
+      updateFrontmatter: false,
+      writeReceipt: false,
+    });
+
     expect(result.images.every((i) => i.generated === false)).toBe(true);
+    expect(readFileSync(devtoPath)).toEqual(devtoBefore);
     expect(readFileSync(mediumPath)).toEqual(mediumBefore);
     expect(readFileSync(substackPath)).toEqual(substackBefore);
   });
 
-  it('handles devto_main_image pointing at a default output path without same-file write errors', async () => {
-    const f = setup('same-path-source', ['devto_main_image: ./assets/medium-featured.png']);
-    const sourcePath = join(f.draftsDir, f.slug, 'assets', 'medium-featured.png');
-    await writeImage(sourcePath, 1600, 900, '#778899');
+  it('keeps a valid explicit Dev.to image from being reused as the Medium or Substack output', async () => {
+    const f = setup('separate-platform-outputs', ['devto_main_image: ./assets/devto-cover.png']);
+    const sourcePath = join(f.draftsDir, f.slug, 'assets', 'devto-cover.png');
+    await writeImage(sourcePath, 1000, 420, '#778899');
 
     await ensurePlatformImages(f.slug, makeConfig(), { draftsDir: f.draftsDir });
 
-    await expectDimensions(sourcePath, 1200, 675);
-    await expectDimensions(join(f.draftsDir, f.slug, 'assets', 'substack-header.png'), 1100, 220);
+    await expectDimensions(sourcePath, 1000, 420);
+    await expectDimensions(join(f.draftsDir, f.slug, 'assets', 'medium-featured.png'), 1200, 675);
+    await expectDimensions(join(f.draftsDir, f.slug, 'assets', 'substack-preview.png'), 1200, 630);
     expect(readdirSync(join(f.draftsDir, f.slug, 'assets')).sort()).toEqual([
+      'devto-cover.png',
       'medium-featured.png',
-      'substack-header.png',
+      'substack-preview.png',
     ]);
   });
 
@@ -240,7 +320,7 @@ describe('ensurePlatformImages', () => {
     await ensurePlatformImages(f.slug, makeConfig(), { draftsDir: f.draftsDir });
 
     const assetNames = readdirSync(join(f.draftsDir, f.slug, 'assets')).sort();
-    expect(assetNames).toEqual(['medium-featured.png', 'substack-header.png']);
+    expect(assetNames).toEqual(['devto-cover.png', 'medium-featured.png', 'substack-preview.png']);
   });
 
   it('keeps fallback labels config-derived rather than hardcoded', () => {

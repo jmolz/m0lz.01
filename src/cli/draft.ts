@@ -516,7 +516,7 @@ export function registerDraft(program: Command): void {
 
   draft
     .command('platform-images <slug>')
-    .description('Generate Medium and Substack platform images for a draft')
+    .description('Generate Dev.to, Medium, and Substack platform images for a draft')
     .action((slug: string) => {
       return runDraftPlatformImages(slug);
     });

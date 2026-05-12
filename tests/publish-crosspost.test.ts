@@ -69,7 +69,10 @@ function mdxWithDevToMainImage(value: string): string {
   );
 }
 
-function mdxWithPlatformImage(field: 'medium_featured_image' | 'substack_header_image', value: string): string {
+function mdxWithPlatformImage(
+  field: 'medium_featured_image' | 'substack_preview_image' | 'substack_header_image',
+  value: string,
+): string {
   return SAMPLE_MDX.replace(
     'canonical: "https://m0lz.dev/writing/sample"',
     `canonical: "https://m0lz.dev/writing/sample"\n${field}: "${value}"`,
@@ -605,12 +608,22 @@ describe('generateSubstackPaste', () => {
     // Substack layout: H1 then H2 (distinct from Medium's H1 + paragraph).
     expect(content).toMatch(/^# Sample Post\n\n## A one-line description/);
     expect(content).toContain(
-      '![Sample Post Substack header](https://m0lz.dev/writing/sspost/assets/substack-header.png)',
+      '![Sample Post Substack preview image](https://m0lz.dev/writing/sspost/assets/substack-preview.png)',
     );
-    expect(content.indexOf('substack-header.png')).toBeLessThan(content.indexOf('# Heading'));
+    expect(content.indexOf('substack-preview.png')).toBeLessThan(content.indexOf('# Heading'));
   });
 
-  it('uses a safe explicit Substack header image field when present', () => {
+  it('uses a safe explicit Substack preview image field when present', () => {
+    const f = setup('sspost', mdxWithPlatformImage('substack_preview_image', './assets/custom-preview.png'));
+    generateSubstackPaste('sspost', makeConfig(), {
+      draftsDir: f.draftsDir,
+      socialDir: f.socialDir,
+    });
+    const content = readFileSync(join(f.socialDir, 'sspost', 'substack-paste.md'), 'utf-8');
+    expect(content).toContain('https://m0lz.dev/writing/sspost/assets/custom-preview.png');
+  });
+
+  it('keeps legacy Substack header image fields readable for old drafts', () => {
     const f = setup('sspost', mdxWithPlatformImage('substack_header_image', './assets/custom-header.png'));
     generateSubstackPaste('sspost', makeConfig(), {
       draftsDir: f.draftsDir,
