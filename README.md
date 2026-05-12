@@ -280,7 +280,7 @@ blog draft init <slug>
 blog draft show <slug>
 blog draft validate <slug>
 blog draft add-asset <slug> --path <file> --type excalidraw|chart|image
-blog draft platform-images <slug>              # generate Medium/Substack PNG assets
+blog draft platform-images <slug>              # generate Dev.to/Medium/Substack PNG assets
 blog draft regenerate-frontmatter <slug> [--project <id>]
 blog draft complete <slug>                      # → evaluate phase
 
@@ -328,9 +328,11 @@ an unapproved plan, a re-approved plan (hash mismatch), a plan from a different
 workspace, or a plan whose step list tries to nest `blog agent *` calls.
 
 `blog draft platform-images` writes deterministic local distribution images to
-`.blog-agent/drafts/<slug>/assets/`: `medium-featured.png` (`1200x675`) and
-`substack-header.png` (`1100x220`). It updates draft frontmatter with
-`medium_featured_image` and `substack_header_image`; later `site-pr` /
+`.blog-agent/drafts/<slug>/assets/`: `devto-cover.png` (`1000x420`),
+`medium-featured.png` (`1200x675`), and `substack-preview.png` (`1200x630`).
+All three use the same article-card framework with platform-specific
+dimensions. The command updates draft frontmatter with `devto_main_image`,
+`medium_featured_image`, and `substack_preview_image`; later `site-pr` /
 `site-update` verifies those fields without rewriting the evaluated draft.
 
 ---

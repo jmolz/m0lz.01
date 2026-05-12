@@ -69,6 +69,7 @@ describe('guidance docs', () => {
       'substack_url',
       'devto_main_image',
       'medium_featured_image',
+      'substack_preview_image',
       'substack_header_image',
       'unpublished_at',
       'updated_at',
@@ -90,7 +91,7 @@ describe('guidance docs', () => {
       'blog draft platform-images <slug>',
       'config.site.base_url',
       'config.author.github',
-      'same-path source/output',
+      'same fallback SVG article-card framework',
     ]) {
       expect(codexRule).toContain(required);
     }

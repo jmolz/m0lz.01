@@ -15,7 +15,7 @@ Rules for the publish layer (`src/core/publish/**`, `src/cli/publish.ts`). These
 Forensic anchors:
 - `src/core/publish/site.ts` calls `ensurePlatformImages(..., { updateFrontmatter: false, writeReceipt: false })` before branch checkout and asset copy.
 - `tests/publish-site.test.ts` asserts `createSitePR` keeps the source draft byte-for-byte unchanged and does not write `.platform-images.json`.
-- Missing `medium_featured_image` or `substack_header_image` during publish is an actionable draft-phase error, not permission for `site-pr` to serialize new frontmatter.
+- Missing `devto_main_image`, `medium_featured_image`, or `substack_preview_image` during publish is an actionable draft-phase error, not permission for `site-pr` to serialize new frontmatter.
 
 ## Platform image references have distinct modes
 
@@ -35,4 +35,4 @@ The fallback SVG may display site/author labels, but those labels must come from
 
 Forensic anchors:
 - `tests/platform-images.test.ts` verifies fallback labels are config-derived.
-- `src/core/publish/platform-images.ts` writes same-path source/output transforms through a temp file before `renameSync`; direct Sharp same-file writes fail.
+- `src/core/publish/platform-images.ts` renders Dev.to, Medium, and Substack from the same fallback SVG article-card framework with platform-specific dimensions.

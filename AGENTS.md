@@ -349,7 +349,8 @@ interface PostFrontmatter {
   devto_url?: string      // Populated after cross-post
   devto_main_image?: string // Optional Dev.to cover URL or draft asset path
   medium_featured_image?: string // Optional Medium featured image URL or draft asset path
-  substack_header_image?: string // Optional Substack header/banner URL or draft asset path
+  substack_preview_image?: string // Optional Substack article preview URL or draft asset path
+  substack_header_image?: string // Legacy per-article Substack header/banner field; global email banner lives outside post frontmatter
   // Phase 7 additions — optional, appear after `published` when present.
   // The site repo's frontmatter parser must accept these without erroring.
   // Round-trip proof (serialize → parse preserves every field) lives in
