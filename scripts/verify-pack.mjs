@@ -32,6 +32,7 @@ const ALLOWED_PATTERNS = [
   /^\.blogrc\.example\.yaml$/,
   /^\.env\.example$/,
   /^branch-mark\.svg$/,
+  /^readme-quickstart\.gif$/,
   /^LICENSE$/,
   /^README\.md$/,
   /^package\.json$/,
@@ -63,11 +64,13 @@ const FORBIDDEN_PATTERNS = [
 //   templates/social/linkedin.md       — read by src/core/publish/social.ts
 //   templates/social/hackernews.md     — read by src/core/publish/social.ts
 //   templates/draft/template.mdx       — consumed by /blog-draft skill
+//   readme-quickstart.gif              — referenced by README.md
 //   package.json / LICENSE / README.md — standard npm package surface
 const REQUIRED_FILES = [
   'package.json',
   'LICENSE',
   'README.md',
+  'readme-quickstart.gif',
   '.blogrc.example.yaml',
   '.env.example',
   'dist/cli/index.js',

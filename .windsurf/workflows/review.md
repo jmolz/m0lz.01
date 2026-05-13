@@ -402,7 +402,7 @@ npm test
 npm run build
 ```
 
-Expected baseline: **0 TypeScript errors, 975 tests passing across 73 suites, clean build**. v0.3 dogfood-hardening added +43 tests across +5 new suites — `research-project-linking` (15), `publish-origin-divergence` (6), `publish-seed-on-start` (4), `preview-gate-urls` (9), `draft-regenerate-frontmatter` (9) — plus +8 tests in `draft-frontmatter.test.ts` for companion_repo resolution. Medium/Substack platform images added `platform-images` coverage and expanded draft/crosspost coverage. Any drift from this baseline is a signal to investigate before merging.
+Expected baseline: **0 TypeScript errors, 981 tests passing across 73 suites, clean build**. v0.3 dogfood-hardening added +43 tests across +5 new suites — `research-project-linking` (15), `publish-origin-divergence` (6), `publish-seed-on-start` (4), `preview-gate-urls` (9), `draft-regenerate-frontmatter` (9) — plus +8 tests in `draft-frontmatter.test.ts` for companion_repo resolution. Medium/Substack platform images added `platform-images` coverage and expanded draft/crosspost coverage. Any drift from this baseline is a signal to investigate before merging.
 
 ## Phase 3: Code Review of Current Changes
 
@@ -557,7 +557,7 @@ v0.3 Dogfood Hardening:
   - Plugin static shape + SKILL discipline + sibling-doc parity + install-docs (22 tests): PASS / FAIL
   - Real skill-to-CLI handoff end-to-end + crash recovery + workspace pinning (25 tests): PASS / FAIL
 
-Full Suite: X passing, Y failing  (baseline: 975 passing across 73 suites)
+Full Suite: X passing, Y failing  (baseline: 981 passing across 73 suites)
 Lint: {error count} errors  (baseline: 0)
 Build: PASS / FAIL
 ```

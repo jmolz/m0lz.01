@@ -241,7 +241,7 @@ const resolvedPath = resolve(dirname(configPath), rawPath);
 - **Framework**: Vitest
 - **Location**: `tests/*.test.ts`
 - **Run**: `npm test`
-- **Baseline**: 975 tests across 73 suites. Keep the regression-suite inventory in `.agents/skills/source-command-review/SKILL.md` and `.windsurf/workflows/review.md` in sync when adding tests.
+- **Baseline**: 981 tests across 73 suites. Keep the regression-suite inventory in `.agents/skills/source-command-review/SKILL.md` and `.windsurf/workflows/review.md` in sync when adding tests.
 - **Minimum**: Each module needs: 1 happy path, 1 edge case, 1 error case
 - **DB tests**: Use in-memory SQLite (`getDatabase(':memory:')`)
 - **File tests**: Use `mkdtemp` for temporary directories, clean up in `afterEach`

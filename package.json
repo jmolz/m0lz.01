@@ -12,6 +12,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "tsc --noEmit",
+    "media:readme": "node scripts/generate-readme-demo-gif.mjs",
     "verify-pack": "node scripts/verify-pack.mjs",
     "prepublishOnly": "npm run lint && npm run build && npm test && npm run verify-pack"
   },
@@ -45,6 +46,7 @@
     ".blogrc.example.yaml",
     ".env.example",
     "branch-mark.svg",
+    "readme-quickstart.gif",
     "LICENSE",
     "README.md"
   ],
