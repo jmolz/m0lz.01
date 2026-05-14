@@ -92,6 +92,12 @@ describe('guidance docs', () => {
       'config.site.base_url',
       'config.author.github',
       'same fallback SVG article-card framework',
+      'origin/main..HEAD',
+      'before it mutates files',
+      'stacking a second commit',
+      'fixed manifest paths',
+      'recalculate every recorded SHA256',
+      'tampered bytes beside stale provenance',
     ]) {
       expect(codexRule).toContain(required);
     }
