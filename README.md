@@ -10,16 +10,13 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/jmolz/m0lz.01/actions/workflows/ci.yml">
-    <img alt="CI" src="https://github.com/jmolz/m0lz.01/actions/workflows/ci.yml/badge.svg">
-  </a>
-  <a href="https://www.npmjs.com/package/m0lz-01">
-    <img alt="npm version" src="https://img.shields.io/npm/v/m0lz-01">
-  </a>
-  <img alt="Node.js >=20.3.0" src="https://img.shields.io/badge/node-%3E%3D20.3.0-339933">
-  <a href="./LICENSE">
-    <img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue">
-  </a>
+  <a href="https://github.com/jmolz/m0lz.01/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/jmolz/m0lz.01/ci.yml?branch=main&style=flat-square&label=ci&labelColor=404040&color=171717"></a>
+  &nbsp;
+  <a href="https://www.npmjs.com/package/m0lz-01"><img alt="npm version" src="https://img.shields.io/npm/v/m0lz-01?style=flat-square&label=npm&labelColor=404040&color=171717"></a>
+  &nbsp;
+  <a href="https://www.npmjs.com/package/m0lz-01"><img alt="Node.js version" src="https://img.shields.io/node/v/m0lz-01?style=flat-square&label=node&labelColor=404040&color=171717"></a>
+  &nbsp;
+  <a href="./LICENSE"><img alt="License: MIT" src="https://img.shields.io/github/license/jmolz/m0lz.01?style=flat-square&labelColor=404040&color=171717"></a>
 </p>
 
 <p align="center">
