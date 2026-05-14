@@ -33,6 +33,10 @@ Content goes to a hub site (canonical URL, your choice of domain) with Dev.to (c
 
 Runs locally. No server, no SaaS. The mechanical pipeline is the standalone `blog` CLI; AI-heavy authoring can run from Claude Code or Codex, with Codex also serving the adversarial and methodology reviewer roles.
 
+<p align="center">
+  <img src="readme-system-map.png" width="920" alt="Diagram showing Codex commands, the Claude /blog skill, and the standalone blog CLI flowing through a CLI safety boundary into a shared local workspace, then publishing through the m0lz.00 hub to Dev.to, Medium and Substack, project READMEs, LinkedIn, and Hacker News.">
+</p>
+
 ---
 
 ## Prerequisites
