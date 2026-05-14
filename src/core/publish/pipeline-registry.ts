@@ -8,7 +8,8 @@ import { generateSubstackPaste } from './substack.js';
 import { pushCompanionRepo } from './repo.js';
 import { updateFrontmatter } from './frontmatter.js';
 import { updateProjectReadme } from './readme.js';
-import { generateSocialText } from './social.js';
+import { loadDistributionKit } from './distribution-kit.js';
+import { persistDistributionKitToSite } from './site-artifacts.js';
 import { getOpenUpdateCycle } from '../update/cycles.js';
 
 // Ordered list of all 11 publish pipeline steps. Each step's execute
@@ -117,6 +118,8 @@ export const PIPELINE_STEPS: StepDefinition[] = [
         researchPagesDir: ctx.paths.researchPagesDir,
         publishDir: ctx.paths.publishDir,
         configPath: ctx.paths.configPath,
+        socialDir: ctx.paths.socialDir,
+        templatesDir: ctx.paths.templatesDir,
       }, ctx.db, { allowMainAhead: ctx.allowMainAhead });
       return {
         outcome: 'completed',
@@ -146,6 +149,8 @@ export const PIPELINE_STEPS: StepDefinition[] = [
         researchPagesDir: ctx.paths.researchPagesDir,
         publishDir: ctx.paths.publishDir,
         configPath: ctx.paths.configPath,
+        socialDir: ctx.paths.socialDir,
+        templatesDir: ctx.paths.templatesDir,
       }, ctx.db);
       return {
         outcome: 'completed',
@@ -319,19 +324,35 @@ export const PIPELINE_STEPS: StepDefinition[] = [
     },
   },
 
-  // Step 11: social-text — generate LinkedIn + Hacker News paste text.
+  // Step 11: social-text — persist the already-generated distribution kit.
   {
     number: 11,
     name: 'social-text',
     execute: (ctx: PipelineContext): StepResult => {
-      const result = generateSocialText(ctx.slug, ctx.config, {
+      if (ctx.config.social.distribution_kit.enabled === false) {
+        return {
+          outcome: 'skipped',
+          message: 'Distribution kit disabled in config (social.distribution_kit.enabled=false)',
+        };
+      }
+      const kit = loadDistributionKit(ctx.slug, {
         socialDir: ctx.paths.socialDir,
-        templatesDir: ctx.paths.templatesDir,
         draftsDir: ctx.paths.draftsDir,
-      }, ctx.db);
+      });
+      if (ctx.config.social.distribution_kit.persist_to_site === false) {
+        return {
+          outcome: 'skipped',
+          message: `Distribution kit left local only: ${kit.directory}`,
+        };
+      }
+      const result = persistDistributionKitToSite(ctx.slug, ctx.config, {
+        configPath: ctx.paths.configPath,
+      }, kit);
       return {
         outcome: 'completed',
-        message: `Social text generated: ${result.linkedinPath}, ${result.hackerNewsPath}`,
+        message: result.updated
+          ? `Distribution kit persisted: ${result.paths.join(', ')}`
+          : (result.reason ?? 'Distribution kit already current'),
       };
     },
   },

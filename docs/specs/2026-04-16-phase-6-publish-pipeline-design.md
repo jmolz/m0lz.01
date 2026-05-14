@@ -51,7 +51,7 @@ is a single command instead of a 10-step manual process.
 | 8 | `companion-repo` | repo.ts | `gh repo view` probe then `gh repo create --source=. --push` if missing | `gh` CLI | Skip if no companion repo |
 | 9 | `update-frontmatter` | frontmatter.ts | Update frontmatter with platform URLs, direct push to main of site repo | Local git | Hard fail |
 | 10 | `update-readme` | readme.ts | Add writing link to project README, direct push to main | Local git | Skip if no `project` field |
-| 11 | `social-text` | social.ts | Generate LinkedIn + HN text files | No | None (always succeeds) |
+| 11 | `social-text` | distribution-kit.ts + site-artifacts.ts | Persist already-generated durable distribution kit to the hub repo | Local git | Hard fail on dirty/wrong-origin site repo |
 
 **Key ordering decisions:**
 - `research-page` (step 2) runs BEFORE `site-pr` so the research page ships in the same PR as the draft. One atomic review.
@@ -141,20 +141,34 @@ Cross-posts and paste-ready files need clean Markdown, not MDX. The converter:
 
 ## Social Text Generation
 
+The current publish flow generates a durable distribution kit locally before
+`site-pr` / `site-update` mutates the site repo, then uses `social-text` as a
+post-preview persist-only step. The split is intentional: required LinkedIn
+image generation fails before site checkout/copy/commit/push/PR, while the
+final step only copies inspected artifacts to `content/posts/{slug}/distribution/`.
+
 ### LinkedIn
 
-- **Output**: `.blog-agent/social/{slug}/linkedin.md`
-- **Format**: Professional summary, key takeaway (benchmark data when applicable), canonical URL, hashtags
+- **Output**: `.blog-agent/social/{slug}/linkedin.md` and `content/posts/{slug}/distribution/linkedin.md`
+- **Format**: Professional summary, shipped/update summary, canonical URL, image or prompt path, alt text, hashtags
+- **Image**: optional GPT Image 2 fixed PNG at `assets/linkedin-feed.png`; default mode is `prompt-only`
 - **Timing**: Include posting recommendation (Tuesday-Thursday, morning)
 - **No emojis** (m0lz.00 design constraint)
 
 ### Hacker News
 
-- **Output**: `.blog-agent/social/{slug}/hackernews.md`
+- **Output**: `.blog-agent/social/{slug}/hackernews.md` and `content/posts/{slug}/distribution/hackernews.md`
 - **Title**: 80 character limit; "Show HN:" prefix for `project-launch` type only
 - **URL**: Canonical URL
 - **First comment**: Context summary, key findings, companion repo link
 - **Timing**: Include posting recommendation (Tuesday-Thursday, 9-11am ET)
+
+### Distribution Kit Manifest
+
+- **Output**: `.blog-agent/social/{slug}/manifest.json`, persisted to `content/posts/{slug}/distribution/manifest.json`
+- **Hashes**: input hash plus SHA256 for LinkedIn, HN, prompt, and optional image
+- **Provenance**: source mode (`publish`, `update`, `backfill`), GPT Image 2 model (`gpt-image-2-2026-04-21` by default), size, quality, fixed `png` format, and image mode
+- **Backfill**: `blog publish distribution-kit <slug> [--commit-site] [--image-mode off|prompt-only|generate|required] [--force]`
 
 ---
 
@@ -193,7 +207,10 @@ src/core/publish/
   frontmatter.ts      Step 8: Update frontmatter with platform URLs
   readme.ts           Step 9: Update project README
   research-page.ts    Step 10: Generate research page MDX
-  social.ts           Step 11: LinkedIn + HN text generation
+  distribution-kit.ts Step 11 inputs: local kit, metadata resolver, manifest, GPT Image 2 prompt
+  openai-image.ts     Small fetch-based GPT Image 2 provider
+  site-artifacts.ts   Strict direct-site persistence for distribution artifacts
+  social.ts           Legacy LinkedIn + HN text helpers
   convert.ts          MDX to Markdown converter
 
 src/cli/publish.ts    CLI commands (blog publish, blog publish show)
@@ -214,6 +231,8 @@ tests/
   publish-site.test.ts
   publish-crosspost.test.ts
   publish-social.test.ts
+  distribution-kit.test.ts
+  publish-distribution-kit.test.ts
   publish-research-page.test.ts
   publish-convert.test.ts
   publish-cli.test.ts

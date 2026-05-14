@@ -1,11 +1,11 @@
 ---
 name: blog-publish
-description: Run or resume the 11-step publish pipeline that copies MDX + research page to the site repo PR, cross-posts to Dev.to, generates paste-ready Medium/Substack markdown, creates and pushes the companion repo, updates frontmatter and project README with platform URLs, and generates social text. Use when a post has passed evaluation and is ready to ship.
+description: Run or resume the 11-step publish pipeline that copies MDX + research page to the site repo PR, cross-posts to Dev.to, generates paste-ready Medium/Substack markdown, creates and pushes the companion repo, updates frontmatter and project README with platform URLs, and persists the durable distribution kit. Use when a post has passed evaluation and is ready to ship.
 ---
 
 # /blog-publish
 
-Coordinates the distribution fan-out for a post that has already cleared the three-reviewer evaluation gate. The CLI owns every mechanical operation — file copies, `gh pr create`, Dev.to API, direct pushes to main, social-text generation — so this skill is mostly a thin observer/operator of the pipeline and a decision-maker at the preview gate.
+Coordinates the distribution fan-out for a post that has already cleared the three-reviewer evaluation gate. The CLI owns every mechanical operation — file copies, `gh pr create`, Dev.to API, direct pushes to main, local distribution-kit generation, and post-preview artifact persistence — so this skill is mostly a thin observer/operator of the pipeline and a decision-maker at the preview gate.
 
 ## Preflight
 
@@ -15,6 +15,7 @@ Before running `blog publish start`, confirm:
 - `.blogrc.yaml` is present and loadable. Required fields used by the pipeline: `author.github`, `site.repo_path`, `site.base_url`, `site.content_dir`, `site.research_dir`.
 - `gh auth status` returns authenticated. The `site-pr` (step 3) and `companion-repo` (step 8) steps shell out to the `gh` CLI directly — install with `brew install gh` and `gh auth login` if not.
 - `DEVTO_API_KEY` is set in `.env` or `.env.local` (auto-loaded via `dotenv/config` at CLI entry). **Optional**: a missing key causes step 5 to fail — set `publish.devto: false` in `.blogrc.yaml` to pre-skip that step, or accept the step failure and fix + resume.
+- `social.linkedin_image.mode` is understood. `prompt-only` is default and never calls OpenAI. `generate` and `required` require `OPENAI_API_KEY` for GPT Image 2 (`gpt-image-2-2026-04-21`) and fail before any site checkout/copy/commit if unavailable.
 - If the post has `project_id` set and `config.projects[project_id]` resolves, the project repo at the resolved path must be a git repo with an `origin` remote pointing at GitHub (step 10 pushes directly to main).
 
 ## Workflow
@@ -38,16 +39,29 @@ Before running `blog publish start`, confirm:
 8. **companion-repo** — `technical-deep-dive` only: probes `gh repo view {author.github}/{slug}`; creates via `gh repo create --source=. --push` if missing; pushes the current contents if it exists. Skipped for `analysis-opinion` and `project-launch`.
 9. **update-frontmatter** — Direct push to main of the site repo: adds `published: true`, `canonical`, `devto_url`, `companion_repo` to the post's MDX frontmatter. Idempotent — re-running leaves the same content.
 10. **update-readme** — For posts with `project_id` set and a matching `config.projects[project_id]` entry: direct-pushes to main of the resolved project repo, adding `- [{title}]({canonical_url})` under the `## Writing` heading. Skipped if either condition is missing.
-11. **social-text** — Generates `.blog-agent/social/{slug}/linkedin.md` and `hackernews.md` from templates in `templates/social/`. Project-launch HN titles get the `Show HN:` prefix. Throws if any generated text contains emoji characters (design constraint).
+11. **social-text** — Persist-only step. It copies the already-generated local distribution kit from `.blog-agent/social/{slug}/` into `{content_dir}/{slug}/distribution/` and the optional fixed PNG image into `{content_dir}/{slug}/assets/linkedin-feed.png`. It must not call OpenAI or regenerate text.
 
 ## CLI Commands
 
 ```bash
 blog publish start <slug>    # Initialize or resume the pipeline
 blog publish show <slug>     # Display the step table
+blog publish distribution-kit <slug> [--commit-site] [--image-mode off|prompt-only|generate|required] [--force]
 ```
 
-The pipeline takes no flags — every knob lives in `.blogrc.yaml` (pre-skip booleans for each destination) or is derived from the post's content type.
+The main pipeline takes no flags except documented publish recovery flags; every destination knob lives in `.blogrc.yaml` or is derived from the post's content type. The `distribution-kit` backfill command is for already-published posts and uses hub repo frontmatter first, draft frontmatter second, and the DB row last.
+
+## Distribution Kit
+
+`site-pr` / `site-update` generate or reuse the local kit after platform-image verification and before mutating the site repo. Local outputs:
+
+- `.blog-agent/social/{slug}/linkedin.md`
+- `.blog-agent/social/{slug}/hackernews.md`
+- `.blog-agent/social/{slug}/linkedin-image-prompt.md`
+- `.blog-agent/social/{slug}/manifest.json`
+- `.blog-agent/drafts/{slug}/assets/linkedin-feed.png` when image mode is `generate` or `required`
+
+The manifest records input hash, artifact hashes, GPT Image 2 model/size/quality, fixed `png` format, source mode, and image mode. A matching manifest with matching artifact hashes is reused byte-for-byte unless `--force` is passed.
 
 ## Troubleshooting
 

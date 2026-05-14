@@ -71,6 +71,17 @@ author:
     expect(config.publish.devto).toBe(true);
     expect(config.evaluation.min_sources).toBe(3);
     expect(config.social.platforms).toEqual(['linkedin', 'hackernews']);
+    expect(config.social.distribution_kit).toEqual({
+      enabled: true,
+      persist_to_site: true,
+      directory: 'distribution',
+    });
+    expect(config.social.linkedin_image).toEqual({
+      mode: 'prompt-only',
+      model: 'gpt-image-2-2026-04-21',
+      size: '1200x1200',
+      quality: 'high',
+    });
     expect(config.site.content_dir).toBe('content/posts');
     expect(config.site.research_dir).toBe('content/research');
     expect(config.projects).toBeUndefined();
@@ -127,6 +138,35 @@ author:
 
     expect(config.unpublish.readme).toBe(false);
     expect(config.unpublish.devto).toBe(true);
+  });
+
+  it('honors partial social distribution-kit and LinkedIn image overrides', () => {
+    const config = validateConfig({
+      site: { repo_path: '../m0lz.00', base_url: 'https://m0lz.dev' },
+      author: { name: 'Test', github: 'test' },
+      social: {
+        distribution_kit: { persist_to_site: false },
+        linkedin_image: { mode: 'required', size: '1536x1024' },
+      },
+    });
+
+    expect(config.social.distribution_kit.enabled).toBe(true);
+    expect(config.social.distribution_kit.persist_to_site).toBe(false);
+    expect(config.social.distribution_kit.directory).toBe('distribution');
+    expect(config.social.linkedin_image.mode).toBe('required');
+    expect(config.social.linkedin_image.model).toBe('gpt-image-2-2026-04-21');
+    expect(config.social.linkedin_image.size).toBe('1536x1024');
+    expect(config.social.linkedin_image.quality).toBe('high');
+  });
+
+  it('rejects invalid LinkedIn image mode', () => {
+    expect(() => {
+      validateConfig({
+        site: { repo_path: '../m0lz.00', base_url: 'https://m0lz.dev' },
+        author: { name: 'Test', github: 'test' },
+        social: { linkedin_image: { mode: 'surprise' } },
+      });
+    }).toThrow(/social\.linkedin_image\.mode/);
   });
 
   it('accepts site.research_dir override', () => {

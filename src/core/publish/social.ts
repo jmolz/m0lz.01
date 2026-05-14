@@ -6,6 +6,7 @@ import Database from 'better-sqlite3';
 import { BlogConfig } from '../config/types.js';
 import { PostRow } from '../db/types.js';
 import { parseFrontmatter } from '../draft/frontmatter.js';
+import { renderHackerNewsText, renderLinkedInText, SocialMetadata } from './distribution-kit.js';
 
 // Step 11 of the publish pipeline: generate paste-ready social text for
 // LinkedIn and Hacker News. Templates live in `templates/social/` and are
@@ -40,19 +41,23 @@ export function containsEmoji(text: string): boolean {
   return EMOJI_PATTERN.test(text);
 }
 
-// Extract the first sentence from a description, capped at maxLen characters.
-// Falls back to truncation with ellipsis when no sentence boundary is found.
-function extractTakeaway(description: string, maxLen: number): string {
-  // Match the first sentence: text ending with a period, exclamation, or
-  // question mark followed by whitespace or end-of-string.
-  const sentenceMatch = description.match(/^[^.!?]*[.!?]/);
-  if (sentenceMatch && sentenceMatch[0].length <= maxLen) {
-    return sentenceMatch[0];
-  }
-  if (description.length <= maxLen) {
-    return description;
-  }
-  return description.slice(0, maxLen - 3) + '...';
+function metadataFromPost(
+  post: PostRow,
+  config: BlogConfig,
+  tags: string[],
+  repoUrl?: string,
+): SocialMetadata {
+  return {
+    slug: post.slug,
+    title: post.title ?? post.slug,
+    description: post.topic ?? '',
+    canonicalUrl: `${config.site.base_url.replace(/\/+$/, '')}/writing/${post.slug}`,
+    tags,
+    companionRepo: repoUrl ?? post.repo_url ?? null,
+    project: post.project_id ?? null,
+    contentType: post.content_type,
+    updateCycle: null,
+  };
 }
 
 export function generateLinkedIn(
@@ -68,23 +73,12 @@ export function generateLinkedIn(
   }
   const template = readFileSync(templatePath, 'utf-8');
 
-  const canonicalUrl = `${config.site.base_url}/writing/${post.slug}`;
-  const title = post.title ?? post.slug;
-  const description = post.topic ?? '';
-  const takeaway = extractTakeaway(description, 160);
-  const hashtags = tags.map((t) => `#${t}`).join(' ');
-
-  const timing = config.social.timing_recommendations
-    ? 'Best posting times: Tuesday-Thursday, 8-10am'
-    : '';
-
-  let content = template
-    .replace(/\{\{title\}\}/g, title)
-    .replace(/\{\{description\}\}/g, description)
-    .replace(/\{\{takeaway\}\}/g, takeaway)
-    .replace(/\{\{canonical_url\}\}/g, canonicalUrl)
-    .replace(/\{\{hashtags\}\}/g, hashtags)
-    .replace(/\{\{timing\}\}/g, timing);
+  const content = renderLinkedInText(
+    template,
+    metadataFromPost(post, config, tags),
+    config,
+    config.social.linkedin_image?.mode ?? 'prompt-only',
+  );
 
   if (containsEmoji(content)) {
     throw new Error(
@@ -114,33 +108,11 @@ export function generateHackerNews(
   }
   const template = readFileSync(templatePath, 'utf-8');
 
-  const canonicalUrl = `${config.site.base_url}/writing/${post.slug}`;
-  const rawTitle = post.title ?? post.slug;
-
-  // project-launch gets the "Show HN: " prefix per content type routing.
-  let hnTitle = post.content_type === 'project-launch'
-    ? `Show HN: ${rawTitle}`
-    : rawTitle;
-
-  // Truncate to 80 characters.
-  if (hnTitle.length > 80) {
-    hnTitle = hnTitle.slice(0, 77) + '...';
-  }
-
-  const description = post.topic ?? '';
-  const repoLine = repoUrl ?? 'n/a';
-  const firstComment = `${description}\n\nCompanion repo: ${repoLine}`;
-
-  const timing = config.social.timing_recommendations
-    ? 'Best posting times: Tuesday-Thursday, 8-10am'
-    : '';
-
-  let content = template
-    .replace(/\{\{title\}\}/g, hnTitle)
-    .replace(/\{\{canonical_url\}\}/g, canonicalUrl)
-    .replace(/\{\{first_comment\}\}/g, firstComment)
-    .replace(/\{\{repo_url\}\}/g, repoLine)
-    .replace(/\{\{timing\}\}/g, timing);
+  const content = renderHackerNewsText(
+    template,
+    metadataFromPost(post, config, [], repoUrl),
+    config,
+  );
 
   if (containsEmoji(content)) {
     throw new Error(

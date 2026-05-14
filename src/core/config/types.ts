@@ -67,9 +67,26 @@ export interface PublishConfig {
   research_pages: boolean;
 }
 
+export interface SocialDistributionKitConfig {
+  enabled: boolean;
+  persist_to_site: boolean;
+  directory: string;
+}
+
+export type LinkedInImageMode = 'off' | 'prompt-only' | 'generate' | 'required';
+
+export interface LinkedInImageConfig {
+  mode: LinkedInImageMode;
+  model: 'gpt-image-2-2026-04-21' | 'gpt-image-2' | string;
+  size: string;
+  quality: string;
+}
+
 export interface SocialConfig {
   platforms: string[];
   timing_recommendations: boolean;
+  distribution_kit: SocialDistributionKitConfig;
+  linkedin_image: LinkedInImageConfig;
 }
 
 export interface EvaluationConfig {

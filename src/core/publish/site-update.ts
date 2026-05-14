@@ -47,6 +47,7 @@ export async function createSiteUpdate(
     branchName: `update/${slug}-cycle-${cycle.cycle_number}`,
     commitMessage: `chore(site): update ${slug} (cycle ${cycle.cycle_number})`,
     prTitle: `Update ${title} (cycle ${cycle.cycle_number})`,
+    publishMode: 'update',
     prBodyPrefix:
       `Automated update PR for ${slug} (cycle ${cycle.cycle_number}).\n\n` +
       (cycle.summary ? `Summary: ${cycle.summary}` : '(no summary provided)'),

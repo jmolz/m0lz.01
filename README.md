@@ -300,6 +300,8 @@ blog evaluate reject <slug>                     # → draft phase
 # Publish phase (11-step resumable pipeline)
 blog publish start <slug>                       # initialize OR resume
 blog publish show <slug>                        # per-step status table
+blog publish distribution-kit <slug> \
+  [--commit-site] [--image-mode off|prompt-only|generate|required] [--force]
 
 # Update an already-published post
 blog update start <slug> --summary "what changed"
@@ -338,6 +340,37 @@ All three use the same article-card framework with platform-specific
 dimensions. The command updates draft frontmatter with `devto_main_image`,
 `medium_featured_image`, and `substack_preview_image`; later `site-pr` /
 `site-update` verifies those fields without rewriting the evaluated draft.
+
+`blog publish start` and `blog update publish` also generate a durable
+distribution kit before the site repo is mutated. Local artifacts land in
+`.blog-agent/social/<slug>/`: `linkedin.md`, `hackernews.md`,
+`linkedin-image-prompt.md`, and `manifest.json`; generated LinkedIn feed
+images use the fixed PNG path `.blog-agent/drafts/<slug>/assets/linkedin-feed.png`.
+The `social-text` pipeline step is now persist-only: after the preview gate and
+URL/README updates, it copies the already-generated kit to
+`content/posts/<slug>/distribution/` and the optional image to
+`content/posts/<slug>/assets/linkedin-feed.png`.
+
+LinkedIn image generation is controlled by `.blogrc.yaml`:
+
+```yaml
+social:
+  distribution_kit:
+    enabled: true
+    persist_to_site: true
+    directory: "distribution"
+  linkedin_image:
+    mode: "prompt-only" # off | prompt-only | generate | required
+    model: "gpt-image-2-2026-04-21"
+    size: "1200x1200"
+    quality: "high"
+```
+
+`prompt-only` is the default and never calls OpenAI. `generate` and `required`
+use `OPENAI_API_KEY` with GPT Image 2 and fail before site checkout/copy/commit
+if image generation is unavailable. Use
+`blog publish distribution-kit <slug> --image-mode prompt-only` to backfill a
+published post without an image API call.
 
 ---
 
@@ -414,7 +447,7 @@ Validate:
 
 ```bash
 npm run lint          # tsc --noEmit
-npm test              # vitest run (981 tests across 73 files)
+npm test              # vitest run (new distribution-kit coverage included)
 npm run build         # clean + tsc
 npm run verify-pack   # four-layer packaging gate
 ```

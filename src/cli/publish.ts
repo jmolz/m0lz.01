@@ -17,6 +17,9 @@ import { PipelineContext } from '../core/publish/pipeline-types.js';
 import { PipelineStepRow, PublishUrls } from '../core/publish/types.js';
 import { computePreviewUrls } from '../core/publish/preview-urls.js';
 import { PostRow } from '../core/db/types.js';
+import { LinkedInImageMode } from '../core/config/types.js';
+import { generateDistributionKit } from '../core/publish/distribution-kit.js';
+import { persistDistributionKitToSite } from '../core/publish/site-artifacts.js';
 
 // CLI handlers for the publish phase. Mirrors the pattern in `evaluate.ts`
 // and `draft.ts`: `runPublishStart` and `runPublishShow` are exported and
@@ -57,6 +60,12 @@ export interface PublishCliPaths {
   // forwarded through PipelineContext. The flag is a plan-step arg so
   // the SHA256 plan hash binds operator consent (see site.ts).
   allowMainAhead?: boolean;
+}
+
+export interface PublishDistributionKitOptions {
+  commitSite?: boolean;
+  imageMode?: LinkedInImageMode;
+  force?: boolean;
 }
 
 function requireDb(dbPath: string): void {
@@ -450,6 +459,89 @@ export function runPublishShow(
   }
 }
 
+export async function runPublishDistributionKit(
+  slug: string,
+  opts: PublishDistributionKitOptions = {},
+  paths: PublishCliPaths = {},
+): Promise<void> {
+  try {
+    validateSlug(slug);
+  } catch (e) {
+    console.error((e as Error).message);
+    process.exitCode = 1;
+    return;
+  }
+
+  const dbPath = paths.dbPath ?? DB_PATH;
+  const configPath = paths.configPath ?? CONFIG_PATH;
+  const draftsDir = paths.draftsDir ?? DRAFTS_DIR;
+  const socialDir = paths.socialDir ?? SOCIAL_DIR;
+  const templatesDir = paths.templatesDir ?? TEMPLATES_DIR;
+  requireDb(dbPath);
+
+  if (!existsSync(configPath)) {
+    console.error(`Config not found: ${configPath}. Run 'blog init' first.`);
+    process.exit(1);
+  }
+
+  let config;
+  try {
+    config = loadConfig(configPath);
+  } catch (e) {
+    console.error((e as Error).message);
+    process.exit(1);
+  }
+
+  const db = getDatabase(dbPath);
+  try {
+    const post = db
+      .prepare('SELECT phase FROM posts WHERE slug = ?')
+      .get(slug) as { phase: string } | undefined;
+    if (!post) {
+      console.error(`Post not found: ${slug}`);
+      process.exitCode = 1;
+      return;
+    }
+    if (post.phase !== 'publish' && post.phase !== 'published') {
+      console.error(
+        `Post '${slug}' is in phase '${post.phase}' — distribution-kit backfill requires 'publish' or 'published'.`,
+      );
+      process.exitCode = 1;
+      return;
+    }
+
+    const kit = await generateDistributionKit(slug, config!, {
+      socialDir,
+      templatesDir,
+      draftsDir,
+      configPath,
+    }, db, {
+      sourceMode: 'backfill',
+      imageMode: opts.imageMode,
+      force: opts.force,
+    });
+    console.log(
+      `${kit.reused ? 'Reused' : 'Generated'} distribution kit for '${slug}': ${kit.manifestPath}`,
+    );
+
+    const shouldCommitSite =
+      opts.commitSite === true || config!.social.distribution_kit.persist_to_site === true;
+    if (shouldCommitSite) {
+      const persisted = persistDistributionKitToSite(slug, config!, { configPath }, kit);
+      console.log(
+        persisted.updated
+          ? `Committed distribution kit to site repo: ${persisted.paths.join(', ')}`
+          : `Site distribution kit already current: ${persisted.reason ?? 'no changes'}`,
+      );
+    }
+  } catch (e) {
+    console.error((e as Error).message);
+    process.exitCode = 1;
+  } finally {
+    closeDatabase(db);
+  }
+}
+
 // Render a padded step table. Column widths are computed from the data so
 // short step names don't waste horizontal space and long timestamps don't
 // overflow. `note` holds the skip reason or error message from
@@ -526,5 +618,28 @@ export function registerPublish(program: Command): void {
     .option('--json', 'Emit JSON envelope for machine consumers')
     .action((slug: string, opts: { json?: boolean }) => {
       runPublishShow(slug, { json: opts.json });
+    });
+
+  publish
+    .command('distribution-kit <slug>')
+    .description('Generate or backfill durable distribution-kit artifacts for a post')
+    .option('--commit-site', 'Commit generated artifacts to the configured site repo')
+    .option('--image-mode <mode>', 'Override LinkedIn image mode: off, prompt-only, generate, required')
+    .option('--force', 'Regenerate artifacts even when the manifest input hash matches')
+    .action(async (
+      slug: string,
+      opts: { commitSite?: boolean; imageMode?: string; force?: boolean },
+    ) => {
+      const imageMode = opts.imageMode as LinkedInImageMode | undefined;
+      if (imageMode && !['off', 'prompt-only', 'generate', 'required'].includes(imageMode)) {
+        console.error(`Invalid --image-mode: ${imageMode}`);
+        process.exitCode = 1;
+        return;
+      }
+      await runPublishDistributionKit(slug, {
+        commitSite: opts.commitSite,
+        imageMode,
+        force: opts.force,
+      });
     });
 }

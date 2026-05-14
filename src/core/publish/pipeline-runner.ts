@@ -100,6 +100,7 @@ export async function runPipeline(
         ctx.config,
         undefined,
         ctx.cycleId,
+        ctx.publishMode,
       );
       if (reconciled > 0) {
         console.log(

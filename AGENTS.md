@@ -102,7 +102,7 @@ m0lz.01/
 
 **Claude Code plugin** (interactive, uses subscription): packaged `.claude-plugin/` `/blog` skill for research, drafting, and structural review in Claude Code.
 
-**Standalone CLI** (mechanical, no AI needed): `blog init`, `blog publish`, `blog unpublish`, `blog status`, `blog metrics`, `blog ideas`, `blog research init|add-source|show|set-section|finalize`, `blog benchmark init|env|run|show|skip|complete`, `blog draft init|show|validate|add-asset|complete|platform-images|regenerate-frontmatter`, `blog evaluate init|structural-autocheck|record|show|synthesize|complete|reject` — these run independently for API calls, state queries, and pipeline execution.
+**Standalone CLI** (mechanical, no AI needed): `blog init`, `blog publish`, `blog unpublish`, `blog status`, `blog metrics`, `blog ideas`, `blog research init|add-source|show|set-section|finalize`, `blog benchmark init|env|run|show|skip|complete`, `blog draft init|show|validate|add-asset|complete|platform-images|regenerate-frontmatter`, `blog evaluate init|structural-autocheck|record|show|synthesize|complete|reject`, `blog publish distribution-kit` — these run independently for API calls, state queries, and pipeline execution.
 
 **Shared state**: Both layers read/write the same SQLite database and file system artifacts.
 
@@ -241,7 +241,7 @@ const resolvedPath = resolve(dirname(configPath), rawPath);
 - **Framework**: Vitest
 - **Location**: `tests/*.test.ts`
 - **Run**: `npm test`
-- **Baseline**: 981 tests across 73 suites. Keep the regression-suite inventory in `.agents/skills/source-command-review/SKILL.md` and `.windsurf/workflows/review.md` in sync when adding tests.
+- **Baseline**: Keep the regression-suite inventory in `.agents/skills/source-command-review/SKILL.md` and `.windsurf/workflows/review.md` in sync when adding tests.
 - **Minimum**: Each module needs: 1 happy path, 1 edge case, 1 error case
 - **DB tests**: Use in-memory SQLite (`getDatabase(':memory:')`)
 - **File tests**: Use `mkdtemp` for temporary directories, clean up in `afterEach`

@@ -5,6 +5,4 @@ URL: {{canonical_url}}
 
 {{first_comment}}
 
-Companion repo: {{repo_url}}
-
 {{timing}}

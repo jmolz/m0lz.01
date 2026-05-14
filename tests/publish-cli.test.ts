@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -26,6 +26,7 @@ import {
 import {
   runPublishStart,
   runPublishShow,
+  runPublishDistributionKit,
   PublishCliPaths,
 } from '../src/cli/publish.js';
 
@@ -67,6 +68,9 @@ content_types:
     benchmark: "skip"
     companion_repo: "optional"
     social_prefix: ""
+social:
+  distribution_kit:
+    persist_to_site: false
 `;
 
 function setup(withConfig = true): Fixture {
@@ -140,6 +144,21 @@ function seedPublishPost(dbPath: string, slug: string): void {
     advancePhase(db, slug, 'evaluate');
     db.prepare('UPDATE posts SET evaluation_passed = 1 WHERE slug = ?').run(slug);
     advancePhase(db, slug, 'publish');
+  } finally {
+    closeDatabase(db);
+  }
+}
+
+function seedPublishedPost(dbPath: string, slug: string): void {
+  const db = getDatabase(dbPath);
+  try {
+    initResearchPost(db, slug, 'topic', 'directed', 'project-launch', 'm0lz.01');
+    advancePhase(db, slug, 'benchmark');
+    advancePhase(db, slug, 'draft');
+    advancePhase(db, slug, 'evaluate');
+    db.prepare('UPDATE posts SET evaluation_passed = 1, title = ? WHERE slug = ?').run('Published Title', slug);
+    advancePhase(db, slug, 'publish');
+    advancePhase(db, slug, 'published');
   } finally {
     closeDatabase(db);
   }
@@ -420,5 +439,36 @@ describe('runPublishShow', () => {
     expect(logs.join('\n')).toContain('malformed');
     // And warned on stderr.
     expect(errors.join('\n')).toMatch(/Warning|failed to load config/);
+  });
+});
+
+describe('runPublishDistributionKit', () => {
+  it('generates local backfill artifacts for a published post without committing when config disables site persistence', async () => {
+    const f = setup();
+    seedPublishedPost(f.dbPath, 'kit');
+    const draftDir = join(f.draftsDir, 'kit');
+    mkdirSync(draftDir, { recursive: true });
+    writeFileSync(join(draftDir, 'index.mdx'), `---
+title: "Draft Kit Title"
+description: "Draft kit description."
+date: "2026-05-14"
+tags:
+  - TypeScript
+published: true
+canonical: "https://m0lz.dev/writing/kit"
+---
+
+Body
+`, 'utf-8');
+    const { logs } = captureLogs();
+    await runPublishDistributionKit('kit', { imageMode: 'prompt-only' }, {
+      ...paths(f),
+      templatesDir: join(__dirname, '../templates'),
+    });
+
+    expect(process.exitCode).toBe(0);
+    expect(logs.join('\n')).toContain('distribution kit');
+    expect(readFileSync(join(f.socialDir, 'kit/linkedin.md'), 'utf-8')).toContain('Draft Kit Title');
+    expect(readFileSync(join(f.socialDir, 'kit/manifest.json'), 'utf-8')).toContain('gpt-image-2-2026-04-21');
   });
 });

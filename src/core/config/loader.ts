@@ -24,6 +24,17 @@ const DEFAULT_PUBLISH: BlogConfig['publish'] = {
 const DEFAULT_SOCIAL: BlogConfig['social'] = {
   platforms: ['linkedin', 'hackernews'],
   timing_recommendations: true,
+  distribution_kit: {
+    enabled: true,
+    persist_to_site: true,
+    directory: 'distribution',
+  },
+  linkedin_image: {
+    mode: 'prompt-only',
+    model: 'gpt-image-2-2026-04-21',
+    size: '1200x1200',
+    quality: 'high',
+  },
 };
 
 const DEFAULT_EVALUATION: BlogConfig['evaluation'] = {
@@ -133,6 +144,35 @@ export function validateConfig(raw: unknown): BlogConfig {
     siteGithubRepo = site.github_repo;
   }
 
+  const rawSocial = (obj.social as Partial<BlogConfig['social']>) ?? {};
+  const social: BlogConfig['social'] = {
+    ...DEFAULT_SOCIAL,
+    ...rawSocial,
+    distribution_kit: {
+      ...DEFAULT_SOCIAL.distribution_kit,
+      ...(rawSocial.distribution_kit as Partial<BlogConfig['social']['distribution_kit']> | undefined),
+    },
+    linkedin_image: {
+      ...DEFAULT_SOCIAL.linkedin_image,
+      ...(rawSocial.linkedin_image as Partial<BlogConfig['social']['linkedin_image']> | undefined),
+    },
+  };
+  if (!['off', 'prompt-only', 'generate', 'required'].includes(social.linkedin_image.mode)) {
+    throw new Error(
+      `Config field social.linkedin_image.mode must be one of off, prompt-only, generate, required. Got: ${JSON.stringify(social.linkedin_image.mode)}`,
+    );
+  }
+  if (!/^\d+x\d+$/.test(social.linkedin_image.size)) {
+    throw new Error(
+      `Config field social.linkedin_image.size must be WIDTHxHEIGHT. Got: ${JSON.stringify(social.linkedin_image.size)}`,
+    );
+  }
+  if (!social.distribution_kit.directory || social.distribution_kit.directory.includes('/') || social.distribution_kit.directory.includes('\\') || social.distribution_kit.directory.includes('..')) {
+    throw new Error(
+      `Config field social.distribution_kit.directory must be a simple directory name. Got: ${JSON.stringify(social.distribution_kit.directory)}`,
+    );
+  }
+
   return {
     site: {
       repo_path: site.repo_path,
@@ -161,7 +201,7 @@ export function validateConfig(raw: unknown): BlogConfig {
     },
     benchmark: { ...DEFAULT_BENCHMARK, ...(obj.benchmark as Partial<BlogConfig['benchmark']>) },
     publish: { ...DEFAULT_PUBLISH, ...(obj.publish as Partial<BlogConfig['publish']>) },
-    social: { ...DEFAULT_SOCIAL, ...(obj.social as Partial<BlogConfig['social']>) },
+    social,
     evaluation: { ...DEFAULT_EVALUATION, ...(obj.evaluation as Partial<BlogConfig['evaluation']>) },
     updates: { ...DEFAULT_UPDATES, ...(obj.updates as Partial<BlogConfig['updates']>) },
     unpublish: { ...DEFAULT_UNPUBLISH, ...(obj.unpublish as Partial<BlogConfig['unpublish']>) },

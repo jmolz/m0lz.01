@@ -6,6 +6,7 @@ import Database from 'better-sqlite3';
 
 import { BlogConfig } from '../config/types.js';
 import { assertOriginInSync, expectedSiteCoords, requireOriginMatch } from './origin-guard.js';
+import { generateDistributionKit } from './distribution-kit.js';
 import { ensurePlatformImages } from './platform-images.js';
 import { PreviewUrls, computePreviewUrls } from './preview-urls.js';
 import { PostRow } from '../db/types.js';
@@ -33,6 +34,8 @@ export interface SitePaths {
   researchPagesDir: string; // .blog-agent/research-pages
   publishDir: string; // .blog-agent/publish
   configPath: string; // absolute path to .blogrc.yaml
+  socialDir?: string; // .blog-agent/social
+  templatesDir?: string; // package templates root
 }
 
 export interface PreviewGatePaths extends SitePaths {
@@ -127,6 +130,7 @@ export interface SitePROverrides {
   // the plan-step args array, so the SHA256 plan hash binds the operator's
   // consent. Default (undefined/false) enforces the sync check.
   allowMainAhead?: boolean;
+  publishMode?: 'publish' | 'update';
 }
 
 export async function createSitePR(
@@ -257,6 +261,20 @@ export async function createSitePR(
     updateFrontmatter: false,
     writeReceipt: false,
   });
+
+  if (config.social?.distribution_kit?.enabled === true) {
+    if (!paths.socialDir || !paths.templatesDir) {
+      throw new Error('Distribution kit generation requires socialDir and templatesDir paths');
+    }
+    await generateDistributionKit(slug, config, {
+      socialDir: paths.socialDir,
+      templatesDir: paths.templatesDir,
+      draftsDir: paths.draftsDir,
+      configPath: paths.configPath,
+    }, db, {
+      sourceMode: overrides?.publishMode ?? 'publish',
+    });
+  }
 
   const branchName = overrides?.branchName ?? `post/${slug}`;
 
