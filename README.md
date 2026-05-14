@@ -9,7 +9,18 @@
   Research, benchmark, draft, evaluate, publish, and distribute — all from one prompt.
 </p>
 
-![CI](https://github.com/jmolz/m0lz.01/actions/workflows/ci.yml/badge.svg)
+<p align="center">
+  <a href="https://github.com/jmolz/m0lz.01/actions/workflows/ci.yml">
+    <img alt="CI" src="https://github.com/jmolz/m0lz.01/actions/workflows/ci.yml/badge.svg">
+  </a>
+  <a href="https://www.npmjs.com/package/m0lz-01">
+    <img alt="npm version" src="https://img.shields.io/npm/v/m0lz-01">
+  </a>
+  <img alt="Node.js >=20.3.0" src="https://img.shields.io/badge/node-%3E%3D20.3.0-339933">
+  <a href="./LICENSE">
+    <img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue">
+  </a>
+</p>
 
 <p align="center">
   <img src="readme-quickstart.gif" width="760" alt="Animated terminal demo showing the first m0lz.01 steps: install the CLI, initialize a workspace, start research, add a source, and check status.">
