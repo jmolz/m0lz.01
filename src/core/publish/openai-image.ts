@@ -49,7 +49,6 @@ export class OpenAIImageProvider implements ImageProvider {
         size: request.size,
         quality: request.quality,
         n: 1,
-        response_format: 'b64_json',
       }),
     });
 

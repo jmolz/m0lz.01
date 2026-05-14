@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach, beforeEach } from 'vitest';
+import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -16,7 +16,11 @@ import {
   resolveSocialMetadata,
   extractLeadSentence,
 } from '../src/core/publish/distribution-kit.js';
-import { ImageProvider, ImageGenerationRequest } from '../src/core/publish/openai-image.js';
+import {
+  ImageProvider,
+  ImageGenerationRequest,
+  OpenAIImageProvider,
+} from '../src/core/publish/openai-image.js';
 import { BlogConfig } from '../src/core/config/types.js';
 
 function sha256(bytes: string | Buffer): string {
@@ -184,6 +188,7 @@ afterEach(() => {
   if (fixture?.db) closeDatabase(fixture.db);
   if (fixture) rmSync(fixture.tempDir, { recursive: true, force: true });
   fixture = undefined;
+  vi.restoreAllMocks();
 });
 
 describe('resolveSocialMetadata', () => {
@@ -340,5 +345,35 @@ describe('text helpers', () => {
   it('does not split product IDs or decimal-like names as sentence boundaries', () => {
     expect(extractLeadSentence('m0lz.01 ships distribution artifacts. Second sentence.', 160))
       .toBe('m0lz.01 ships distribution artifacts.');
+  });
+});
+
+describe('OpenAIImageProvider', () => {
+  it('omits unsupported response_format and reads b64_json image bytes', async () => {
+    const bytes = Buffer.from('image bytes');
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
+      created: 123,
+      data: [{ b64_json: bytes.toString('base64') }],
+    }), { status: 200 }));
+    const provider = new OpenAIImageProvider('test-key');
+
+    const result = await provider.generateImage({
+      model: 'gpt-image-2-2026-04-21',
+      prompt: 'Generate a square launch image.',
+      size: '1200x1200',
+      quality: 'high',
+    });
+
+    expect(result.bytes.equals(bytes)).toBe(true);
+    const [, init] = fetchSpy.mock.calls[0];
+    const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    expect(body).toMatchObject({
+      model: 'gpt-image-2-2026-04-21',
+      prompt: 'Generate a square launch image.',
+      size: '1200x1200',
+      quality: 'high',
+      n: 1,
+    });
+    expect(body).not.toHaveProperty('response_format');
   });
 });
