@@ -77,7 +77,17 @@ blog --help    # verify installation
 
 ## Quick Start
 
-From install to first post with the standalone CLI, then pick Codex or Claude Code as the interactive authoring surface.
+Start here even if you know the commands. The first thing to understand is that `blog` is not an autonomous writer.
+
+`blog` is the local state machine. It creates the SQLite row, writes template files, tracks which phase a post is in, validates required artifacts, and runs publish operations.
+
+Codex, Claude Code, or a human author do the judgment work. That means inspecting a repo, running tests, researching sources, writing prose, filling the research template, interpreting benchmark results, and deciding what to publish.
+
+Keep these names separate:
+
+- **Workspace**: the folder that contains `.blog-agent/`, `.blogrc.yaml`, and `.env`.
+- **Slug**: the permanent post ID, such as `m0lz-02-stack-loops`.
+- **Source URL**: evidence for the post, such as `https://github.com/jmolz/m0lz.02.git`. A URL is not a slug.
 
 ### 1. Install the CLI
 
@@ -96,6 +106,19 @@ blog init
 ```
 
 Edit `~/blog/.blogrc.yaml` (site repo + author details) and `~/blog/.env` (DEVTO_API_KEY, etc.) — see [Configuration](#configuration).
+
+If you already have a workspace, do not run `blog init` again. Go to that folder before running commands:
+
+```bash
+cd ~/blog
+blog status
+```
+
+From any other directory, pass the workspace explicitly:
+
+```bash
+blog --workspace ~/blog status
+```
 
 ### 3. Pick an authoring surface
 
@@ -118,8 +141,10 @@ Other install paths (repo clone, contributor symlink) in [`docs/plugin-install.m
 
 ### 4. Use the authoring layer
 
+Ask the authoring layer to do the thinking and writing, then let it call the CLI for state changes:
+
 ```
-/blog Launch post for new npm package jmolz/m0lz.01 — Show HN target, Dev.to cross-post.
+/blog In workspace ~/blog, create a project-launch post for m0lz.02 Stack Loops. Use https://github.com/jmolz/m0lz.02.git as the primary source, run the relevant tests, fill the research doc, draft the launch post, evaluate it, and prepare the distribution kit.
 ```
 
 The authoring layer classifies intent, proposes a concrete plan, asks you to approve it, then hands off to `blog agent apply`, which runs each step under a SHA256-bound approval gate. All destructive work is CLI-native; Codex and Claude are orchestration surfaces over the same state.
@@ -130,7 +155,7 @@ Read [`docs/plugin-install.md`](docs/plugin-install.md) for troubleshooting.
 
 ## Using the CLI underneath
 
-Everything the `/blog` skill does is also available as direct CLI commands. If you prefer to drive the pipeline without the skill, or you're scripting in CI, the five-minute CLI walkthrough is below.
+The direct CLI exposes the same state machine and publishing controls that `/blog` uses. It does not replace the authoring layer. Commands such as `research init` and `draft init` create records and templates; a human, Codex, or Claude still has to fill them.
 
 ### 1. Choose a work directory
 
@@ -199,14 +224,63 @@ blog status
 
 ### 6. Create your first new post
 
-Queue an idea, promote it to research, walk it through six phases:
+Start with a slug. Do not pass the GitHub URL as the first argument.
 
 ```bash
-blog ideas add "Show HN: my topic" --type technical-deep-dive --priority high
-blog ideas start 1                              # → research phase
-blog research init <slug> --topic "..."         # gather sources
-# ... benchmark → draft → evaluate → publish
-blog status                                     # track progress
+# Correct: first argument is the slug
+blog research init m0lz-02-stack-loops \
+  --topic "m0lz.02 Stack Loops launch and testing write-up" \
+  --content-type project-launch \
+  --project m0lz.02
+
+# Then record the repo as a source
+blog research add-source m0lz-02-stack-loops \
+  --url "https://github.com/jmolz/m0lz.02.git" \
+  --type primary \
+  --title "m0lz.02 repository"
+
+blog research show m0lz-02-stack-loops
+```
+
+If `blog research show` prints something like `doc status: 7 empty`, the command worked. It means the CLI created the research template and is waiting for authored content.
+
+Next, fill the sections in the research document printed by `blog research show`, or write sections through the CLI:
+
+```bash
+blog research set-section m0lz-02-stack-loops --section thesis --from-file thesis.md
+blog research set-section m0lz-02-stack-loops --section findings --from-file findings.md
+```
+
+When `blog research show` reports the document is complete, validate the phase:
+
+```bash
+blog research finalize m0lz-02-stack-loops
+```
+
+`research finalize` validates the research artifact. It does not draft the post and it does not advance to the next phase. To move on, choose the benchmark path:
+
+```bash
+# For optional benchmarking, run a benchmark cycle
+blog benchmark init m0lz-02-stack-loops
+
+# Or skip benchmarking when the content type allows it, which advances to draft
+blog benchmark skip m0lz-02-stack-loops
+```
+
+Then continue through draft, evaluate, and publish:
+
+```bash
+blog draft init m0lz-02-stack-loops
+blog draft show m0lz-02-stack-loops
+blog draft validate m0lz-02-stack-loops
+blog draft complete m0lz-02-stack-loops
+
+blog evaluate init m0lz-02-stack-loops
+blog evaluate structural-autocheck m0lz-02-stack-loops
+# record reviewer JSON, synthesize, then complete when it passes
+
+blog publish start m0lz-02-stack-loops
+blog publish distribution-kit m0lz-02-stack-loops --image-mode generate
 ```
 
 See [CLI Reference](#cli-reference) below for every subcommand.
@@ -267,28 +341,30 @@ author:
 
 ```bash
 # Workspace
-blog init                        # create .blog-agent/ + templates
-blog init --import               # also import existing posts from hub
-blog status                      # table of all posts + phase
-blog metrics                     # aggregate stats
+blog init                                  # create .blog-agent/ + templates
+blog init --import                         # also import existing posts from hub
+blog status                                # table of all posts + phase
+blog --workspace ~/blog status             # run against an existing workspace from anywhere
+blog metrics                               # aggregate stats
 
 # Editorial backlog
-blog ideas                       # list ideas.yaml
+blog ideas                                 # list ideas.yaml
 blog ideas add "title" --priority high --type technical-deep-dive
-blog ideas start <index>         # promote to research phase
+blog ideas start <index>                   # promote to research phase
 
 # Research phase
-blog research init <slug> --topic "..."
-blog research add-source <slug> --url "..."
-blog research show <slug>
-blog research finalize <slug>
+blog research init <slug> --topic "..."    # create DB row + research template; does not research
+blog research add-source <slug> --url "..." # track a source URL; does not fetch or analyze it
+blog research show <slug>                  # print doc path + empty/missing section count
+blog research set-section <slug> --section thesis --from-file thesis.md
+blog research finalize <slug>              # validate filled doc; does not advance phase
 
 # Benchmark phase
-blog benchmark init <slug>
+blog benchmark init <slug>                 # advance research -> benchmark
 blog benchmark env <slug>                       # capture environment
 blog benchmark run <slug> --results <file>
 blog benchmark show <slug>
-blog benchmark skip <slug>                      # analysis-opinion only
+blog benchmark skip <slug>                      # skip/optional content only; advance research -> draft
 blog benchmark complete <slug>                  # → draft phase
 
 # Draft phase
