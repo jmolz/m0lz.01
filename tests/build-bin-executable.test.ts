@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { statSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { readFileSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 import { PACKAGE_ROOT } from '../src/core/paths.js';
@@ -29,5 +30,34 @@ describe('built CLI entrypoint retains executable bit after build', () => {
     // the full mode octal so the test tolerates different umasks without
     // losing the invariant.
     expect(mode & 0o100, `dist/cli/index.js mode=${mode.toString(8)} missing owner-execute bit`).toBe(0o100);
+  });
+
+  it('reports package.json version from the built binary', () => {
+    const entry = resolve(PACKAGE_ROOT, 'dist', 'cli', 'index.js');
+    const pkg = JSON.parse(readFileSync(resolve(PACKAGE_ROOT, 'package.json'), 'utf-8')) as {
+      version: string;
+    };
+    const result = spawnSync(process.execPath, [entry, '--version'], {
+      cwd: PACKAGE_ROOT,
+      encoding: 'utf-8',
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout.trim()).toBe(pkg.version);
+  });
+
+  it('reports package.json version in agent preflight JSON', () => {
+    const entry = resolve(PACKAGE_ROOT, 'dist', 'cli', 'index.js');
+    const pkg = JSON.parse(readFileSync(resolve(PACKAGE_ROOT, 'package.json'), 'utf-8')) as {
+      version: string;
+    };
+    const result = spawnSync(process.execPath, [entry, 'agent', 'preflight', '--json'], {
+      cwd: PACKAGE_ROOT,
+      encoding: 'utf-8',
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    const envelope = JSON.parse(result.stdout) as { data: { cli_version: string } };
+    expect(envelope.data.cli_version).toBe(pkg.version);
   });
 });

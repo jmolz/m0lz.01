@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { Command } from 'commander';
+import { getPackageVersion } from '../core/package-info.js';
 import { findWorkspaceRoot } from '../core/workspace/root.js';
 
 // Commands that must work WITHOUT an initialized workspace. Everything else
@@ -114,7 +115,7 @@ async function main(): Promise<void> {
   program
     .name('blog')
     .description('m0lz.01 — idea-to-distribution pipeline for technical content')
-    .version('0.1.0')
+    .version(getPackageVersion())
     .option('--workspace <path>', 'Workspace root directory (overrides auto-detection)');
 
   registerInit(program);

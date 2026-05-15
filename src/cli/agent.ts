@@ -7,6 +7,7 @@ import { Command } from 'commander';
 import { getDatabase, closeDatabase } from '../core/db/database.js';
 import { loadConfig } from '../core/config/loader.js';
 import { printEnvelope } from '../core/json-envelope.js';
+import { getPackageVersion } from '../core/package-info.js';
 import { validateSlug } from '../core/research/document.js';
 import { findWorkspaceRoot, WorkspaceNotFoundError } from '../core/workspace/root.js';
 import { resolveUserPath } from '../core/workspace/user-path.js';
@@ -28,7 +29,7 @@ import {
 } from '../core/plan-file/validator.js';
 
 const DB_PATH = resolve('.blog-agent', 'state.db');
-const CLI_VERSION = '0.1.0';
+const CLI_VERSION = getPackageVersion();
 
 // Exit codes. Every error except STEP_FAILED is exit=2 (unrecoverable
 // validation); STEP_FAILED preserves the child's actual exit.
