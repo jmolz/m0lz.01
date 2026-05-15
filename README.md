@@ -295,12 +295,43 @@ blog research finalize m0lz-02-stack-loops
 `research finalize` validates the research artifact. It does not draft the post and it does not advance to the next phase. To move on, choose the benchmark path:
 
 ```bash
-# For optional benchmarking, run a benchmark cycle
+# For optional benchmarking, run a benchmark cycle.
+# This advances research -> benchmark.
 blog benchmark init m0lz-02-stack-loops
 
-# Or skip benchmarking when the content type allows it, which advances to draft
+# Or skip benchmarking when the content type allows it.
+# This advances research -> draft.
 blog benchmark skip m0lz-02-stack-loops
 ```
+
+If you ran `blog benchmark init`, the post is now in the `benchmark` phase. Draft and evaluate commands will reject it until you complete the benchmark phase. Continue with:
+
+```bash
+blog benchmark env m0lz-02-stack-loops
+
+# Run the real benchmark/test commands from the benchmark targets.
+# Save a BenchmarkResults JSON file, then import it:
+blog benchmark run m0lz-02-stack-loops --results-file path/to/results.json
+
+blog benchmark show m0lz-02-stack-loops
+blog benchmark complete m0lz-02-stack-loops
+```
+
+The results JSON shape is:
+
+```json
+{
+  "slug": "m0lz-02-stack-loops",
+  "run_id": 1,
+  "timestamp": "2026-05-15T00:00:00.000Z",
+  "targets": ["what you ran"],
+  "data": {
+    "summary": "what passed, failed, or changed"
+  }
+}
+```
+
+`blog benchmark skip` only works before `blog benchmark init`, while the post is still in `research`.
 
 Then continue through draft, evaluate, and publish:
 
@@ -397,9 +428,9 @@ blog research finalize <slug>              # validate filled doc; does not advan
 # Benchmark phase
 blog benchmark init <slug>                 # advance research -> benchmark
 blog benchmark env <slug>                       # capture environment
-blog benchmark run <slug> --results <file>
+blog benchmark run <slug> --results-file <file>
 blog benchmark show <slug>
-blog benchmark skip <slug>                      # skip/optional content only; advance research -> draft
+blog benchmark skip <slug>                      # skip/optional content only; research -> draft
 blog benchmark complete <slug>                  # → draft phase
 
 # Draft phase
