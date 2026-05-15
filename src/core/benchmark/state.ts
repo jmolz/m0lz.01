@@ -174,6 +174,16 @@ export function completeBenchmark(
       `Complete requires the post to be in the benchmark phase.`,
     );
   }
+  const completed = db.prepare(
+    "SELECT COUNT(*) AS count FROM benchmarks WHERE post_slug = ? AND status = 'completed'",
+  ).get(slug) as { count: number };
+  if (completed.count === 0) {
+    throw new Error(
+      `No completed benchmark run found for '${slug}'. ` +
+      `Run 'blog benchmark env ${slug}' and ` +
+      `'blog benchmark run ${slug} --results-file <file>' before completing.`,
+    );
+  }
   db.prepare('UPDATE posts SET has_benchmarks = 1 WHERE slug = ?').run(slug);
   advancePhase(db, slug, 'draft');
 }

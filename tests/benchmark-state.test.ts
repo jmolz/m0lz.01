@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -308,6 +308,8 @@ describe('completeBenchmark', () => {
     const db = getDatabase(dbPath);
     try {
       initBenchmark(db, 'kappa', benchmarkDir, researchDir);
+      const runId = createBenchmarkRun(db, 'kappa', '{}', '/tmp/results.json');
+      updateBenchmarkStatus(db, runId, 'completed');
       completeBenchmark(db, 'kappa');
 
       const post = db.prepare('SELECT * FROM posts WHERE slug = ?').get('kappa') as {
@@ -315,6 +317,23 @@ describe('completeBenchmark', () => {
       };
       expect(post.phase).toBe('draft');
       expect(post.has_benchmarks).toBe(1);
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  it('throws without a completed benchmark run', () => {
+    const dir = makeTempDir();
+    const dbPath = join(dir, 'state.db');
+    const researchDir = join(dir, 'research');
+    const benchmarkDir = join(dir, 'benchmarks');
+
+    createResearchPost(dbPath, researchDir, 'mu');
+
+    const db = getDatabase(dbPath);
+    try {
+      initBenchmark(db, 'mu', benchmarkDir, researchDir);
+      expect(() => completeBenchmark(db, 'mu')).toThrow(/No completed benchmark run/);
     } finally {
       closeDatabase(db);
     }

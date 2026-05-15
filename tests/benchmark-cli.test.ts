@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -104,6 +104,18 @@ function createResearchPost(f: Fixture, slug: string, contentType: string = 'tec
     repo_scope: 'Scope',
   };
   writeResearchDocument(f.researchDir, doc, { force: true });
+}
+
+function writeValidResultsFile(f: Fixture, slug: string): string {
+  const resultsFile = join(f.tempDir, `${slug}-results.json`);
+  writeFileSync(resultsFile, JSON.stringify({
+    slug,
+    run_id: 1,
+    timestamp: new Date().toISOString(),
+    targets: ['Target A'],
+    data: { target_a: { mean: 42 } },
+  }), 'utf-8');
+  return resultsFile;
 }
 
 afterEach(() => {
@@ -268,11 +280,7 @@ describe('runBenchmarkRun', () => {
     runBenchmarkInit('alpha', paths(f));
     runBenchmarkEnv('alpha', paths(f));
 
-    const resultsFile = join(f.tempDir, 'input-results.json');
-    writeFileSync(resultsFile, JSON.stringify({
-      slug: 'alpha', run_id: 1, timestamp: new Date().toISOString(),
-      targets: ['Target A'], data: { target_a: { mean: 42 } },
-    }), 'utf-8');
+    const resultsFile = writeValidResultsFile(f, 'alpha');
 
     const { logs } = captureLogs();
     const savedExitCode = process.exitCode;
@@ -312,6 +320,62 @@ describe('runBenchmarkRun', () => {
       process.exitCode = savedExitCode;
     }
   });
+
+  it('rejects environment.json as benchmark results', () => {
+    const f = setupFixture();
+    createResearchPost(f, 'envfile');
+    captureLogs();
+    runBenchmarkInit('envfile', paths(f));
+    runBenchmarkEnv('envfile', paths(f));
+
+    const savedExitCode = process.exitCode;
+    try {
+      const { errors } = captureLogs();
+      process.exitCode = 0;
+      runBenchmarkRun(
+        'envfile',
+        { resultsFile: join(f.benchmarkDir, 'envfile', 'environment.json') },
+        paths(f),
+      );
+
+      expect(process.exitCode).toBe(1);
+      expect(errors.join('\n')).toContain('Invalid benchmark results file');
+      expect(errors.join('\n')).toContain('environment.json');
+
+      const db = getDatabase(f.dbPath);
+      try {
+        const row = db.prepare('SELECT * FROM benchmarks WHERE post_slug = ?').get('envfile') as {
+          status: string;
+        };
+        expect(row.status).toBe('failed');
+      } finally {
+        closeDatabase(db);
+      }
+    } finally {
+      process.exitCode = savedExitCode;
+    }
+  });
+
+  it('rejects results for a different slug', () => {
+    const f = setupFixture();
+    createResearchPost(f, 'alpha');
+    captureLogs();
+    runBenchmarkInit('alpha', paths(f));
+    runBenchmarkEnv('alpha', paths(f));
+    const resultsFile = writeValidResultsFile(f, 'other');
+
+    const savedExitCode = process.exitCode;
+    try {
+      const { errors } = captureLogs();
+      process.exitCode = 0;
+      runBenchmarkRun('alpha', { resultsFile }, paths(f));
+
+      expect(process.exitCode).toBe(1);
+      expect(errors.join('\n')).toContain("field 'slug' must be 'alpha'");
+    } finally {
+      process.exitCode = savedExitCode;
+    }
+  });
 });
 
 describe('runBenchmarkShow', () => {
@@ -322,11 +386,7 @@ describe('runBenchmarkShow', () => {
     runBenchmarkInit('alpha', paths(f));
     runBenchmarkEnv('alpha', paths(f));
 
-    const resultsFile = join(f.tempDir, 'input-results.json');
-    writeFileSync(resultsFile, JSON.stringify({
-      slug: 'alpha', run_id: 1, timestamp: new Date().toISOString(),
-      targets: ['T'], data: {},
-    }), 'utf-8');
+    const resultsFile = writeValidResultsFile(f, 'alpha');
     runBenchmarkRun('alpha', { resultsFile }, paths(f));
 
     const { logs } = captureLogs();
@@ -402,6 +462,8 @@ describe('runBenchmarkComplete', () => {
     createResearchPost(f, 'alpha');
     captureLogs();
     runBenchmarkInit('alpha', paths(f));
+    runBenchmarkEnv('alpha', paths(f));
+    runBenchmarkRun('alpha', { resultsFile: writeValidResultsFile(f, 'alpha') }, paths(f));
 
     const { logs } = captureLogs();
     const savedExitCode = process.exitCode;
@@ -418,6 +480,33 @@ describe('runBenchmarkComplete', () => {
         };
         expect(post.phase).toBe('draft');
         expect(post.has_benchmarks).toBe(1);
+      } finally {
+        closeDatabase(db);
+      }
+    } finally {
+      process.exitCode = savedExitCode;
+    }
+  });
+
+  it('rejects benchmark completion before results are imported', () => {
+    const f = setupFixture();
+    createResearchPost(f, 'empty');
+    captureLogs();
+    runBenchmarkInit('empty', paths(f));
+
+    const savedExitCode = process.exitCode;
+    try {
+      const { errors } = captureLogs();
+      process.exitCode = 0;
+      runBenchmarkComplete('empty', paths(f));
+
+      expect(process.exitCode).toBe(1);
+      expect(errors.join('\n')).toContain('No benchmark results found');
+
+      const db = getDatabase(f.dbPath);
+      try {
+        const post = db.prepare('SELECT phase FROM posts WHERE slug = ?').get('empty') as { phase: string };
+        expect(post.phase).toBe('benchmark');
       } finally {
         closeDatabase(db);
       }

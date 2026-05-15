@@ -95,6 +95,22 @@ export function runEvaluateAutocheck(slug: string, paths: EvaluatePaths = {}): v
   const db = getDatabase(dbPath);
   try {
     try {
+      const post = db.prepare('SELECT phase FROM posts WHERE slug = ?').get(slug) as
+        { phase: string } | undefined;
+      if (!post) {
+        console.error(`Post not found: ${slug}`);
+        process.exitCode = 1;
+        return;
+      }
+      if (post.phase !== 'evaluate') {
+        console.error(
+          `Post '${slug}' is in phase '${post.phase}', not 'evaluate'. ` +
+          `Run 'blog evaluate init ${slug}' after draft completion before structural-autocheck.`,
+        );
+        process.exitCode = 1;
+        return;
+      }
+
       const workspace = evaluationDir(evaluationsDir, slug);
       mkdirSync(workspace, { recursive: true });
 

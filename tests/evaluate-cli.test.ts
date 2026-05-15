@@ -243,6 +243,30 @@ describe('runEvaluateAutocheck', () => {
       process.exitCode = saved;
     }
   });
+
+  it('rejects structural autocheck before evaluation is initialized', () => {
+    const f = setupFixture();
+    const db = getDatabase(f.dbPath);
+    try {
+      initResearchPost(db, 'bench', 'topic', 'directed', 'technical-deep-dive');
+      advancePhase(db, 'bench', 'benchmark');
+    } finally {
+      closeDatabase(db);
+    }
+
+    const saved = process.exitCode;
+    try {
+      const { errors } = captureLogs();
+      process.exitCode = 0;
+      runEvaluateAutocheck('bench', paths(f));
+
+      expect(process.exitCode).toBe(1);
+      expect(errors.join('\n')).toContain("not 'evaluate'");
+      expect(existsSync(join(f.evaluationsDir, 'bench', 'structural.lint.json'))).toBe(false);
+    } finally {
+      process.exitCode = saved;
+    }
+  });
 });
 
 describe('runEvaluateRecord', () => {

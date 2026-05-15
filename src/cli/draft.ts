@@ -161,7 +161,11 @@ export function runDraftShow(slug: string, paths: DraftPaths = {}): void {
     console.log(`draft_file:      ${hasDraft ? mdxPath : '(not created)'}`);
     console.log(`frontmatter:     ${hasDraft ? (fmValid ? 'valid' : 'invalid') : '(no draft)'}`);
     console.log(`assets:          ${assets.length}`);
-    console.log(`benchmark_data:  ${benchmarkCtx.results ? 'available' : 'none'}`);
+    if (benchmarkCtx.resultsError) {
+      console.log(`benchmark_data:  invalid (${benchmarkCtx.resultsError})`);
+    } else {
+      console.log(`benchmark_data:  ${benchmarkCtx.results ? 'available' : 'none'}`);
+    }
     if (existingTags.length > 0) {
       console.log(`existing_tags:   ${existingTags.join(', ')}`);
     }

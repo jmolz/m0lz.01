@@ -331,6 +331,8 @@ The results JSON shape is:
 }
 ```
 
+Do not pass `.blog-agent/benchmarks/<slug>/environment.json` to `--results-file`. That file only captures machine metadata. `--results-file` must point to benchmark results with the exact shape above; the CLI rejects environment snapshots and slug mismatches.
+
 `blog benchmark skip` only works before `blog benchmark init`, while the post is still in `research`.
 
 Then continue through draft, evaluate, and publish:
@@ -348,6 +350,8 @@ blog evaluate structural-autocheck m0lz-02-stack-loops
 blog publish start m0lz-02-stack-loops
 blog publish distribution-kit m0lz-02-stack-loops --image-mode generate
 ```
+
+`blog evaluate structural-autocheck` only runs after `blog evaluate init` has moved the post into the `evaluate` phase.
 
 See [CLI Reference](#cli-reference) below for every subcommand.
 
@@ -428,10 +432,10 @@ blog research finalize <slug>              # validate filled doc; does not advan
 # Benchmark phase
 blog benchmark init <slug>                 # advance research -> benchmark
 blog benchmark env <slug>                       # capture environment
-blog benchmark run <slug> --results-file <file>
+blog benchmark run <slug> --results-file <file> # import BenchmarkResults JSON, not environment.json
 blog benchmark show <slug>
 blog benchmark skip <slug>                      # skip/optional content only; research -> draft
-blog benchmark complete <slug>                  # → draft phase
+blog benchmark complete <slug>                  # requires imported results, then → draft phase
 
 # Draft phase
 blog draft init <slug>

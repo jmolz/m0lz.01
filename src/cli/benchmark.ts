@@ -25,6 +25,7 @@ import {
   writeEnvironment,
   readEnvironment,
   BenchmarkResults,
+  parseBenchmarkResultsJson,
 } from '../core/benchmark/results.js';
 import { scaffoldCompanion } from '../core/benchmark/companion.js';
 
@@ -224,9 +225,9 @@ export function runBenchmarkRun(
 
       let resultsData: BenchmarkResults;
       try {
-        resultsData = JSON.parse(readFileSync(opts.resultsFile, 'utf-8')) as BenchmarkResults;
+        resultsData = parseBenchmarkResultsJson(readFileSync(opts.resultsFile, 'utf-8'), slug);
       } catch (e) {
-        console.error(`Failed to parse results file: ${(e as Error).message}`);
+        console.error(`Invalid benchmark results file: ${(e as Error).message}`);
         updateBenchmarkStatus(db, runId, 'failed');
         process.exitCode = 1;
         return;
@@ -279,7 +280,13 @@ export function runBenchmarkShow(slug: string, paths: BenchmarkPaths = {}): void
 
     const runs = listBenchmarkRuns(db, slug);
     const env = readEnvironment(benchmarkDir, slug);
-    const results = readResults(benchmarkDir, slug);
+    let results: BenchmarkResults | null = null;
+    let resultsError: string | null = null;
+    try {
+      results = readResults(benchmarkDir, slug);
+    } catch (e) {
+      resultsError = (e as Error).message;
+    }
 
     console.log(`slug:            ${post.slug}`);
     console.log(`phase:           ${post.phase}`);
@@ -287,7 +294,11 @@ export function runBenchmarkShow(slug: string, paths: BenchmarkPaths = {}): void
     console.log(`benchmark_req:   ${requirement}`);
     console.log(`runs:            ${runs.length}`);
     console.log(`env_captured:    ${env ? 'yes' : 'no'}`);
-    console.log(`results_path:    ${results ? resolve(benchmarkDir, slug, 'results.json') : '(none)'}`);
+    if (resultsError) {
+      console.log(`results_path:    (invalid: ${resultsError})`);
+    } else {
+      console.log(`results_path:    ${results ? resolve(benchmarkDir, slug, 'results.json') : '(none)'}`);
+    }
   } finally {
     closeDatabase(db);
   }
@@ -358,11 +369,27 @@ export function runBenchmarkComplete(slug: string, paths: BenchmarkPaths = {}): 
   }
 
   const dbPath = paths.dbPath ?? DB_PATH;
+  const benchmarkDir = paths.benchmarkDir ?? BENCHMARK_DIR;
   requireDb(dbPath);
 
   const db = getDatabase(dbPath);
   try {
     try {
+      const post = getBenchmarkPost(db, slug);
+      if (!post) {
+        console.error(`Post not found: ${slug}`);
+        process.exitCode = 1;
+        return;
+      }
+      const results = readResults(benchmarkDir, slug);
+      if (!results) {
+        console.error(
+          `No benchmark results found for '${slug}'. ` +
+          `Run 'blog benchmark run ${slug} --results-file <file>' first.`,
+        );
+        process.exitCode = 1;
+        return;
+      }
       completeBenchmark(db, slug);
     } catch (e) {
       console.error((e as Error).message);

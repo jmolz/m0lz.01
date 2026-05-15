@@ -61,7 +61,7 @@ Live dogfood transcript will be captured in `docs/journeys/launch.md` once a rea
 
 - `blog research finalize [<slug>]`
 - `blog benchmark init [<slug>]`
-- `blog benchmark run [<slug>, --results, <path>]`
+- `blog benchmark run [<slug>, --results-file, <path>]`
 - `blog benchmark complete [<slug>]`
 - `blog draft init [<slug>]`
 - `blog draft platform-images [<slug>]`

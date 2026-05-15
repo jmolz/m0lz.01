@@ -77,6 +77,9 @@ export function initDraft(
   const benchmarkCtx = getBenchmarkContext(benchmarkDir, slug, {
     githubUser: config.author.github,
   });
+  if (post.has_benchmarks && benchmarkCtx.resultsError) {
+    throw new Error(`Invalid benchmark results for '${slug}': ${benchmarkCtx.resultsError}`);
+  }
   const existingTags = readExistingTags(config.site.repo_path, config.site.content_dir);
 
   const context: DraftContext = {

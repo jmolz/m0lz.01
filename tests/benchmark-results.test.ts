@@ -9,6 +9,7 @@ import {
   writeEnvironment,
   readEnvironment,
   BenchmarkResults,
+  parseBenchmarkResultsJson,
 } from '../src/core/benchmark/results.js';
 import { EnvironmentSnapshot } from '../src/core/benchmark/environment.js';
 
@@ -56,6 +57,18 @@ describe('writeResults / readResults', () => {
   it('returns null for nonexistent file', () => {
     const dir = makeTempDir();
     expect(readResults(dir, 'missing')).toBeNull();
+  });
+
+  it('rejects environment snapshots masquerading as results', () => {
+    expect(() => parseBenchmarkResultsJson(JSON.stringify(sampleEnv), 'alpha')).toThrow(
+      /Expected a benchmark results file, not environment\.json/,
+    );
+  });
+
+  it('rejects results for the wrong slug', () => {
+    expect(() => parseBenchmarkResultsJson(JSON.stringify(sampleResults), 'beta')).toThrow(
+      /must be 'beta'/,
+    );
   });
 });
 
