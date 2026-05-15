@@ -23,10 +23,14 @@ updates and unpublish — while preserving every Phase 6 invariant.
 The post's lifecycle phase stays `published` throughout an update cycle.
 Update state lives in `update_cycles` (one open row max per post,
 enforced by the partial unique index `idx_update_cycles_open`).
-`benchmark`/`draft`/`evaluate` module phase-boundary guards remain
-strict — Phase 7 does NOT add a `published`-is-also-allowed escape
-hatch. The update CLI subcommands (`blog update benchmark/draft/evaluate`)
-call library functions directly with their own guards:
+`benchmark` and `draft` module phase-boundary guards remain strict.
+Evaluation has only manifest-gated update-review exceptions:
+`initEvaluation({ isUpdateReview: true })` and
+`runEvaluateAutocheck` may operate while `posts.phase='published'`
+when the active manifest cycle is open and `is_update_cycle=true`.
+Record/synthesize/complete/reject use the same manifest flag. The
+update CLI subcommands (`blog update benchmark/draft/evaluate`) call
+library functions directly with their own guards:
 
 - `blog update benchmark` → `createBenchmarkRun({ isUpdate: true, previousRunId })`
   — bypasses the benchmark-phase guard entirely because updates never

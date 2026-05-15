@@ -364,7 +364,11 @@ blog publish start m0lz-02-stack-loops
 blog publish distribution-kit m0lz-02-stack-loops --image-mode generate
 ```
 
-`blog evaluate structural-autocheck` only runs after `blog evaluate init` has moved the post into the `evaluate` phase.
+For normal draft reviews, `blog evaluate structural-autocheck` only runs after
+`blog evaluate init` has moved the post into the `evaluate` phase. For update
+reviews, `blog update evaluate` opens an `is_update_cycle` manifest while the
+post remains `published`; autocheck accepts only that manifest-gated published
+state.
 
 See [CLI Reference](#cli-reference) below for every subcommand.
 
@@ -481,6 +485,7 @@ blog update start <slug> --summary "what changed"
 blog update benchmark <slug> --results <file>
 blog update draft <slug>
 blog update evaluate <slug>
+blog evaluate structural-autocheck <slug>       # manifest-gated while published
 blog update publish <slug>
 blog update show <slug>
 blog update abort <slug>
@@ -576,7 +581,10 @@ The pipeline runs `assertIndexClean` + strict ahead-commit match before any push
 
 ### Reset a post back to draft for rework
 
-`blog evaluate reject <slug>` — moves back to draft, tags the next evaluation cycle as an update review.
+`blog evaluate reject <slug>` closes the current evaluation cycle and moves a
+normal draft review back to `draft`; reject/re-init cycles are not update
+reviews. Published update reviews stay `published`; continue or abort them
+through the update flow.
 
 ---
 

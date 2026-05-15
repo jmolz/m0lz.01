@@ -102,4 +102,30 @@ describe('guidance docs', () => {
       expect(codexRule).toContain(required);
     }
   });
+
+  it('Claude and Codex evaluation/lifecycle rules preserve update-review phase gates', () => {
+    const claudeEvaluation = read('.claude/rules/evaluation.md');
+    const codexEvaluation = read('.codex/rules/evaluation.md');
+    const claudeLifecycle = read('.claude/rules/lifecycle.md');
+    const codexLifecycle = read('.codex/rules/lifecycle.md');
+
+    expect(claudeEvaluation).toBe(codexEvaluation);
+    expect(claudeLifecycle).toBe(codexLifecycle);
+    expect(codexEvaluation).not.toContain('whenever `manifest.cycles.length > 1`');
+    for (const required of [
+      'explicit `is_update_cycle` flag',
+      'Update-review is the only `published` exception',
+      'activeCycle.is_update_cycle === true',
+      'allows structural autocheck for an open update-review cycle while the post remains published',
+    ]) {
+      expect(codexEvaluation).toContain(required);
+    }
+    for (const required of [
+      'Evaluation has only manifest-gated update-review exceptions',
+      '`runEvaluateAutocheck` may operate while `posts.phase=',
+      'when the active manifest cycle is open and `is_update_cycle=true`',
+    ]) {
+      expect(codexLifecycle).toContain(required);
+    }
+  });
 });

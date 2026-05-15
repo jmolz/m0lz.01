@@ -72,7 +72,7 @@ When adding a new content type: extend `expectedReviewers` and the test matrix i
 
 `rejectEvaluation` writes `.rejected_at` into the evaluation workspace, marks the current cycle as `ended_reason='rejected'` in the manifest, and moves the post back to `draft`. It does **not** delete `evaluations` or `evaluation_synthesis` rows. The next `initEvaluation` opens a new cycle (appends to `manifest.cycles`), advances `cycle_started_at`, captures `evaluation_id_floor`/`synthesis_id_floor` from the DB's current MAX(id), and removes the `.rejected_at` marker.
 
-Subsequent `recordReview` calls flag `is_update_review=1` whenever `manifest.cycles.length > 1`. `runSynthesis` and `completeEvaluation` only see rows with `id > cycle floor` — prior-cycle rows are invisible to the gate. This makes the gate strictly cycle-scoped: a stale `pass` from a pre-reject cycle cannot authorize `completeEvaluation`.
+`recordReview` sets `is_update_review=1` only from the active cycle's explicit `is_update_cycle` flag. Never infer update-review state from cycle count: a reject→re-init retry creates multiple cycles but remains a normal draft review. `runSynthesis` and `completeEvaluation` only see rows with `id > cycle floor` — prior-cycle rows are invisible to the gate. This makes the gate strictly cycle-scoped: a stale `pass` from a pre-reject cycle cannot authorize `completeEvaluation`.
 
 Cycle boundaries use monotonic row IDs, not timestamps, so clock-precision (second-level `CURRENT_TIMESTAMP` vs millisecond `toISOString()`) cannot alias cycles. Do not add a timestamp-based filter back — it will break under fast sequential commands.
 
@@ -81,6 +81,12 @@ Cycle boundaries use monotonic row IDs, not timestamps, so clock-precision (seco
 `recordReview` calls `validateReviewerOutput(output)` before any DB touch. Programmatic callers that bypass the CLI path cannot insert malformed rows. It also dedupes: if the latest row for `(slug, reviewer)` in the current cycle is byte-identical (same model, passed, issues_json, report_path), it returns that row without inserting. This keeps the advertised retry model true — running `blog evaluate record` twice with the same payload is a no-op.
 
 When the payload differs (reviewer found a new issue on a partial fix), a new row is inserted and the latest wins at synthesis time. Historical rows are preserved for audit.
+
+## Autocheck phase gate follows the active cycle
+
+`runEvaluateAutocheck` writes `structural.lint.json`, so it must prove the sidecar belongs to the active gate before touching disk. Normal evaluation requires `posts.phase === 'evaluate'`. Update-review is the only `published` exception: the manifest must exist, the active cycle must be open, and `activeCycle.is_update_cycle === true`.
+
+Missing, malformed, or closed manifests write no sidecar. This is anchored by the benchmark-results phase-gates review finding where a phase-only guard blocked update-review synthesis because `runSynthesis` fails closed when `structural.lint.json` is missing. The regression lives in `tests/evaluate-cli.test.ts` ("allows structural autocheck for an open update-review cycle while the post remains published").
 
 ## Autocheck is authoritative at synthesis — fail-closed
 
