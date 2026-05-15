@@ -16,6 +16,7 @@ import {
   listBenchmarkRuns,
   completeBenchmark,
 } from '../src/core/benchmark/state.js';
+import { writeResults } from '../src/core/benchmark/results.js';
 import { BlogConfig } from '../src/core/config/types.js';
 
 let tempDir: string | undefined;
@@ -310,7 +311,14 @@ describe('completeBenchmark', () => {
       initBenchmark(db, 'kappa', benchmarkDir, researchDir);
       const runId = createBenchmarkRun(db, 'kappa', '{}', '/tmp/results.json');
       updateBenchmarkStatus(db, runId, 'completed');
-      completeBenchmark(db, 'kappa');
+      writeResults(benchmarkDir, 'kappa', {
+        slug: 'kappa',
+        run_id: runId,
+        timestamp: new Date().toISOString(),
+        targets: ['Target A'],
+        data: { score: 1 },
+      });
+      completeBenchmark(db, 'kappa', benchmarkDir);
 
       const post = db.prepare('SELECT * FROM posts WHERE slug = ?').get('kappa') as {
         phase: string; has_benchmarks: number;
@@ -333,7 +341,33 @@ describe('completeBenchmark', () => {
     const db = getDatabase(dbPath);
     try {
       initBenchmark(db, 'mu', benchmarkDir, researchDir);
-      expect(() => completeBenchmark(db, 'mu')).toThrow(/No completed benchmark run/);
+      expect(() => completeBenchmark(db, 'mu', benchmarkDir)).toThrow(/No benchmark results/);
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  it('throws when canonical run_id does not match a completed run', () => {
+    const dir = makeTempDir();
+    const dbPath = join(dir, 'state.db');
+    const researchDir = join(dir, 'research');
+    const benchmarkDir = join(dir, 'benchmarks');
+
+    createResearchPost(dbPath, researchDir, 'nu');
+
+    const db = getDatabase(dbPath);
+    try {
+      initBenchmark(db, 'nu', benchmarkDir, researchDir);
+      const runId = createBenchmarkRun(db, 'nu', '{}', '/tmp/results.json');
+      updateBenchmarkStatus(db, runId, 'completed');
+      writeResults(benchmarkDir, 'nu', {
+        slug: 'nu',
+        run_id: runId + 10,
+        timestamp: new Date().toISOString(),
+        targets: ['Target A'],
+        data: { score: 1 },
+      });
+      expect(() => completeBenchmark(db, 'nu', benchmarkDir)).toThrow(/matching canonical run_id/);
     } finally {
       closeDatabase(db);
     }
@@ -348,7 +382,7 @@ describe('completeBenchmark', () => {
 
     const db = getDatabase(dbPath);
     try {
-      expect(() => completeBenchmark(db, 'lambda')).toThrow(/not 'benchmark'/);
+      expect(() => completeBenchmark(db, 'lambda', join(dir, 'benchmarks'))).toThrow(/not 'benchmark'/);
     } finally {
       closeDatabase(db);
     }
@@ -359,7 +393,7 @@ describe('completeBenchmark', () => {
     const dbPath = join(dir, 'state.db');
     const db = getDatabase(dbPath);
     try {
-      expect(() => completeBenchmark(db, 'nonexistent')).toThrow(/not found/);
+      expect(() => completeBenchmark(db, 'nonexistent', join(dir, 'benchmarks'))).toThrow(/not found/);
     } finally {
       closeDatabase(db);
     }

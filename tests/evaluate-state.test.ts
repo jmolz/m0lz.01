@@ -164,6 +164,19 @@ describe('initEvaluation', () => {
     expect(result.manifest.expected_reviewers).toEqual(['structural', 'adversarial']);
   });
 
+  it('purges stale autocheck sidecar when opening the first manifest', () => {
+    const f = setup();
+    seedEvaluatePost(f.db, 'fresh-purge');
+    const workspace = join(f.evaluationsDir, 'fresh-purge');
+    mkdirSync(workspace, { recursive: true });
+    writeFileSync(join(workspace, 'structural.lint.json'), '[]\n', 'utf-8');
+
+    initEvaluation(f.db, 'fresh-purge', f.evaluationsDir);
+
+    expect(existsSync(join(workspace, 'structural.lint.json'))).toBe(false);
+    expect(existsSync(join(workspace, 'manifest.json'))).toBe(true);
+  });
+
   it('is idempotent: second call preserves manifest', () => {
     const f = setup();
     seedEvaluatePost(f.db, 'i');

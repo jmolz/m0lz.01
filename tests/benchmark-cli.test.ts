@@ -13,8 +13,10 @@ import {
   runBenchmarkShow,
   runBenchmarkSkip,
   runBenchmarkComplete,
+  runBenchmarkRepair,
   BenchmarkPaths,
 } from '../src/cli/benchmark.js';
+import { readResults } from '../src/core/benchmark/results.js';
 
 interface Fixture {
   tempDir: string;
@@ -110,7 +112,6 @@ function writeValidResultsFile(f: Fixture, slug: string): string {
   const resultsFile = join(f.tempDir, `${slug}-results.json`);
   writeFileSync(resultsFile, JSON.stringify({
     slug,
-    run_id: 1,
     timestamp: new Date().toISOString(),
     targets: ['Target A'],
     data: { target_a: { mean: 42 } },
@@ -292,8 +293,12 @@ describe('runBenchmarkRun', () => {
 
       const db = getDatabase(f.dbPath);
       try {
-        const row = db.prepare('SELECT * FROM benchmarks WHERE post_slug = ?').get('alpha') as { status: string };
+        const row = db.prepare('SELECT * FROM benchmarks WHERE post_slug = ?').get('alpha') as {
+          id: number;
+          status: string;
+        };
         expect(row.status).toBe('completed');
+        expect(readResults(f.benchmarkDir, 'alpha')?.run_id).toBe(row.id);
       } finally {
         closeDatabase(db);
       }
@@ -376,6 +381,31 @@ describe('runBenchmarkRun', () => {
       process.exitCode = savedExitCode;
     }
   });
+
+  it('does not overwrite existing canonical results after a bad import', () => {
+    const f = setupFixture();
+    createResearchPost(f, 'stable');
+    captureLogs();
+    runBenchmarkInit('stable', paths(f));
+    runBenchmarkEnv('stable', paths(f));
+    runBenchmarkRun('stable', { resultsFile: writeValidResultsFile(f, 'stable') }, paths(f));
+    const before = readResults(f.benchmarkDir, 'stable');
+
+    const badFile = join(f.tempDir, 'bad-results.json');
+    writeFileSync(badFile, JSON.stringify({ slug: 'other', timestamp: new Date().toISOString(), targets: [], data: {} }));
+
+    const savedExitCode = process.exitCode;
+    try {
+      captureLogs();
+      process.exitCode = 0;
+      runBenchmarkRun('stable', { resultsFile: badFile }, paths(f));
+
+      expect(process.exitCode).toBe(1);
+      expect(readResults(f.benchmarkDir, 'stable')).toEqual(before);
+    } finally {
+      process.exitCode = savedExitCode;
+    }
+  });
 });
 
 describe('runBenchmarkShow', () => {
@@ -407,6 +437,30 @@ describe('runBenchmarkShow', () => {
     } finally {
       process.exitCode = savedExitCode;
     }
+  });
+
+  it('reports invalid canonical results without hiding other state', () => {
+    const f = setupFixture();
+    createResearchPost(f, 'invalid-show');
+    captureLogs();
+    runBenchmarkInit('invalid-show', paths(f));
+    runBenchmarkEnv('invalid-show', paths(f));
+    const slugDir = join(f.benchmarkDir, 'invalid-show');
+    writeFileSync(join(slugDir, 'results.json'), JSON.stringify({
+      slug: 'invalid-show',
+      timestamp: new Date().toISOString(),
+      targets: ['Target A'],
+      data: {},
+    }), 'utf-8');
+
+    const { logs } = captureLogs();
+    runBenchmarkShow('invalid-show', paths(f));
+
+    const combined = logs.join('\n');
+    expect(combined).toContain('phase:');
+    expect(combined).toContain('benchmark');
+    expect(combined).toContain('results_path:    (invalid:');
+    expect(combined).toContain('run_id');
   });
 });
 
@@ -546,6 +600,7 @@ describe('invalid slug rejection', () => {
         () => runBenchmarkShow('../etc/passwd', paths(f)),
         () => runBenchmarkSkip('../etc/passwd', paths(f)),
         () => runBenchmarkComplete('../etc/passwd', paths(f)),
+        () => runBenchmarkRepair('../etc/passwd', { skipOptional: true, reason: 'bad run' }, paths(f)),
       ]) {
         const { errors } = captureLogs();
         process.exitCode = 0;

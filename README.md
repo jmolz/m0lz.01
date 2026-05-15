@@ -317,12 +317,11 @@ blog benchmark show m0lz-02-stack-loops
 blog benchmark complete m0lz-02-stack-loops
 ```
 
-The results JSON shape is:
+The operator-supplied results JSON shape is:
 
 ```json
 {
   "slug": "m0lz-02-stack-loops",
-  "run_id": 1,
   "timestamp": "2026-05-15T00:00:00.000Z",
   "targets": ["what you ran"],
   "data": {
@@ -331,9 +330,23 @@ The results JSON shape is:
 }
 ```
 
-Do not pass `.blog-agent/benchmarks/<slug>/environment.json` to `--results-file`. That file only captures machine metadata. `--results-file` must point to benchmark results with the exact shape above; the CLI rejects environment snapshots and slug mismatches.
+Do not pass `.blog-agent/benchmarks/<slug>/environment.json` to `--results-file`. That file only captures machine metadata. `--results-file` must point to benchmark results with the exact shape above; the CLI rejects environment snapshots and slug mismatches. Operator files do not need `run_id`; canonical `.blog-agent/benchmarks/<slug>/results.json` gets the authoritative DB run id when the CLI imports it.
 
 `blog benchmark skip` only works before `blog benchmark init`, while the post is still in `research`.
+
+If an optional project-launch benchmark was started and the wrong file was imported, use the explicit repair path instead of editing SQLite:
+
+```bash
+# Replace bad canonical results with a valid result file. Requires an existing environment.json.
+blog benchmark repair m0lz-02-stack-loops --results-file path/to/results.json
+
+# Or skip a failed optional benchmark attempt, preserving raw benchmark artifacts.
+blog benchmark repair m0lz-02-stack-loops \
+  --skip-optional \
+  --reason "Optional project-launch benchmark attempt imported environment.json by mistake"
+```
+
+`--skip-optional` works only for optional benchmark content in `benchmark` or `draft`, refuses existing draft MDX that may contain stale benchmark prose, writes `.blog-agent/benchmarks/<slug>/repair.json`, and advances `benchmark -> draft` when needed.
 
 Then continue through draft, evaluate, and publish:
 
@@ -436,6 +449,8 @@ blog benchmark run <slug> --results-file <file> # import BenchmarkResults JSON, 
 blog benchmark show <slug>
 blog benchmark skip <slug>                      # skip/optional content only; research -> draft
 blog benchmark complete <slug>                  # requires imported results, then → draft phase
+blog benchmark repair <slug> --results-file <file>
+blog benchmark repair <slug> --skip-optional --reason "..."
 
 # Draft phase
 blog draft init <slug>
@@ -463,7 +478,7 @@ blog publish distribution-kit <slug> \
 
 # Update an already-published post
 blog update start <slug> --summary "what changed"
-blog update benchmark <slug>
+blog update benchmark <slug> --results <file>
 blog update draft <slug>
 blog update evaluate <slug>
 blog update publish <slug>

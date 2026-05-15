@@ -61,6 +61,7 @@ Live dogfood transcript will be captured in `docs/journeys/launch.md` once a rea
 
 - `blog research finalize [<slug>]`
 - `blog benchmark init [<slug>]`
+- `blog benchmark env [<slug>]`
 - `blog benchmark run [<slug>, --results-file, <path>]`
 - `blog benchmark complete [<slug>]`
 - `blog draft init [<slug>]`
@@ -95,6 +96,17 @@ Phase stays `published` throughout; update state lives in `update_cycles` (one o
 - `blog update draft [<slug>]`
 - `blog update evaluate [<slug>, --reviewer, ...]`
 - `blog update publish [<slug>]`
+
+## Benchmark repair path
+
+If `blog benchmark run` imported the wrong artifact, do not repair the SQLite row by hand. `environment.json` is machine metadata, not benchmark results. External result files may omit `run_id`; the CLI writes the DB-authoritative `run_id` into canonical `.blog-agent/benchmarks/<slug>/results.json`.
+
+Hash-bound plans may call:
+
+- `blog benchmark repair [<slug>, --results-file, <path>]`
+- `blog benchmark repair [<slug>, --skip-optional, --reason, "..."]`
+
+`--skip-optional` is only for optional benchmark content in `benchmark` or `draft`, preserves raw benchmark artifacts, writes `repair.json`, and refuses an existing draft file that may contain stale benchmark prose.
 
 ## Journey D — Unpublish a post
 

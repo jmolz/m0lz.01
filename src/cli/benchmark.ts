@@ -18,6 +18,9 @@ import {
   updateBenchmarkStatus,
   listBenchmarkRuns,
   completeBenchmark,
+  getBenchmarkRepairPost,
+  repairBenchmarkResults,
+  repairSkipOptionalBenchmark,
 } from '../core/benchmark/state.js';
 import {
   writeResults,
@@ -25,12 +28,14 @@ import {
   writeEnvironment,
   readEnvironment,
   BenchmarkResults,
-  parseBenchmarkResultsJson,
+  parseBenchmarkResultsInputJson,
+  canonicalizeBenchmarkResults,
 } from '../core/benchmark/results.js';
 import { scaffoldCompanion } from '../core/benchmark/companion.js';
 
 const DB_PATH = resolve('.blog-agent', 'state.db');
 const BENCHMARK_DIR = resolve('.blog-agent', 'benchmarks');
+const DRAFTS_DIR = resolve('.blog-agent', 'drafts');
 const REPOS_DIR = resolve('.blog-agent', 'repos');
 const RESEARCH_DIR = resolve('.blog-agent', 'research');
 const CONFIG_PATH = resolve('.blogrc.yaml');
@@ -38,6 +43,7 @@ const CONFIG_PATH = resolve('.blogrc.yaml');
 export interface BenchmarkPaths {
   dbPath?: string;
   benchmarkDir?: string;
+  draftsDir?: string;
   reposDir?: string;
   researchDir?: string;
   configPath?: string;
@@ -225,7 +231,8 @@ export function runBenchmarkRun(
 
       let resultsData: BenchmarkResults;
       try {
-        resultsData = parseBenchmarkResultsJson(readFileSync(opts.resultsFile, 'utf-8'), slug);
+        const input = parseBenchmarkResultsInputJson(readFileSync(opts.resultsFile, 'utf-8'), slug);
+        resultsData = canonicalizeBenchmarkResults(input, runId);
       } catch (e) {
         console.error(`Invalid benchmark results file: ${(e as Error).message}`);
         updateBenchmarkStatus(db, runId, 'failed');
@@ -233,9 +240,16 @@ export function runBenchmarkRun(
         return;
       }
 
-      writeResults(benchmarkDir, slug, resultsData);
-      updateBenchmarkStatus(db, runId, 'completed');
-      console.log(`Run ${runId} completed. Results stored.`);
+      try {
+        writeResults(benchmarkDir, slug, resultsData);
+        updateBenchmarkStatus(db, runId, 'completed');
+        console.log(`Run ${runId} completed. Results stored.`);
+      } catch (e) {
+        updateBenchmarkStatus(db, runId, 'failed');
+        console.error((e as Error).message);
+        process.exitCode = 1;
+        return;
+      }
     } else {
       console.log(
         `Run row created (id=${runId}, status=running). ` +
@@ -274,8 +288,12 @@ export function runBenchmarkShow(slug: string, paths: BenchmarkPaths = {}): void
     const contentType = post.content_type ?? 'technical-deep-dive';
     let requirement = 'unknown';
     if (existsSync(configPath)) {
-      const config = loadConfig(configPath);
-      requirement = getBenchmarkRequirement(contentType as ContentType, config);
+      try {
+        const config = loadConfig(configPath);
+        requirement = getBenchmarkRequirement(contentType as ContentType, config);
+      } catch (e) {
+        console.error(`Warning: failed to read config (${(e as Error).message}). Benchmark requirement unavailable.`);
+      }
     }
 
     const runs = listBenchmarkRuns(db, slug);
@@ -375,28 +393,145 @@ export function runBenchmarkComplete(slug: string, paths: BenchmarkPaths = {}): 
   const db = getDatabase(dbPath);
   try {
     try {
-      const post = getBenchmarkPost(db, slug);
-      if (!post) {
-        console.error(`Post not found: ${slug}`);
-        process.exitCode = 1;
-        return;
-      }
-      const results = readResults(benchmarkDir, slug);
-      if (!results) {
-        console.error(
-          `No benchmark results found for '${slug}'. ` +
-          `Run 'blog benchmark run ${slug} --results-file <file>' first.`,
-        );
-        process.exitCode = 1;
-        return;
-      }
-      completeBenchmark(db, slug);
+      completeBenchmark(db, slug, benchmarkDir);
     } catch (e) {
       console.error((e as Error).message);
       process.exitCode = 1;
       return;
     }
     console.log(`Benchmarks completed for ${slug}. Phase advanced to draft.`);
+  } finally {
+    closeDatabase(db);
+  }
+}
+
+export interface BenchmarkRepairOptions {
+  resultsFile?: string;
+  skipOptional?: boolean;
+  reason?: string;
+  allowCaptureRepairEnvironment?: boolean;
+}
+
+export function runBenchmarkRepair(
+  slug: string,
+  opts: BenchmarkRepairOptions,
+  paths: BenchmarkPaths = {},
+): void {
+  try {
+    validateSlug(slug);
+  } catch (e) {
+    console.error((e as Error).message);
+    process.exitCode = 1;
+    return;
+  }
+
+  const wantsResults = opts.resultsFile !== undefined;
+  const wantsSkip = opts.skipOptional === true;
+  if (wantsResults === wantsSkip) {
+    console.error(
+      `Choose exactly one repair mode: ` +
+      `--results-file <file> or --skip-optional --reason "..."`,
+    );
+    process.exitCode = 1;
+    return;
+  }
+
+  const dbPath = paths.dbPath ?? DB_PATH;
+  const benchmarkDir = paths.benchmarkDir ?? BENCHMARK_DIR;
+  const draftsDir = paths.draftsDir ?? DRAFTS_DIR;
+  const configPath = paths.configPath ?? CONFIG_PATH;
+  requireDb(dbPath);
+
+  const db = getDatabase(dbPath);
+  try {
+    if (wantsResults) {
+      const resultsFile = opts.resultsFile!;
+      if (!existsSync(resultsFile)) {
+        console.error(`Results file not found: ${resultsFile}`);
+        process.exitCode = 1;
+        return;
+      }
+
+      try {
+        getBenchmarkRepairPost(db, slug);
+      } catch (e) {
+        console.error((e as Error).message);
+        process.exitCode = 1;
+        return;
+      }
+
+      let env = readEnvironment(benchmarkDir, slug);
+      let environmentCapturedAtRepair = false;
+      if (!env) {
+        if (opts.allowCaptureRepairEnvironment !== true) {
+          console.error(
+            `No environment captured for '${slug}'. ` +
+            `Run 'blog benchmark env ${slug}' first, or re-run repair with ` +
+            `--allow-capture-repair-environment to capture current machine metadata in the repair receipt.`,
+          );
+          process.exitCode = 1;
+          return;
+        }
+        env = captureEnvironment();
+        writeEnvironment(benchmarkDir, slug, env);
+        environmentCapturedAtRepair = true;
+      }
+
+      let input;
+      try {
+        input = parseBenchmarkResultsInputJson(readFileSync(resultsFile, 'utf-8'), slug);
+      } catch (e) {
+        console.error(`Invalid benchmark results file: ${(e as Error).message}`);
+        process.exitCode = 1;
+        return;
+      }
+
+      try {
+        const result = repairBenchmarkResults(db, slug, benchmarkDir, {
+          input,
+          sourcePath: resultsFile,
+          environmentJson: JSON.stringify(env),
+          environmentCapturedAtRepair,
+        });
+        console.log(`Benchmark results repaired for ${slug}.`);
+        console.log(`Run: ${result.runId}`);
+        console.log(`Results: ${result.resultsPath}`);
+        console.log(`Receipt: ${result.receiptPath}`);
+      } catch (e) {
+        console.error((e as Error).message);
+        process.exitCode = 1;
+      }
+      return;
+    }
+
+    if (!existsSync(configPath)) {
+      console.error(`Config not found: ${configPath}. Run 'blog init' first.`);
+      process.exitCode = 1;
+      return;
+    }
+
+    const config = loadConfig(configPath);
+    const post = db.prepare('SELECT * FROM posts WHERE slug = ?').get(slug) as
+      import('../core/db/types.js').PostRow | undefined;
+    if (!post) {
+      console.error(`Post not found: ${slug}`);
+      process.exitCode = 1;
+      return;
+    }
+    const contentType = post.content_type ?? 'technical-deep-dive';
+    const requirement = getBenchmarkRequirement(contentType as ContentType, config);
+    try {
+      const result = repairSkipOptionalBenchmark(db, slug, benchmarkDir, draftsDir, {
+        benchmarkRequirement: requirement,
+        reason: opts.reason ?? '',
+      });
+      console.log(`Optional benchmark attempt skipped for ${slug}.`);
+      console.log(`Phase: ${result.phase}`);
+      console.log(`Receipt: ${result.receiptPath}`);
+    } catch (e) {
+      console.error((e as Error).message);
+      process.exitCode = 1;
+    }
   } finally {
     closeDatabase(db);
   }
@@ -446,5 +581,19 @@ export function registerBenchmark(program: Command): void {
     .description('Mark benchmarks as done and advance to draft phase')
     .action((slug: string) => {
       runBenchmarkComplete(slug);
+    });
+
+  benchmark
+    .command('repair <slug>')
+    .description('Repair invalid benchmark evidence without editing SQLite directly')
+    .option('--results-file <path>', 'Path to replacement benchmark results JSON', resolveUserPath)
+    .option('--skip-optional', 'Skip a failed optional benchmark attempt and preserve raw artifacts')
+    .option('--reason <text>', 'Audit reason for --skip-optional')
+    .option(
+      '--allow-capture-repair-environment',
+      'When repairing results without environment.json, capture current machine metadata and record that in repair.json',
+    )
+    .action((slug: string, opts: BenchmarkRepairOptions) => {
+      runBenchmarkRepair(slug, opts);
     });
 }

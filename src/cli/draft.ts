@@ -16,6 +16,7 @@ import {
   draftPath,
   regenerateDraftFrontmatter,
   PLACEHOLDER_PATTERN,
+  validateDraftBenchmarkEvidence,
 } from '../core/draft/state.js';
 import { parseFrontmatter, validateFrontmatter } from '../core/draft/frontmatter.js';
 import { getBenchmarkContext } from '../core/draft/benchmark-data.js';
@@ -153,7 +154,7 @@ export function runDraftShow(slug: string, paths: DraftPaths = {}): void {
       }
     }
 
-    const benchmarkCtx = getBenchmarkContext(benchmarkDir, slug, { githubUser });
+    const benchmarkCtx = post.has_benchmarks ? getBenchmarkContext(benchmarkDir, slug, { githubUser }) : null;
 
     console.log(`slug:            ${post.slug}`);
     console.log(`phase:           ${post.phase}`);
@@ -161,10 +162,10 @@ export function runDraftShow(slug: string, paths: DraftPaths = {}): void {
     console.log(`draft_file:      ${hasDraft ? mdxPath : '(not created)'}`);
     console.log(`frontmatter:     ${hasDraft ? (fmValid ? 'valid' : 'invalid') : '(no draft)'}`);
     console.log(`assets:          ${assets.length}`);
-    if (benchmarkCtx.resultsError) {
+    if (benchmarkCtx?.resultsError) {
       console.log(`benchmark_data:  invalid (${benchmarkCtx.resultsError})`);
     } else {
-      console.log(`benchmark_data:  ${benchmarkCtx.results ? 'available' : 'none'}`);
+      console.log(`benchmark_data:  ${benchmarkCtx?.results ? 'available' : 'none'}`);
     }
     if (existingTags.length > 0) {
       console.log(`existing_tags:   ${existingTags.join(', ')}`);
@@ -185,6 +186,7 @@ export function runDraftValidate(slug: string, paths: DraftPaths = {}): void {
 
   const dbPath = paths.dbPath ?? DB_PATH;
   const draftsDir = paths.draftsDir ?? DRAFTS_DIR;
+  const benchmarkDir = paths.benchmarkDir ?? BENCHMARK_DIR;
   requireDb(dbPath);
 
   const db = getDatabase(dbPath);
@@ -213,6 +215,7 @@ export function runDraftValidate(slug: string, paths: DraftPaths = {}): void {
     const content = readFileSync(mdxPath, 'utf-8');
     const fm = parseFrontmatter(content);
     const validation = validateFrontmatter(fm);
+    const benchmarkErrors = validateDraftBenchmarkEvidence(post, slug, benchmarkDir);
 
     // Check for placeholder sections
     const placeholderCount = (content.match(PLACEHOLDER_PATTERN) || []).length;
@@ -227,7 +230,12 @@ export function runDraftValidate(slug: string, paths: DraftPaths = {}): void {
       }
     }
 
-    const allOk = validation.ok && placeholderCount === 0 && missingAssets.length === 0;
+    const allOk = (
+      validation.ok &&
+      benchmarkErrors.length === 0 &&
+      placeholderCount === 0 &&
+      missingAssets.length === 0
+    );
 
     if (validation.ok) {
       console.log('Frontmatter: valid');
@@ -242,6 +250,13 @@ export function runDraftValidate(slug: string, paths: DraftPaths = {}): void {
       console.error(`Placeholder sections remaining: ${placeholderCount}`);
     } else {
       console.log('Sections: all filled');
+    }
+
+    if (benchmarkErrors.length > 0) {
+      console.error('Benchmark errors:');
+      for (const err of benchmarkErrors) {
+        console.error(`  - ${err}`);
+      }
     }
 
     if (missingAssets.length > 0) {
@@ -293,6 +308,7 @@ export function runDraftAddAsset(
 
   const dbPath = paths.dbPath ?? DB_PATH;
   const draftsDir = paths.draftsDir ?? DRAFTS_DIR;
+  const benchmarkDir = paths.benchmarkDir ?? BENCHMARK_DIR;
   requireDb(dbPath);
 
   const assetPath = resolve(draftsDir, slug, 'assets', opts.file);
@@ -461,12 +477,13 @@ export function runDraftComplete(slug: string, paths: DraftPaths = {}): void {
 
   const dbPath = paths.dbPath ?? DB_PATH;
   const draftsDir = paths.draftsDir ?? DRAFTS_DIR;
+  const benchmarkDir = paths.benchmarkDir ?? BENCHMARK_DIR;
   requireDb(dbPath);
 
   const db = getDatabase(dbPath);
   try {
     try {
-      completeDraft(db, slug, draftsDir);
+      completeDraft(db, slug, draftsDir, benchmarkDir);
     } catch (e) {
       console.error((e as Error).message);
       process.exitCode = 1;

@@ -10,16 +10,34 @@ export interface BenchmarkResults {
   timestamp: string;
   targets: string[];
   data: Record<string, unknown>;
+  summary?: string | Record<string, unknown>;
+}
+
+export interface BenchmarkResultsInput {
+  slug: string;
+  timestamp: string;
+  targets: string[];
+  data: Record<string, unknown>;
+  summary?: string | Record<string, unknown>;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-export function validateBenchmarkResults(
+function parseJson(raw: string, label: string): unknown {
+  try {
+    return JSON.parse(raw);
+  } catch (e) {
+    throw new Error(`Invalid ${label} JSON: ${(e as Error).message}`);
+  }
+}
+
+function validateCommonFields(
   value: unknown,
-  expectedSlug?: string,
-): BenchmarkResults {
+  expectedSlug: string | undefined,
+  options: { requireRunId: boolean },
+): BenchmarkResultsInput & { run_id?: unknown } {
   if (!isRecord(value)) {
     throw new Error('Invalid BenchmarkResults: expected a JSON object.');
   }
@@ -32,7 +50,7 @@ export function validateBenchmarkResults(
     errors.push(`field 'slug' must be '${expectedSlug}', got '${value.slug}'`);
   }
 
-  if (!Number.isInteger(value.run_id)) {
+  if (options.requireRunId && !Number.isInteger(value.run_id)) {
     errors.push("missing integer field 'run_id'");
   }
 
@@ -50,6 +68,13 @@ export function validateBenchmarkResults(
     errors.push("missing object field 'data'");
   }
 
+  if (
+    value.summary !== undefined &&
+    !(typeof value.summary === 'string' || isRecord(value.summary))
+  ) {
+    errors.push("optional field 'summary' must be a string or object");
+  }
+
   if (errors.length > 0) {
     throw new Error(
       `Invalid BenchmarkResults: ${errors.join('; ')}. ` +
@@ -57,20 +82,63 @@ export function validateBenchmarkResults(
     );
   }
 
-  return value as unknown as BenchmarkResults;
+  return value as unknown as BenchmarkResultsInput & { run_id?: unknown };
+}
+
+export function parseBenchmarkResultsInput(
+  value: unknown,
+  expectedSlug?: string,
+): BenchmarkResultsInput {
+  const validated = validateCommonFields(value, expectedSlug, { requireRunId: false });
+  return {
+    slug: validated.slug,
+    timestamp: validated.timestamp,
+    targets: validated.targets,
+    data: validated.data,
+    ...(validated.summary !== undefined ? { summary: validated.summary } : {}),
+  };
+}
+
+export function parseBenchmarkResultsInputJson(
+  raw: string,
+  expectedSlug?: string,
+): BenchmarkResultsInput {
+  return parseBenchmarkResultsInput(parseJson(raw, 'BenchmarkResults'), expectedSlug);
+}
+
+export function validateBenchmarkResults(
+  value: unknown,
+  expectedSlug?: string,
+): BenchmarkResults {
+  const validated = validateCommonFields(value, expectedSlug, { requireRunId: true });
+  return {
+    slug: validated.slug,
+    run_id: validated.run_id as number,
+    timestamp: validated.timestamp,
+    targets: validated.targets,
+    data: validated.data,
+    ...(validated.summary !== undefined ? { summary: validated.summary } : {}),
+  };
 }
 
 export function parseBenchmarkResultsJson(
   raw: string,
   expectedSlug?: string,
 ): BenchmarkResults {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch (e) {
-    throw new Error(`Invalid BenchmarkResults JSON: ${(e as Error).message}`);
+  return validateBenchmarkResults(parseJson(raw, 'BenchmarkResults'), expectedSlug);
+}
+
+export function canonicalizeBenchmarkResults(
+  input: BenchmarkResultsInput,
+  runId: number,
+): BenchmarkResults {
+  if (!Number.isInteger(runId) || runId <= 0) {
+    throw new Error(`Invalid benchmark run id: ${runId}`);
   }
-  return validateBenchmarkResults(parsed, expectedSlug);
+  return {
+    ...input,
+    run_id: runId,
+  };
 }
 
 export function writeResults(
@@ -79,6 +147,7 @@ export function writeResults(
   results: BenchmarkResults,
 ): string {
   validateSlug(slug);
+  validateBenchmarkResults(results, slug);
   const dir = join(benchmarkDir, slug);
   mkdirSync(dir, { recursive: true });
   const filePath = join(dir, 'results.json');
@@ -96,6 +165,29 @@ export function readResults(
     return null;
   }
   return parseBenchmarkResultsJson(readFileSync(filePath, 'utf-8'), slug);
+}
+
+function summaryToString(value: unknown): string | null {
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  }
+  if (isRecord(value)) {
+    return JSON.stringify(value, null, 2);
+  }
+  return null;
+}
+
+export function extractBenchmarkSummary(results: BenchmarkResults): string | null {
+  return summaryToString(results.summary) ?? summaryToString(results.data.summary);
+}
+
+export function readBenchmarkSummary(
+  benchmarkDir: string,
+  slug: string,
+): string | null {
+  const results = readResults(benchmarkDir, slug);
+  return results ? extractBenchmarkSummary(results) : null;
 }
 
 export function writeEnvironment(

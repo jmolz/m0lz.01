@@ -20,7 +20,9 @@ import { appendUpdateNotice } from '../core/update/notice.js';
 import {
   createBenchmarkRun,
   latestBaselineBenchmarkId,
+  updateBenchmarkStatus,
 } from '../core/benchmark/state.js';
+import { parseBenchmarkResultsInputJson } from '../core/benchmark/results.js';
 import { initEvaluation } from '../core/evaluate/state.js';
 import { runPipeline } from '../core/publish/pipeline-runner.js';
 import { PipelineContext } from '../core/publish/pipeline-types.js';
@@ -192,12 +194,25 @@ export function runUpdateBenchmark(
       process.exitCode = 1;
       return;
     }
+    try {
+      parseBenchmarkResultsInputJson(readFileSync(opts.results, 'utf-8'), slug);
+    } catch (e) {
+      console.error(`Invalid benchmark results file: ${(e as Error).message}`);
+      process.exitCode = 1;
+      return;
+    }
     const envJson = opts.environmentJson ?? '{}';
     const previousRunId = latestBaselineBenchmarkId(db, slug) ?? undefined;
+    // Update-cycle benchmarks intentionally keep the operator-supplied
+    // results path instead of rewriting the baseline canonical
+    // `.blog-agent/benchmarks/<slug>/results.json`; the update cycle is a
+    // separate comparison artifact. The same input validator still protects
+    // slug and shape before the DB row is recorded.
     const runId = createBenchmarkRun(db, slug, envJson, resolve(opts.results), {
       isUpdate: true,
       previousRunId,
     });
+    updateBenchmarkStatus(db, runId, 'completed');
     console.log(
       `Update benchmark run ${runId} recorded for '${slug}' ` +
       `(is_update=1, previous_run_id=${previousRunId ?? 'null'}).`,

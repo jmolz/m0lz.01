@@ -64,7 +64,9 @@ The two gates are INDEPENDENT — DB sources do NOT auto-populate the `Sources` 
 - `published` — canonical state; target of initial publish; source state for updates + unpublish.
 - `unpublished` — terminal; slug is reserved forever (canonical-URL permanence).
 
-Phase-boundary guards in the CLI reject a subcommand that doesn't match the post's current phase. Update commands (`blog update benchmark/draft/evaluate/publish`) bypass these guards via an explicit `isUpdateReview`/`isUpdate` flag because the post stays in `published` throughout the update cycle.
+Phase-boundary guards in the CLI reject a subcommand that doesn't match the post's current phase. `blog benchmark repair` is the explicit recovery exception: it may repair benchmark evidence in `benchmark` or `draft` so operators can recover from a bad import without editing `.blog-agent/state.db`. Update commands (`blog update benchmark/draft/evaluate/publish`) bypass these guards via an explicit `isUpdateReview`/`isUpdate` flag because the post stays in `published` throughout the update cycle.
+
+Benchmark results are distinct from environment snapshots. `.blog-agent/benchmarks/<slug>/environment.json` is machine metadata and must not be passed as `--results-file`. External result JSON omits `run_id`; the CLI stores the DB-authoritative run id in canonical `.blog-agent/benchmarks/<slug>/results.json`. If a bad optional project-launch benchmark attempt already happened, use `blog benchmark repair <slug> --results-file <path>` to replace canonical `results.json` from a valid source file, or `blog benchmark repair <slug> --skip-optional --reason "..."` to preserve the bad raw artifacts and mark the optional benchmark as skipped. Both modes write `repair.json`.
 
 ## Draft-frontmatter recovery (`blog draft regenerate-frontmatter <slug> [--project <id>]`)
 

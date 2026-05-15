@@ -10,6 +10,9 @@ import {
   readEnvironment,
   BenchmarkResults,
   parseBenchmarkResultsJson,
+  parseBenchmarkResultsInputJson,
+  canonicalizeBenchmarkResults,
+  readBenchmarkSummary,
 } from '../src/core/benchmark/results.js';
 import { EnvironmentSnapshot } from '../src/core/benchmark/environment.js';
 
@@ -69,6 +72,57 @@ describe('writeResults / readResults', () => {
     expect(() => parseBenchmarkResultsJson(JSON.stringify(sampleResults), 'beta')).toThrow(
       /must be 'beta'/,
     );
+  });
+
+  it('accepts operator input without run_id and canonicalizes with DB run id', () => {
+    const input = parseBenchmarkResultsInputJson(JSON.stringify({
+      slug: 'alpha',
+      timestamp: '2026-04-14T12:00:00.000Z',
+      targets: ['Target A'],
+      data: { score: 10 },
+      summary: 'median 10ms',
+    }), 'alpha');
+    const canonical = canonicalizeBenchmarkResults(input, 42);
+
+    expect(canonical.run_id).toBe(42);
+    expect(canonical.summary).toBe('median 10ms');
+  });
+
+  it('ignores guessed input run_id when canonicalizing', () => {
+    const input = parseBenchmarkResultsInputJson(JSON.stringify({
+      slug: 'alpha',
+      run_id: 999,
+      timestamp: '2026-04-14T12:00:00.000Z',
+      targets: ['Target A'],
+      data: { score: 10 },
+    }), 'alpha');
+
+    expect(canonicalizeBenchmarkResults(input, 2).run_id).toBe(2);
+  });
+
+  it('rejects canonical results without run_id', () => {
+    const dir = makeTempDir();
+    writeResults(dir, 'alpha', sampleResults);
+    const missingRunId = JSON.stringify({
+      slug: 'alpha',
+      timestamp: '2026-04-14T12:00:00.000Z',
+      targets: ['Target A'],
+      data: {},
+    });
+    expect(() => parseBenchmarkResultsJson(missingRunId, 'alpha')).toThrow(/run_id/);
+  });
+
+  it('extracts summary from canonical results summary or data.summary', () => {
+    const dir = makeTempDir();
+    writeResults(dir, 'alpha', { ...sampleResults, summary: 'top-level summary' });
+    expect(readBenchmarkSummary(dir, 'alpha')).toBe('top-level summary');
+
+    writeResults(dir, 'alpha', {
+      ...sampleResults,
+      summary: undefined,
+      data: { summary: { median: '1.2ms' } },
+    });
+    expect(readBenchmarkSummary(dir, 'alpha')).toContain('"median": "1.2ms"');
   });
 });
 

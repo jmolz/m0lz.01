@@ -99,6 +99,7 @@ export const SLUG_BEARING_STEP_COMMANDS: readonly string[] = [
   'blog benchmark show',
   'blog benchmark skip',
   'blog benchmark complete',
+  'blog benchmark repair',
   'blog draft init',
   'blog draft show',
   'blog draft validate',

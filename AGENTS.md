@@ -102,7 +102,7 @@ m0lz.01/
 
 **Claude Code plugin** (interactive, uses subscription): packaged `.claude-plugin/` `/blog` skill for research, drafting, and structural review in Claude Code.
 
-**Standalone CLI** (mechanical, no AI needed): `blog init`, `blog publish`, `blog unpublish`, `blog status`, `blog metrics`, `blog ideas`, `blog research init|add-source|show|set-section|finalize`, `blog benchmark init|env|run|show|skip|complete`, `blog draft init|show|validate|add-asset|complete|platform-images|regenerate-frontmatter`, `blog evaluate init|structural-autocheck|record|show|synthesize|complete|reject`, `blog publish distribution-kit` — these run independently for API calls, state queries, and pipeline execution.
+**Standalone CLI** (mechanical, no AI needed): `blog init`, `blog publish`, `blog unpublish`, `blog status`, `blog metrics`, `blog ideas`, `blog research init|add-source|show|set-section|finalize`, `blog benchmark init|env|run|show|skip|complete|repair`, `blog draft init|show|validate|add-asset|complete|platform-images|regenerate-frontmatter`, `blog evaluate init|structural-autocheck|record|show|synthesize|complete|reject`, `blog publish distribution-kit` — these run independently for API calls, state queries, and pipeline execution.
 
 **Shared state**: Both layers read/write the same SQLite database and file system artifacts.
 
@@ -317,13 +317,13 @@ These load automatically when editing files in their scope:
 - **ESM imports require `.js` extension** — every internal import must end in `.js` even for `.ts` source files. This is non-negotiable with Node16 module resolution.
 - **All database queries use parameterized statements** — never string interpolation for SQL. Use `?` placeholders or `@named` parameters. SQLite does not support parameterized table names — use separate prepared statements per table (branched by literal), never `${table}` interpolation.
 - **Config values are threaded, never hardcoded** — `config.author.github`, `config.site.base_url`, `config.site.content_dir`, and similar identity/URL values must flow into library functions via option parameters. Baking `jmolz` or `m0lz.dev` into a module breaks the moment another author uses the agent.
-- **Phase boundary enforcement** — research commands (`add-source`, `show`, `finalize`) must reject posts not in the `research` phase. Benchmark commands (`env`, `run`, `complete`) must reject posts not in the `benchmark` phase. Draft commands (`init`, `show`, `validate`, `add-asset`, `complete`) must reject posts not in the `draft` phase. Evaluate commands (`record`, `synthesize`, `complete`, `reject`) must reject posts not in the `evaluate` phase; `init` accepts `draft` (promotes) or `evaluate`. Library functions throw; CLI handlers catch and set `exitCode=1`.
+- **Phase boundary enforcement** — research commands (`add-source`, `show`, `finalize`) must reject posts not in the `research` phase. Benchmark commands (`env`, `run`, `complete`) must reject posts not in the `benchmark` phase. `blog benchmark repair` is the explicit recovery exception: `--results-file` and `--skip-optional` may operate in `benchmark` or `draft` to repair a bad benchmark import without direct SQLite edits. Draft commands (`init`, `show`, `validate`, `add-asset`, `complete`) must reject posts not in the `draft` phase. Evaluate commands (`record`, `synthesize`, `complete`, `reject`) must reject posts not in the `evaluate` phase; `init` accepts `draft` (promotes) or `evaluate`. Library functions throw; CLI handlers catch and set `exitCode=1`.
 - **CLI commands are non-interactive** — use Commander.js options/arguments, not readline prompts. Interactive collaboration happens in Codex skills, not the CLI.
 - **Pipeline operations are idempotent** — running any publish step twice must not create duplicates or corrupt state. Use `INSERT OR IGNORE`, check-before-act patterns.
 - **Never commit secrets** — `.env`, `.blogrc.yaml`, and `.blog-agent/` are gitignored. Only `.env.example` and `.blogrc.example.yaml` are committed.
 - **No emojis in content** — design constraint inherited from m0lz.00. Applies to generated MDX, social text, and all user-facing output.
 - **Canonical URL is permanent** — never rename a post slug after publishing. `https://m0lz.dev/writing/{slug}` is the canonical URL forever.
-- **Benchmark data is sacred** — never discard raw results, even if they contradict the thesis. Store everything. METHODOLOGY.md must be complete and reproducible.
+- **Benchmark data is sacred** — never discard raw results, even if they contradict the thesis. Store everything. METHODOLOGY.md must be complete and reproducible. `environment.json` is machine metadata, not benchmark results; operator result files omit `run_id`, and canonical `results.json` receives the DB-authoritative run id during import.
 - **Fallback is structural** — Medium and Substack API failures generate paste-ready markdown. The pipeline never blocks on unreliable APIs.
 
 ---
