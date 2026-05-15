@@ -268,6 +268,30 @@ When `blog research show` reports the document is complete, validate the phase:
 blog research finalize m0lz-02-stack-loops
 ```
 
+If finalize prints `Only 1 sources (min 3 required)`, the research doc may still be incomplete, but the CLI stopped earlier at the source-count gate. Add distinct sources until the count reaches the configured minimum. The default minimum is `evaluation.min_sources: 3` in `~/blog/.blogrc.yaml`.
+
+For this example:
+
+```bash
+blog research add-source m0lz-02-stack-loops \
+  --url "https://github.com/jmolz/m0lz.02/blob/main/README.md" \
+  --type primary \
+  --title "m0lz.02 README"
+
+blog research add-source m0lz-02-stack-loops \
+  --url "https://github.com/jmolz/m0lz.02/blob/main/docs/releases/UNRELEASED.md" \
+  --type primary \
+  --title "m0lz.02 release notes"
+
+blog research show m0lz-02-stack-loops
+```
+
+If `blog research show` still reports empty or missing sections, finish the research document before retrying finalize. If it reports `doc status: ok` and `sources` is at least the configured minimum, retry:
+
+```bash
+blog research finalize m0lz-02-stack-loops
+```
+
 `research finalize` validates the research artifact. It does not draft the post and it does not advance to the next phase. To move on, choose the benchmark path:
 
 ```bash
