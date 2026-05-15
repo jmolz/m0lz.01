@@ -95,7 +95,60 @@ export function runEvaluateAutocheck(slug: string, paths: EvaluatePaths = {}): v
   const db = getDatabase(dbPath);
   try {
     try {
+      const post = db.prepare('SELECT phase FROM posts WHERE slug = ?').get(slug) as
+        { phase: string } | undefined;
+      if (!post) {
+        console.error(`Post not found: ${slug}`);
+        process.exitCode = 1;
+        return;
+      }
+
       const workspace = evaluationDir(evaluationsDir, slug);
+      let manifest: ReturnType<typeof readManifest>;
+      if (post.phase === 'evaluate' || post.phase === 'published') {
+        try {
+          manifest = readManifest(evaluationsDir, slug);
+        } catch (e) {
+          console.error(
+            `Evaluation manifest is invalid for '${slug}': ${(e as Error).message}. ` +
+            `Repair or regenerate it with 'blog evaluate init ${slug}' before structural-autocheck.`,
+          );
+          process.exitCode = 1;
+          return;
+        }
+      } else {
+        manifest = null;
+      }
+      const activeCycle = manifest?.cycles[manifest.cycles.length - 1];
+      const isOpenUpdateReview = (
+        post.phase === 'published' &&
+        activeCycle?.is_update_cycle === true &&
+        activeCycle.ended_reason === undefined
+      );
+      if (post.phase !== 'evaluate' && !isOpenUpdateReview) {
+        console.error(
+          `Post '${slug}' is in phase '${post.phase}', not 'evaluate'. ` +
+          `Run 'blog evaluate init ${slug}' after draft completion before structural-autocheck.`,
+        );
+        process.exitCode = 1;
+        return;
+      }
+      if (!manifest) {
+        console.error(
+          `Evaluation workspace not initialized for '${slug}'. ` +
+          `Run 'blog evaluate init ${slug}' before structural-autocheck.`,
+        );
+        process.exitCode = 1;
+        return;
+      }
+      if (!activeCycle || activeCycle.ended_reason !== undefined) {
+        console.error(
+          `Current evaluation cycle for '${slug}' is closed or missing. ` +
+          `Run 'blog evaluate init ${slug}' to open a fresh cycle before structural-autocheck.`,
+        );
+        process.exitCode = 1;
+        return;
+      }
       mkdirSync(workspace, { recursive: true });
 
       const issues = runStructuralAutocheck(db, slug, { draftsDir, benchmarkDir });

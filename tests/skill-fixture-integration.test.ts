@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { PACKAGE_ROOT } from '../src/core/paths.js';
 import { computePlanHash } from '../src/core/plan-file/hash.js';
@@ -16,6 +16,11 @@ import type { Receipt } from '../src/core/plan-file/apply.js';
 // behaviors are exercised by mutating the plan file and re-invoking verify.
 
 const CLI_ENTRY = resolve(PACKAGE_ROOT, 'dist', 'cli', 'index.js');
+
+// These tests drive the real built CLI through spawnSync many times. Full
+// suite parallelism can push individual subprocess-heavy cases over Vitest's
+// 5s default even when the behavior is healthy.
+vi.setConfig({ testTimeout: 20_000 });
 
 interface SpawnResult {
   status: number;

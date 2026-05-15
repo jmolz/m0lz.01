@@ -20,9 +20,9 @@ afterEach(() => {
   }
 });
 
-function makeResults(data: Record<string, unknown> = {}): BenchmarkResults {
+function makeResults(data: Record<string, unknown> = {}, slug = 'test-bench'): BenchmarkResults {
   return {
-    slug: 'test-bench',
+    slug,
     run_id: 1,
     timestamp: '2026-01-01T00:00:00.000Z',
     targets: ['Target A'],
@@ -108,7 +108,7 @@ describe('getBenchmarkContext', () => {
     const slugDir = join(tempDir, 'test-slug');
     mkdirSync(slugDir, { recursive: true });
 
-    writeFileSync(join(slugDir, 'results.json'), JSON.stringify(makeResults({ score: 42 })));
+    writeFileSync(join(slugDir, 'results.json'), JSON.stringify(makeResults({ score: 42 }, 'test-slug')));
     writeFileSync(join(slugDir, 'environment.json'), JSON.stringify(makeEnv()));
 
     const ctx = getBenchmarkContext(tempDir, 'test-slug', { githubUser: 'jmolz' });
@@ -126,5 +126,23 @@ describe('getBenchmarkContext', () => {
     expect(ctx.environment).toBeNull();
     expect(ctx.table).toBe('(no benchmark data)');
     expect(ctx.methodologyRef).toBe('');
+  });
+
+  it('reports malformed canonical results without returning benchmark data', () => {
+    tempDir = mkdtempSync(join(tmpdir(), 'bench-data-'));
+    const slugDir = join(tempDir, 'bad-results');
+    mkdirSync(slugDir, { recursive: true });
+
+    writeFileSync(join(slugDir, 'results.json'), JSON.stringify({
+      slug: 'bad-results',
+      timestamp: '2026-01-01T00:00:00.000Z',
+      targets: ['Target A'],
+      data: {},
+    }));
+
+    const ctx = getBenchmarkContext(tempDir, 'bad-results', { githubUser: 'jmolz' });
+    expect(ctx.results).toBeNull();
+    expect(ctx.resultsError).toContain('run_id');
+    expect(ctx.table).toBe('(no benchmark data)');
   });
 });

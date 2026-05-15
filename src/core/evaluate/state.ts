@@ -639,6 +639,11 @@ export function initEvaluation(
   const openCycle = db.transaction(() => {
     const fresh = readManifest(evaluationsDir, slug);
     if (!fresh) {
+      // A pre-fix `structural-autocheck` could leave a clean-looking
+      // sidecar before any manifest existed. Starting the first real cycle
+      // must clear that stale artifact so synthesis cannot trust output from
+      // outside the active cycle.
+      purgeCycleArtifacts(workspaceDir);
       const created: EvaluationManifest = {
         slug,
         content_type: contentType,

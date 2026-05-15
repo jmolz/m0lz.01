@@ -5,6 +5,7 @@ import Database from 'better-sqlite3';
 
 import { BlogConfig } from '../config/types.js';
 import { parseFrontmatter } from '../draft/frontmatter.js';
+import { readBenchmarkSummary } from '../benchmark/results.js';
 import { parseGitHubRemoteUrl, readOriginUrl } from './origin-guard.js';
 
 // Step 2 of the publish pipeline: generate the m0lz.00 research-companion
@@ -93,27 +94,6 @@ function extractBibliography(body: string): string {
     entries.push(`- [${text}](${url})`);
   }
   return entries.length === 0 ? '(no sources listed)' : entries.join('\n');
-}
-
-function readBenchmarkSummary(benchmarkDir: string, slug: string): string | null {
-  const resultsPath = join(benchmarkDir, slug, 'results.json');
-  if (!existsSync(resultsPath)) return null;
-  try {
-    const raw = readFileSync(resultsPath, 'utf-8');
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
-    const summary = parsed.summary;
-    if (typeof summary === 'string' && summary.length > 0) {
-      return summary;
-    }
-    // Tolerate object-shaped summary by JSON-stringifying it so the page
-    // still has something meaningful rather than `[object Object]`.
-    if (summary && typeof summary === 'object') {
-      return JSON.stringify(summary, null, 2);
-    }
-    return null;
-  } catch {
-    return null;
-  }
 }
 
 function renderTagsYaml(tags: string[]): string {
@@ -236,7 +216,16 @@ export function generateResearchPage(
     extractSection(researchBody, /^#{1,6}\s+(?:Key\s+)?Findings\b/i) ??
     '(findings pending)';
   const bibliography = extractBibliography(researchBody);
-  const benchmarkSummary = readBenchmarkSummary(paths.benchmarkDir, slug);
+  let benchmarkSummary: string | null = null;
+  try {
+    benchmarkSummary = readBenchmarkSummary(paths.benchmarkDir, slug);
+  } catch {
+    // Research page generation is best-effort for methodology enrichment.
+    // Invalid benchmark results are rejected by benchmark/draft/evaluate gates;
+    // this publisher-side enrichment simply omits the summary when the
+    // canonical helper refuses the file.
+    benchmarkSummary = null;
+  }
   const methodologySummary = benchmarkSummary
     ?? (post.content_type === 'analysis-opinion' ? '' : '(no benchmark)');
   const openQuestions =

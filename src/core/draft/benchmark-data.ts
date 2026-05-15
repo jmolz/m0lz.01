@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { BenchmarkResults } from '../benchmark/results.js';
+import { BenchmarkResults, readResults } from '../benchmark/results.js';
 import { EnvironmentSnapshot } from '../benchmark/environment.js';
 
 export interface BenchmarkContext {
@@ -9,6 +9,7 @@ export interface BenchmarkContext {
   environment: EnvironmentSnapshot | null;
   table: string;
   methodologyRef: string;
+  resultsError?: string;
 }
 
 export interface MethodologyRefOptions {
@@ -93,10 +94,12 @@ export function getBenchmarkContext(
 ): BenchmarkContext {
   let results: BenchmarkResults | null = null;
   let environment: EnvironmentSnapshot | null = null;
+  let resultsError: string | undefined;
 
-  const resultsPath = join(benchmarkDir, slug, 'results.json');
-  if (existsSync(resultsPath)) {
-    results = JSON.parse(readFileSync(resultsPath, 'utf-8')) as BenchmarkResults;
+  try {
+    results = readResults(benchmarkDir, slug);
+  } catch (e) {
+    resultsError = (e as Error).message;
   }
 
   const envPath = join(benchmarkDir, slug, 'environment.json');
@@ -107,5 +110,5 @@ export function getBenchmarkContext(
   const table = results ? formatBenchmarkTable(results) : '(no benchmark data)';
   const methodologyRef = environment ? formatMethodologyRef(environment, slug, opts) : '';
 
-  return { results, environment, table, methodologyRef };
+  return { results, environment, table, methodologyRef, resultsError };
 }

@@ -139,7 +139,13 @@ function writeResearchDoc(researchDir: string, slug: string, body = SAMPLE_RESEA
 function writeBenchmarkResults(benchmarkDir: string, slug: string, summary: string): void {
   const dir = join(benchmarkDir, slug);
   mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, 'results.json'), JSON.stringify({ summary }), 'utf-8');
+  writeFileSync(join(dir, 'results.json'), JSON.stringify({
+    slug,
+    run_id: 1,
+    timestamp: new Date().toISOString(),
+    targets: ['Target A'],
+    data: { summary },
+  }), 'utf-8');
 }
 
 function writeDraft(

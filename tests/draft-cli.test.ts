@@ -113,6 +113,33 @@ function setupDraftSlug(f: Fixture, slug: string, contentType: string = 'technic
   writeResearchDocument(f.researchDir, doc, { force: true });
 }
 
+function fillDraftPlaceholders(draftsDir: string, slug: string): void {
+  const mdxPath = join(draftsDir, slug, 'index.mdx');
+  const content = readFileSync(mdxPath, 'utf-8')
+    .replace('{{title}}', 'Real Title')
+    .replace('{{description}}', 'Real description')
+    .replace('tags: []', 'tags:\n  - typescript')
+    .replace(/\{\/\* TODO: Fill this section \*\/\}/g, 'Filled content');
+  writeFileSync(mdxPath, content, 'utf-8');
+}
+
+function markBenchmarkedWithInvalidResults(f: Fixture, slug: string): void {
+  const db = getDatabase(f.dbPath);
+  try {
+    db.prepare('UPDATE posts SET has_benchmarks = 1 WHERE slug = ?').run(slug);
+  } finally {
+    closeDatabase(db);
+  }
+  const benchSlugDir = join(f.benchmarkDir, slug);
+  mkdirSync(benchSlugDir, { recursive: true });
+  writeFileSync(join(benchSlugDir, 'results.json'), JSON.stringify({
+    slug,
+    timestamp: new Date().toISOString(),
+    targets: ['Target A'],
+    data: {},
+  }), 'utf-8');
+}
+
 afterEach(() => {
   if (fixture) {
     rmSync(fixture.tempDir, { recursive: true, force: true });
@@ -211,8 +238,11 @@ describe('runDraftInit', () => {
     const benchSlugDir = join(f.benchmarkDir, 'delta-bench');
     mkdirSync(benchSlugDir, { recursive: true });
     writeFileSync(join(benchSlugDir, 'results.json'), JSON.stringify({
+      slug: 'delta-bench',
+      run_id: 1,
+      timestamp: new Date().toISOString(),
+      targets: ['Target A'],
       data: { metric_a: 100, metric_b: 200 },
-      meta: { tool: 'test', date: '2026-01-01' },
     }), 'utf-8');
 
     captureLogs();
@@ -249,6 +279,24 @@ describe('runDraftInit', () => {
       process.exitCode = savedExitCode;
     }
   });
+
+  it('fails closed when a benchmarked post has malformed results', () => {
+    const f = setupFixture();
+    setupDraftSlug(f, 'bad-benchmark', 'project-launch');
+    markBenchmarkedWithInvalidResults(f, 'bad-benchmark');
+
+    const savedExitCode = process.exitCode;
+    try {
+      const { errors } = captureLogs();
+      process.exitCode = 0;
+      runDraftInit('bad-benchmark', paths(f));
+      expect(process.exitCode).toBe(1);
+      expect(errors.join('\n')).toContain('Invalid benchmark results');
+      expect(errors.join('\n')).toContain('blog benchmark repair bad-benchmark');
+    } finally {
+      process.exitCode = savedExitCode;
+    }
+  });
 });
 
 describe('runDraftShow', () => {
@@ -270,6 +318,33 @@ describe('runDraftShow', () => {
     } finally {
       process.exitCode = savedExitCode;
     }
+  });
+
+  it('reports invalid benchmark data in draft show', () => {
+    const f = setupFixture();
+    setupDraftSlug(f, 'show-invalid', 'project-launch');
+    markBenchmarkedWithInvalidResults(f, 'show-invalid');
+
+    const { logs } = captureLogs();
+    runDraftShow('show-invalid', paths(f));
+    expect(logs.join('\n')).toContain('benchmark_data:  invalid');
+  });
+
+  it('ignores preserved invalid benchmark artifacts after optional skip', () => {
+    const f = setupFixture();
+    setupDraftSlug(f, 'show-skipped', 'project-launch');
+    const benchSlugDir = join(f.benchmarkDir, 'show-skipped');
+    mkdirSync(benchSlugDir, { recursive: true });
+    writeFileSync(join(benchSlugDir, 'results.json'), JSON.stringify({
+      slug: 'show-skipped',
+      bad: true,
+    }), 'utf-8');
+
+    const { logs } = captureLogs();
+    runDraftShow('show-skipped', paths(f));
+    const combined = logs.join('\n');
+    expect(combined).toContain('benchmark_data:  none');
+    expect(combined).not.toContain('benchmark_data:  invalid');
   });
 
   it('errors for wrong phase', () => {
@@ -389,6 +464,27 @@ describe('runDraftValidate', () => {
       runDraftValidate('val-asset', paths(f));
       expect(process.exitCode).toBe(1);
       expect(errors.join('\n')).toContain('missing.svg');
+    } finally {
+      process.exitCode = savedExitCode;
+    }
+  });
+
+  it('fails when benchmarked post has malformed results', () => {
+    const f = setupFixture();
+    setupDraftSlug(f, 'val-bad-benchmark', 'project-launch');
+    captureLogs();
+    runDraftInit('val-bad-benchmark', paths(f));
+    fillDraftPlaceholders(f.draftsDir, 'val-bad-benchmark');
+    markBenchmarkedWithInvalidResults(f, 'val-bad-benchmark');
+
+    const savedExitCode = process.exitCode;
+    try {
+      const { errors } = captureLogs();
+      process.exitCode = 0;
+      runDraftValidate('val-bad-benchmark', paths(f));
+      expect(process.exitCode).toBe(1);
+      expect(errors.join('\n')).toContain('Benchmark errors');
+      expect(errors.join('\n')).toContain('blog benchmark repair val-bad-benchmark');
     } finally {
       process.exitCode = savedExitCode;
     }
@@ -559,13 +655,7 @@ describe('runDraftComplete', () => {
     runDraftInit('complete-test', paths(f));
 
     // Fill in the draft
-    const mdxPath = join(f.draftsDir, 'complete-test', 'index.mdx');
-    const content = readFileSync(mdxPath, 'utf-8')
-      .replace('{{title}}', 'Real Title')
-      .replace('{{description}}', 'Real description')
-      .replace('tags: []', 'tags:\n  - typescript')
-      .replace(/\{\/\* TODO: Fill this section \*\/\}/g, 'Filled content');
-    writeFileSync(mdxPath, content, 'utf-8');
+    fillDraftPlaceholders(f.draftsDir, 'complete-test');
 
     const { logs } = captureLogs();
     const savedExitCode = process.exitCode;
@@ -578,6 +668,35 @@ describe('runDraftComplete', () => {
       try {
         const post = db.prepare('SELECT * FROM posts WHERE slug = ?').get('complete-test') as { phase: string };
         expect(post.phase).toBe('evaluate');
+      } finally {
+        closeDatabase(db);
+      }
+    } finally {
+      process.exitCode = savedExitCode;
+    }
+  });
+
+  it('does not advance when benchmarked post has malformed results', () => {
+    const f = setupFixture();
+    setupDraftSlug(f, 'complete-bad-benchmark', 'project-launch');
+    captureLogs();
+    runDraftInit('complete-bad-benchmark', paths(f));
+    fillDraftPlaceholders(f.draftsDir, 'complete-bad-benchmark');
+    markBenchmarkedWithInvalidResults(f, 'complete-bad-benchmark');
+
+    const savedExitCode = process.exitCode;
+    try {
+      const { errors } = captureLogs();
+      process.exitCode = 0;
+      runDraftComplete('complete-bad-benchmark', paths(f));
+      expect(process.exitCode).toBe(1);
+      expect(errors.join('\n')).toContain('Invalid benchmark results');
+      const db = getDatabase(f.dbPath);
+      try {
+        const post = db.prepare('SELECT phase FROM posts WHERE slug = ?').get('complete-bad-benchmark') as {
+          phase: string;
+        };
+        expect(post.phase).toBe('draft');
       } finally {
         closeDatabase(db);
       }

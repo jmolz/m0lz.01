@@ -10,7 +10,7 @@ import { initResearchPost, advancePhase } from '../src/core/research/state.js';
 import { openUpdateCycle } from '../src/core/update/cycles.js';
 import yaml from 'js-yaml';
 
-import { runUpdateAbort, runUpdateStart, runUpdateShow } from '../src/cli/update.js';
+import { runUpdateAbort, runUpdateStart, runUpdateShow, runUpdateBenchmark } from '../src/cli/update.js';
 import { BlogConfig } from '../src/core/config/types.js';
 
 interface Fx {
@@ -67,6 +67,18 @@ function seedPublishedPost(db: Database.Database, slug: string): void {
   db.prepare('UPDATE posts SET evaluation_passed = 1 WHERE slug = ?').run(slug);
   advancePhase(db, slug, 'publish');
   advancePhase(db, slug, 'published');
+}
+
+function writeResultsInput(f: Fx, slug: string, overrides: Record<string, unknown> = {}): string {
+  const file = join(f.tempDir, `${slug}-results.json`);
+  writeFileSync(file, JSON.stringify({
+    slug,
+    timestamp: new Date().toISOString(),
+    targets: ['Target A'],
+    data: { score: 42 },
+    ...overrides,
+  }), 'utf-8');
+  return file;
 }
 
 afterEach(() => {
@@ -164,6 +176,54 @@ describe('runUpdateStart — --summary contract', () => {
     f.db = getDatabase(f.dbPath);
     const cycles = f.db.prepare('SELECT id FROM update_cycles WHERE post_slug = ?').all('needy');
     expect(cycles).toEqual([]);
+  });
+});
+
+describe('runUpdateBenchmark', () => {
+  it('validates benchmark result shape before recording the update run', () => {
+    const f = setup();
+    f.db = getDatabase(f.dbPath);
+    seedPublishedPost(f.db, 'upd');
+    openUpdateCycle(f.db, 'upd', 'Re-run benchmarks');
+    closeDatabase(f.db);
+    f.db = undefined;
+
+    const errors: string[] = [];
+    vi.spyOn(console, 'error').mockImplementation((msg: unknown) => {
+      errors.push(String(msg));
+    });
+
+    runUpdateBenchmark('upd', { results: writeResultsInput(f, 'other') }, { dbPath: f.dbPath });
+
+    expect(process.exitCode).toBe(1);
+    expect(errors.join('\n')).toContain("field 'slug' must be 'upd'");
+    f.db = getDatabase(f.dbPath);
+    const rows = f.db.prepare('SELECT id FROM benchmarks WHERE post_slug = ?').all('upd');
+    expect(rows).toEqual([]);
+  });
+
+  it('records a completed update benchmark row for valid input while preserving external path', () => {
+    const f = setup();
+    const resultsPath = writeResultsInput(f, 'valid-upd');
+    f.db = getDatabase(f.dbPath);
+    seedPublishedPost(f.db, 'valid-upd');
+    openUpdateCycle(f.db, 'valid-upd', 'Re-run benchmarks');
+    closeDatabase(f.db);
+    f.db = undefined;
+
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    runUpdateBenchmark('valid-upd', { results: resultsPath }, { dbPath: f.dbPath });
+
+    expect(process.exitCode ?? 0).toBe(0);
+    f.db = getDatabase(f.dbPath);
+    const row = f.db.prepare('SELECT status, is_update, results_path FROM benchmarks WHERE post_slug = ?').get('valid-upd') as {
+      status: string;
+      is_update: number;
+      results_path: string;
+    };
+    expect(row.status).toBe('completed');
+    expect(row.is_update).toBe(1);
+    expect(row.results_path).toBe(resultsPath);
   });
 });
 

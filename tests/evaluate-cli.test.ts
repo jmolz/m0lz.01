@@ -19,7 +19,7 @@ import {
 } from '../src/cli/evaluate.js';
 import { ContentType, ReviewerType } from '../src/core/db/types.js';
 import { Issue, ReviewerOutput, issueFingerprint } from '../src/core/evaluate/reviewer.js';
-import { computeReviewedArtifactHashes } from '../src/core/evaluate/state.js';
+import { computeReviewedArtifactHashes, initEvaluation } from '../src/core/evaluate/state.js';
 
 interface Fixture {
   tempDir: string;
@@ -84,6 +84,22 @@ function seedDraftSlug(f: Fixture, slug: string, contentType: ContentType = 'tec
     initResearchPost(db, slug, 'topic', 'directed', contentType);
     advancePhase(db, slug, 'benchmark');
     advancePhase(db, slug, 'draft');
+  } finally {
+    closeDatabase(db);
+  }
+}
+
+function seedPublishedUpdateReview(f: Fixture, slug: string): void {
+  const db = getDatabase(f.dbPath);
+  try {
+    initResearchPost(db, slug, 'topic', 'directed', 'technical-deep-dive');
+    advancePhase(db, slug, 'benchmark');
+    advancePhase(db, slug, 'draft');
+    advancePhase(db, slug, 'evaluate');
+    db.prepare('UPDATE posts SET evaluation_passed = 1 WHERE slug = ?').run(slug);
+    advancePhase(db, slug, 'publish');
+    advancePhase(db, slug, 'published');
+    initEvaluation(db, slug, f.evaluationsDir, { isUpdateReview: true });
   } finally {
     closeDatabase(db);
   }
@@ -234,11 +250,75 @@ describe('runEvaluateAutocheck', () => {
     captureLogs();
     const saved = process.exitCode;
     try {
+      runEvaluateInit('det', paths(f));
       runEvaluateAutocheck('det', paths(f));
       const out1 = readFileSync(join(f.evaluationsDir, 'det', 'structural.lint.json'), 'utf-8');
       runEvaluateAutocheck('det', paths(f));
       const out2 = readFileSync(join(f.evaluationsDir, 'det', 'structural.lint.json'), 'utf-8');
       expect(out1).toBe(out2);
+    } finally {
+      process.exitCode = saved;
+    }
+  });
+
+  it('rejects structural autocheck before evaluation is initialized', () => {
+    const f = setupFixture();
+    const db = getDatabase(f.dbPath);
+    try {
+      initResearchPost(db, 'bench', 'topic', 'directed', 'technical-deep-dive');
+      advancePhase(db, 'bench', 'benchmark');
+    } finally {
+      closeDatabase(db);
+    }
+
+    const saved = process.exitCode;
+    try {
+      const { errors } = captureLogs();
+      process.exitCode = 0;
+      runEvaluateAutocheck('bench', paths(f));
+
+      expect(process.exitCode).toBe(1);
+      expect(errors.join('\n')).toContain("not 'evaluate'");
+      expect(existsSync(join(f.evaluationsDir, 'bench', 'structural.lint.json'))).toBe(false);
+    } finally {
+      process.exitCode = saved;
+    }
+  });
+
+  it('rejects structural autocheck in evaluate phase when manifest is missing', () => {
+    const f = setupFixture();
+    seedEvaluateSlug(f, 'no-manifest');
+
+    const saved = process.exitCode;
+    try {
+      const { errors } = captureLogs();
+      process.exitCode = 0;
+      runEvaluateAutocheck('no-manifest', paths(f));
+
+      expect(process.exitCode).toBe(1);
+      expect(errors.join('\n')).toContain('Evaluation workspace not initialized');
+      expect(existsSync(join(f.evaluationsDir, 'no-manifest', 'structural.lint.json'))).toBe(false);
+    } finally {
+      process.exitCode = saved;
+    }
+  });
+
+  it('allows structural autocheck for an open update-review cycle while the post remains published', () => {
+    const f = setupFixture();
+    seedPublishedUpdateReview(f, 'published-update');
+    writeDraftFile(f, 'published-update', 'Updated body with [broken](/writing/nope).');
+
+    const saved = process.exitCode;
+    try {
+      captureLogs();
+      process.exitCode = 0;
+      runEvaluateAutocheck('published-update', paths(f));
+
+      expect(process.exitCode).not.toBe(1);
+      const sidecarPath = join(f.evaluationsDir, 'published-update', 'structural.lint.json');
+      expect(existsSync(sidecarPath)).toBe(true);
+      const issues = JSON.parse(readFileSync(sidecarPath, 'utf-8')) as Array<{ category: string }>;
+      expect(issues.some((issue) => issue.category === 'broken-internal-link')).toBe(true);
     } finally {
       process.exitCode = saved;
     }

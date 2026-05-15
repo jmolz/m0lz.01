@@ -269,7 +269,7 @@ describe('completeDraft', () => {
         .replace(/\{\/\* TODO: Fill this section \*\/\}/g, 'Filled content');
       writeFileSync(mdxPath, content, 'utf-8');
 
-      completeDraft(db, 'eta', draftsDir);
+      completeDraft(db, 'eta', draftsDir, benchmarkDir);
 
       const post = db.prepare('SELECT * FROM posts WHERE slug = ?').get('eta') as { phase: string };
       expect(post.phase).toBe('evaluate');
@@ -298,7 +298,7 @@ describe('completeDraft', () => {
         .replace('{{description}}', 'Real description');
       writeFileSync(mdxPath, content, 'utf-8');
 
-      expect(() => completeDraft(db, 'eta-placeholders', draftsDir)).toThrow('Placeholder sections remaining');
+      expect(() => completeDraft(db, 'eta-placeholders', draftsDir, benchmarkDir)).toThrow('Placeholder sections remaining');
     } finally {
       closeDatabase(db);
     }
@@ -328,7 +328,46 @@ describe('completeDraft', () => {
       // Register an asset that doesn't exist on disk
       registerAsset(db, 'eta-assets', 'excalidraw', 'ghost.svg');
 
-      expect(() => completeDraft(db, 'eta-assets', draftsDir)).toThrow('Missing asset file: ghost.svg');
+      expect(() => completeDraft(db, 'eta-assets', draftsDir, benchmarkDir)).toThrow('Missing asset file: ghost.svg');
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  it('rejects benchmarked draft with malformed benchmark results', () => {
+    const dir = makeTempDir();
+    const dbPath = join(dir, 'state.db');
+    const draftsDir = join(dir, 'drafts');
+    const benchmarkDir = join(dir, 'benchmarks');
+    const researchDir = join(dir, 'research');
+    const config = makeConfig(dir);
+    createDraftPost(dbPath, researchDir, 'eta-bad-benchmark');
+
+    const db = getDatabase(dbPath);
+    try {
+      initDraft(db, 'eta-bad-benchmark', draftsDir, benchmarkDir, researchDir, config, join(dir, '.blogrc.yaml'));
+
+      const mdxPath = draftPath(draftsDir, 'eta-bad-benchmark');
+      const content = readFileSync(mdxPath, 'utf-8')
+        .replace('{{title}}', 'Real Title')
+        .replace('{{description}}', 'Real description')
+        .replace('tags: []', 'tags:\n  - typescript')
+        .replace(/\{\/\* TODO: Fill this section \*\/\}/g, 'Content');
+      writeFileSync(mdxPath, content, 'utf-8');
+
+      db.prepare('UPDATE posts SET has_benchmarks = 1 WHERE slug = ?').run('eta-bad-benchmark');
+      const benchSlugDir = join(benchmarkDir, 'eta-bad-benchmark');
+      mkdirSync(benchSlugDir, { recursive: true });
+      writeFileSync(join(benchSlugDir, 'results.json'), JSON.stringify({
+        slug: 'eta-bad-benchmark',
+        timestamp: new Date().toISOString(),
+        targets: ['Target A'],
+        data: {},
+      }), 'utf-8');
+
+      expect(() => completeDraft(db, 'eta-bad-benchmark', draftsDir, benchmarkDir)).toThrow(
+        'Invalid benchmark results',
+      );
     } finally {
       closeDatabase(db);
     }
@@ -340,7 +379,7 @@ describe('completeDraft', () => {
     const db = getDatabase(dbPath);
     try {
       initResearchPost(db, 'theta', 'test', 'directed', 'technical-deep-dive');
-      expect(() => completeDraft(db, 'theta', join(dir, 'drafts'))).toThrow("not 'draft'");
+      expect(() => completeDraft(db, 'theta', join(dir, 'drafts'), join(dir, 'benchmarks'))).toThrow("not 'draft'");
     } finally {
       closeDatabase(db);
     }
@@ -351,7 +390,7 @@ describe('completeDraft', () => {
     const dbPath = join(dir, 'state.db');
     const db = getDatabase(dbPath);
     try {
-      expect(() => completeDraft(db, 'nonexistent', join(dir, 'drafts'))).toThrow('Post not found');
+      expect(() => completeDraft(db, 'nonexistent', join(dir, 'drafts'), join(dir, 'benchmarks'))).toThrow('Post not found');
     } finally {
       closeDatabase(db);
     }

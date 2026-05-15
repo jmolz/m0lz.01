@@ -34,6 +34,32 @@ export function draftPath(draftsDir: string, slug: string): string {
   return join(draftsDir, slug, 'index.mdx');
 }
 
+function benchmarkRepairHint(slug: string): string {
+  return (
+    `Repair with 'blog benchmark repair ${slug} --results-file <file>' or, for optional project-launch benchmarks, ` +
+    `'blog benchmark repair ${slug} --skip-optional --reason "..."'.`
+  );
+}
+
+export function validateDraftBenchmarkEvidence(
+  post: PostRow,
+  slug: string,
+  benchmarkDir: string,
+): string[] {
+  if (!post.has_benchmarks) {
+    return [];
+  }
+  const benchmarkCtx = getBenchmarkContext(benchmarkDir, slug, {
+    githubUser: 'unknown',
+  });
+  if (!benchmarkCtx.resultsError) {
+    return [];
+  }
+  return [
+    `Invalid benchmark results for '${slug}': ${benchmarkCtx.resultsError}. ${benchmarkRepairHint(slug)}`,
+  ];
+}
+
 export function initDraft(
   db: Database.Database,
   slug: string,
@@ -46,6 +72,11 @@ export function initDraft(
   const post = getDraftPost(db, slug);
   if (!post) {
     throw new Error(`Post not found: ${slug}`);
+  }
+
+  const benchmarkErrors = validateDraftBenchmarkEvidence(post, slug, benchmarkDir);
+  if (benchmarkErrors.length > 0) {
+    throw new Error(benchmarkErrors[0]);
   }
 
   const draftDir = join(draftsDir, slug);
@@ -98,6 +129,7 @@ export function completeDraft(
   db: Database.Database,
   slug: string,
   draftsDir: string,
+  benchmarkDir: string,
 ): void {
   const post = getDraftPost(db, slug);
   if (!post) {
@@ -113,6 +145,7 @@ export function completeDraft(
   const fm = parseFrontmatter(content);
   const validation = validateFrontmatter(fm);
   const errors = [...validation.errors];
+  errors.push(...validateDraftBenchmarkEvidence(post, slug, benchmarkDir));
 
   // Check for placeholder sections
   const placeholderCount = (content.match(PLACEHOLDER_PATTERN) || []).length;
