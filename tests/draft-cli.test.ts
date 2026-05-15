@@ -120,6 +120,15 @@ function fillDraftPlaceholders(draftsDir: string, slug: string): void {
     .replace('{{title}}', 'Real Title')
     .replace('{{description}}', 'Real description')
     .replace('tags: []', 'tags:\n  - typescript')
+    .replace(
+      'published: false',
+      [
+        'published: false',
+        'devto_main_image: ./assets/devto-cover.png',
+        'medium_featured_image: ./assets/medium-featured.png',
+        'substack_preview_image: ./assets/substack-preview.png',
+      ].join('\n'),
+    )
     .replace(/\{\/\* TODO: Fill this section \*\/\}/g, 'Filled content');
   writeFileSync(mdxPath, content, 'utf-8');
 }
@@ -485,6 +494,15 @@ describe('runDraftValidate', () => {
       .replace('{{title}}', 'Real Title')
       .replace('{{description}}', 'Real description')
       .replace('tags: []', 'tags:\n  - typescript')
+      .replace(
+        'published: false',
+        [
+          'published: false',
+          'devto_main_image: ./assets/devto-cover.png',
+          'medium_featured_image: ./assets/medium-featured.png',
+          'substack_preview_image: ./assets/substack-preview.png',
+        ].join('\n'),
+      )
       .replace(/\{\/\* TODO: Fill this section \*\/\}/g, 'Real content');
     writeFileSync(mdxPath, content, 'utf-8');
 

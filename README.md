@@ -485,6 +485,7 @@ blog evaluate reject <slug>                     # → draft phase
 # Publish phase (11-step resumable pipeline)
 blog publish start <slug>                       # initialize OR resume
 blog publish show <slug>                        # per-step status table
+blog publish reopen-draft <slug> --reason "..." # repair pre-site-pr draft defects
 blog publish distribution-kit <slug> \
   [--commit-site] [--image-mode off|prompt-only|generate|required] [--force]
 
@@ -526,6 +527,8 @@ All three use the same article-card framework with platform-specific
 dimensions. The command updates draft frontmatter with `devto_main_image`,
 `medium_featured_image`, and `substack_preview_image`; later `site-pr` /
 `site-update` verifies those fields without rewriting the evaluated draft.
+`blog draft complete` requires those fields, so a post cannot reach
+evaluation/publish with missing platform-image frontmatter.
 
 `blog publish start` and `blog update publish` also generate a durable
 distribution kit before the site repo is mutated. Local artifacts land in
@@ -569,6 +572,20 @@ published post without an image API call.
 ### Publish pipeline stopped mid-run
 
 Re-run `blog publish start <slug>` — the pipeline picks up at the first non-completed step. State lives in `.blog-agent/state.db` (`pipeline_steps` table). Every step is idempotent.
+
+If the failed step is `site-pr` because the evaluated draft is missing
+`devto_main_image`, `medium_featured_image`, or `substack_preview_image`, run:
+
+```bash
+blog publish reopen-draft <slug> --reason "missing platform images"
+blog draft platform-images <slug>
+blog draft complete <slug>
+blog evaluate init <slug>
+```
+
+Then re-run the three reviewers, synthesize, complete evaluation, and resume
+`blog publish start <slug>`. The reopen command only works for the pre-site-pr
+platform-image failure and clears stale initial-publish step rows.
 
 ### "Lock held by PID N" on publish / update / unpublish
 

@@ -7,7 +7,7 @@ import { BlogConfig } from '../config/types.js';
 import { parseFrontmatter, PostFrontmatter, serializeFrontmatter } from '../draft/frontmatter.js';
 
 type PlatformName = 'devto' | 'medium' | 'substack';
-type GeneratedPlatformImageField = 'devto_main_image' | 'medium_featured_image' | 'substack_preview_image';
+export type GeneratedPlatformImageField = 'devto_main_image' | 'medium_featured_image' | 'substack_preview_image';
 export type PlatformImageField = GeneratedPlatformImageField | 'substack_header_image';
 
 interface PlatformImageSpecBase {
@@ -120,6 +120,33 @@ interface PlatformImagePaths {
 type PlatformReferenceMap = Map<PlatformImageSpec['field'], ResolvedAssetReference | undefined>;
 
 const FRONTMATTER_SPLIT_RE = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n)?/;
+
+export function missingRequiredPlatformImageFields(fm: PostFrontmatter): GeneratedPlatformImageField[] {
+  return PLATFORM_IMAGE_SPECS
+    .map((spec) => spec.field)
+    .filter((field) => (fm[field] ?? '').trim().length === 0);
+}
+
+export function platformImageDraftCompleteMessage(
+  slug: string,
+  missing: readonly GeneratedPlatformImageField[],
+): string {
+  return (
+    `Missing platform image frontmatter: ${missing.join(', ')}. ` +
+    `Run 'blog draft platform-images ${slug}' before 'blog draft complete ${slug}'.`
+  );
+}
+
+function platformImagePublishRepairMessage(
+  slug: string,
+  field: PlatformImageSpec['field'],
+): string {
+  return (
+    `Missing ${field}. This draft reached publish without platform image frontmatter. ` +
+    `Run 'blog publish reopen-draft ${slug} --reason "missing platform images"', ` +
+    `then run 'blog draft platform-images ${slug}' and re-run draft/evaluate before publishing.`
+  );
+}
 
 function cleanBaseUrl(baseUrl: string): string {
   return baseUrl.replace(/\/+$/, '');
@@ -370,9 +397,7 @@ export async function ensurePlatformImages(
     for (const spec of PLATFORM_IMAGE_SPECS) {
       const resolved = platformRefs.get(spec.field);
       if (resolved === undefined) {
-        throw new Error(
-          `Missing ${spec.field}. Run 'blog draft platform-images ${slug}' while the post is in draft phase.`,
-        );
+        throw new Error(platformImagePublishRepairMessage(slug, spec.field));
       }
       if (resolved.kind === 'asset' && fm[spec.field] !== resolved.frontmatterValue) {
         throw new Error(
@@ -467,9 +492,7 @@ export async function ensurePlatformImages(
     const nextValue = `./assets/${spec.filename}`;
     if (fm[spec.field] !== nextValue) {
       if (!updateFrontmatter) {
-        throw new Error(
-          `${spec.field} must be present before publishing. Run 'blog draft platform-images ${slug}' while the post is in draft phase.`,
-        );
+        throw new Error(platformImagePublishRepairMessage(slug, spec.field));
       }
       fm[spec.field] = nextValue;
       frontmatterUpdated = true;

@@ -116,6 +116,7 @@ export const SLUG_BEARING_STEP_COMMANDS: readonly string[] = [
   'blog evaluate complete',
   'blog evaluate reject',
   'blog publish start',
+  'blog publish reopen-draft',
   'blog publish distribution-kit',
   'blog publish show',
   'blog update start',

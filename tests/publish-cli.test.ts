@@ -21,12 +21,14 @@ import {
   getPipelineSteps,
   createPipelineSteps,
   markStepCompleted,
+  markStepFailed,
 } from '../src/core/publish/steps-crud.js';
 // eslint-disable-next-line import/first
 import {
   runPublishStart,
   runPublishShow,
   runPublishDistributionKit,
+  runPublishReopenDraft,
   PublishCliPaths,
 } from '../src/cli/publish.js';
 
@@ -439,6 +441,84 @@ describe('runPublishShow', () => {
     expect(logs.join('\n')).toContain('malformed');
     // And warned on stderr.
     expect(errors.join('\n')).toMatch(/Warning|failed to load config/);
+  });
+});
+
+describe('runPublishReopenDraft', () => {
+  it('moves a site-pr platform-image failure back to draft and clears stale publish steps', () => {
+    const f = setup();
+    seedPublishPost(f.dbPath, 'repair-images');
+    const db = getDatabase(f.dbPath);
+    try {
+      createPipelineSteps(db, 'repair-images', 'technical-deep-dive', {
+        publish: { devto: true, medium: true, substack: true, github_repos: true, social_drafts: true, research_pages: true },
+      } as any);
+      markStepCompleted(db, 'repair-images', 'verify');
+      markStepCompleted(db, 'repair-images', 'research-page');
+      markStepFailed(
+        db,
+        'repair-images',
+        'site-pr',
+        'Missing devto_main_image. This draft reached publish without platform image frontmatter.',
+      );
+    } finally {
+      closeDatabase(db);
+    }
+
+    const { logs } = captureLogs();
+    runPublishReopenDraft('repair-images', { reason: 'missing platform images' }, paths(f));
+
+    expect(process.exitCode).toBe(0);
+    expect(logs.join('\n')).toContain('Phase moved back to draft');
+    const db2 = getDatabase(f.dbPath);
+    try {
+      const post = db2
+        .prepare('SELECT phase, evaluation_passed FROM posts WHERE slug = ?')
+        .get('repair-images') as { phase: string; evaluation_passed: number | null };
+      expect(post.phase).toBe('draft');
+      expect(post.evaluation_passed).toBeNull();
+      expect(getPipelineSteps(db2, 'repair-images')).toHaveLength(0);
+      const metric = db2
+        .prepare("SELECT value FROM metrics WHERE post_slug = ? AND event = 'publish_reopened_to_draft'")
+        .get('repair-images') as { value: string } | undefined;
+      expect(metric?.value).toContain('missing platform images');
+    } finally {
+      closeDatabase(db2);
+    }
+  });
+
+  it('refuses to reopen when publish advanced beyond site-pr', () => {
+    const f = setup();
+    seedPublishPost(f.dbPath, 'too-late');
+    const db = getDatabase(f.dbPath);
+    try {
+      createPipelineSteps(db, 'too-late', 'technical-deep-dive', {
+        publish: { devto: true, medium: true, substack: true, github_repos: true, social_drafts: true, research_pages: true },
+      } as any);
+      markStepFailed(
+        db,
+        'too-late',
+        'site-pr',
+        'Missing devto_main_image. This draft reached publish without platform image frontmatter.',
+      );
+      markStepCompleted(db, 'too-late', 'preview-gate');
+    } finally {
+      closeDatabase(db);
+    }
+
+    const { errors } = captureLogs();
+    runPublishReopenDraft('too-late', { reason: 'missing platform images' }, paths(f));
+
+    expect(process.exitCode).toBe(1);
+    expect(errors.join('\n')).toContain('advanced past site-pr');
+    const db2 = getDatabase(f.dbPath);
+    try {
+      const post = db2.prepare('SELECT phase FROM posts WHERE slug = ?').get('too-late') as { phase: string };
+      expect(post.phase).toBe('publish');
+      expect(getPipelineSteps(db2, 'too-late').length).toBeGreaterThan(0);
+    } finally {
+      closeDatabase(db2);
+    }
   });
 });
 

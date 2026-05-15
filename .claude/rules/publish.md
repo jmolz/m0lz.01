@@ -15,7 +15,8 @@ Rules for the publish layer (`src/core/publish/**`, `src/cli/publish.ts`). These
 Forensic anchors:
 - `src/core/publish/site.ts` calls `ensurePlatformImages(..., { updateFrontmatter: false, writeReceipt: false })` before branch checkout and asset copy.
 - `tests/publish-site.test.ts` asserts `createSitePR` keeps the source draft byte-for-byte unchanged and does not write `.platform-images.json`.
-- Missing `devto_main_image`, `medium_featured_image`, or `substack_preview_image` during publish is an actionable draft-phase error, not permission for `site-pr` to serialize new frontmatter.
+- `completeDraft` requires `devto_main_image`, `medium_featured_image`, and `substack_preview_image` before evaluation starts.
+- Missing `devto_main_image`, `medium_featured_image`, or `substack_preview_image` during publish is an actionable draft-phase error, not permission for `site-pr` to serialize new frontmatter. If an old workspace already reached this failed pre-site-pr state, use `blog publish reopen-draft <slug> --reason "missing platform images"` so the post is re-evaluated after `blog draft platform-images`.
 
 ## Platform image references have distinct modes
 

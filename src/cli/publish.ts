@@ -9,7 +9,7 @@ import { loadConfig } from '../core/config/loader.js';
 import { TEMPLATES_ROOT } from '../core/paths.js';
 import { printEnvelope } from '../core/json-envelope.js';
 import { validateSlug } from '../core/research/document.js';
-import { initPublish } from '../core/publish/phase.js';
+import { initPublish, reopenPublishDraft } from '../core/publish/phase.js';
 import { getPipelineSteps } from '../core/publish/steps-crud.js';
 import { getOpenUpdateCycle } from '../core/update/cycles.js';
 import { runPipeline } from '../core/publish/pipeline-runner.js';
@@ -66,6 +66,10 @@ export interface PublishDistributionKitOptions {
   commitSite?: boolean;
   imageMode?: LinkedInImageMode;
   force?: boolean;
+}
+
+export interface PublishReopenDraftOptions {
+  reason?: string;
 }
 
 function requireDb(dbPath: string): void {
@@ -542,6 +546,43 @@ export async function runPublishDistributionKit(
   }
 }
 
+export function runPublishReopenDraft(
+  slug: string,
+  opts: PublishReopenDraftOptions = {},
+  paths: PublishCliPaths = {},
+): void {
+  try {
+    validateSlug(slug);
+  } catch (e) {
+    console.error((e as Error).message);
+    process.exitCode = 1;
+    return;
+  }
+
+  const dbPath = paths.dbPath ?? DB_PATH;
+  requireDb(dbPath);
+
+  const db = getDatabase(dbPath);
+  try {
+    let result;
+    try {
+      result = reopenPublishDraft(db, slug, opts.reason ?? '');
+    } catch (e) {
+      console.error((e as Error).message);
+      process.exitCode = 1;
+      return;
+    }
+
+    console.log(`Publish reopened for ${slug}. Phase moved back to draft.`);
+    console.log(`Cleared initial publish steps: ${result.clearedPipelineSteps}`);
+    console.log(`Reason: ${result.reason}`);
+    console.log(`Next: blog draft platform-images ${slug}`);
+    console.log(`Then: blog draft complete ${slug} and re-run evaluation.`);
+  } finally {
+    closeDatabase(db);
+  }
+}
+
 // Render a padded step table. Column widths are computed from the data so
 // short step names don't waste horizontal space and long timestamps don't
 // overflow. `note` holds the skip reason or error message from
@@ -618,6 +659,14 @@ export function registerPublish(program: Command): void {
     .option('--json', 'Emit JSON envelope for machine consumers')
     .action((slug: string, opts: { json?: boolean }) => {
       runPublishShow(slug, { json: opts.json });
+    });
+
+  publish
+    .command('reopen-draft <slug>')
+    .description('Recover a publish blocked before site-pr by moving the post back to draft')
+    .requiredOption('--reason <reason>', 'Audit reason for reopening the failed publish')
+    .action((slug: string, opts: { reason: string }) => {
+      runPublishReopenDraft(slug, { reason: opts.reason });
     });
 
   publish

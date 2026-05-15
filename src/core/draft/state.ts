@@ -13,6 +13,10 @@ import { getBenchmarkContext, BenchmarkContext } from './benchmark-data.js';
 import { readExistingTags } from './tags.js';
 import { readResearchDocument } from '../research/document.js';
 import { documentPath } from '../research/document.js';
+import {
+  missingRequiredPlatformImageFields,
+  platformImageDraftCompleteMessage,
+} from '../publish/platform-images.js';
 
 // Any TODO-flavored marker the template or skill emits counts as an
 // unfilled section. Kept permissive so new placeholder variants still trip
@@ -377,6 +381,10 @@ export function completeDraft(
   const validation = validateFrontmatter(fm);
   const errors = [...validation.errors];
   errors.push(...validateDraftBenchmarkEvidence(post, slug, benchmarkDir));
+  const missingPlatformImageFields = missingRequiredPlatformImageFields(fm);
+  if (missingPlatformImageFields.length > 0) {
+    errors.push(platformImageDraftCompleteMessage(slug, missingPlatformImageFields));
+  }
 
   // Check for placeholder sections
   const placeholderCount = (content.match(PLACEHOLDER_PATTERN) || []).length;

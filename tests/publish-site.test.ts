@@ -309,7 +309,7 @@ canonical: "https://m0lz.dev/writing/missingimages"
     });
 
     await expect(createSitePR('missingimages', f.config, f.paths, f.db))
-      .rejects.toThrow(/Missing devto_main_image.*blog draft platform-images missingimages/s);
+      .rejects.toThrow(/Missing devto_main_image.*blog publish reopen-draft missingimages/s);
 
     expect(execCalls.some((call) => call.includes(' checkout '))).toBe(false);
     expect(existsSync(join(f.siteRepoPath, 'content/posts/missingimages'))).toBe(false);

@@ -7,8 +7,8 @@ import { BlogConfig } from '../config/types.js';
 import { ContentType, PostRow } from '../db/types.js';
 import { advancePhase } from '../research/state.js';
 import { acquirePublishLock } from './lock.js';
-import { allStepsComplete, createPipelineSteps } from './steps-crud.js';
-import { PublishUrls } from './types.js';
+import { allStepsComplete, createPipelineSteps, getPipelineSteps } from './steps-crud.js';
+import { PipelineStepRow, PublishUrls } from './types.js';
 
 // Phase-boundary helpers for the publish pipeline. Mirrors the pattern
 // established by `getResearchPost` / `initEvaluation` / `completeEvaluation`
@@ -106,6 +106,93 @@ export function initPublish(
   } finally {
     release();
   }
+}
+
+export interface ReopenPublishDraftResult {
+  clearedPipelineSteps: number;
+  reason: string;
+}
+
+function isPlatformImagePublishFailure(step: PipelineStepRow): boolean {
+  if (step.step_name !== 'site-pr' || step.status !== 'failed') return false;
+  const message = step.error_message ?? '';
+  return (
+    /\bMissing (devto_main_image|medium_featured_image|substack_preview_image)\b/.test(message) ||
+    /platform image frontmatter/.test(message) ||
+    /must be present before publishing/.test(message)
+  );
+}
+
+// Recovery path for a post that reached publish before the evaluated draft
+// carried required platform-image frontmatter. The site-pr preflight catches
+// this before checkout/copy/push, so it is safe to delete the initial publish
+// step rows, reset the stale evaluation flag, and move back to draft. The
+// draft still must run platform image generation, draft completion, and a
+// fresh evaluation cycle before publish can resume.
+export function reopenPublishDraft(
+  db: Database.Database,
+  slug: string,
+  reason: string,
+): ReopenPublishDraftResult {
+  const trimmedReason = reason.trim();
+  if (trimmedReason.length === 0) {
+    throw new Error(`A non-empty --reason is required to reopen '${slug}' to draft.`);
+  }
+
+  const post = db.prepare('SELECT * FROM posts WHERE slug = ?').get(slug) as PostRow | undefined;
+  if (!post) {
+    throw new Error(`Post not found: ${slug}`);
+  }
+  if (post.phase !== 'publish') {
+    throw new Error(
+      `Post '${slug}' is in phase '${post.phase}', not 'publish'. ` +
+      `Only a failed initial publish can be reopened to draft.`,
+    );
+  }
+
+  const steps = getPipelineSteps(db, slug, 0);
+  const sitePr = steps.find((step) => step.step_name === 'site-pr');
+  if (!sitePr || !isPlatformImagePublishFailure(sitePr)) {
+    throw new Error(
+      `Cannot reopen '${slug}' to draft automatically: expected a failed site-pr step caused by missing ` +
+      `platform image frontmatter. Inspect 'blog publish show ${slug}' before choosing a manual recovery.`,
+    );
+  }
+
+  const advancedRows = steps.filter(
+    (step) =>
+      step.step_number > sitePr.step_number &&
+      step.status !== 'pending' &&
+      step.status !== 'skipped',
+  );
+  if (advancedRows.length > 0) {
+    throw new Error(
+      `Cannot reopen '${slug}' to draft because publish advanced past site-pr: ` +
+      advancedRows.map((step) => `${step.step_name}=${step.status}`).join(', '),
+    );
+  }
+
+  let clearedPipelineSteps = 0;
+  const tx = db.transaction(() => {
+    db.prepare(
+      `UPDATE posts
+       SET evaluation_passed = NULL,
+           evaluation_score = NULL,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE slug = ?`,
+    ).run(slug);
+    advancePhase(db, slug, 'draft');
+    const info = db
+      .prepare('DELETE FROM pipeline_steps WHERE post_slug = ? AND cycle_id = 0')
+      .run(slug);
+    clearedPipelineSteps = info.changes;
+    db.prepare(
+      `INSERT INTO metrics (post_slug, event, value) VALUES (?, 'publish_reopened_to_draft', ?)`,
+    ).run(slug, JSON.stringify({ reason: trimmedReason }));
+  });
+  tx();
+
+  return { clearedPipelineSteps, reason: trimmedReason };
 }
 
 // Persist a partial URL bundle to the posts row using COALESCE semantics so

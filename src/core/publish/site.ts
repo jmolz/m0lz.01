@@ -250,8 +250,9 @@ export async function createSitePR(
 
   // Verify or generate platform images before mutating the site repo. In
   // publish/update mode this must not rewrite the already-evaluated draft
-  // frontmatter; missing fields are fixed by `blog draft platform-images`
-  // while the post is still in draft phase.
+  // frontmatter; missing fields are fixed before evaluation via
+  // `blog draft platform-images`, or by reopening a pre-site-pr failure to
+  // draft and re-evaluating.
   const sourceDraftMdx = join(paths.draftsDir, slug, 'index.mdx');
   if (!existsSync(sourceDraftMdx)) {
     throw new Error(`Draft MDX not found: ${sourceDraftMdx}`);

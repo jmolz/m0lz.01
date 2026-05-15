@@ -280,6 +280,20 @@ describe('validatePlanSchema', () => {
     expect(() => validatePlanSchema(missingSlug)).toThrow(/must equal plan\.slug/);
   });
 
+  it('allows blog publish reopen-draft only in slug-bearing form', () => {
+    const plan = basePlan() as unknown as Record<string, unknown>;
+    plan.steps = [{ command: 'blog publish reopen-draft', args: ['test-post', '--reason', 'missing images'] }];
+    expect(() => validatePlanSchema(plan)).not.toThrow();
+
+    const wrongSlug = basePlan() as unknown as Record<string, unknown>;
+    wrongSlug.steps = [{ command: 'blog publish reopen-draft', args: ['other-post', '--reason', 'missing images'] }];
+    expect(() => validatePlanSchema(wrongSlug)).toThrow(/must equal plan\.slug/);
+
+    const missingSlug = basePlan() as unknown as Record<string, unknown>;
+    missingSlug.steps = [{ command: 'blog publish reopen-draft', args: [] }];
+    expect(() => validatePlanSchema(missingSlug)).toThrow(/must equal plan\.slug/);
+  });
+
   it('allows blog benchmark repair only in slug-bearing form', () => {
     const plan = basePlan() as unknown as Record<string, unknown>;
     plan.steps = [{

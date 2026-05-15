@@ -150,6 +150,18 @@ function writeBenchmarkArtifacts(benchmarkDir: string, slug: string): void {
   }), 'utf-8');
 }
 
+function withPlatformImageFrontmatter(content: string): string {
+  return content.replace(
+    'published: false',
+    [
+      'published: false',
+      'devto_main_image: ./assets/devto-cover.png',
+      'medium_featured_image: ./assets/medium-featured.png',
+      'substack_preview_image: ./assets/substack-preview.png',
+    ].join('\n'),
+  );
+}
+
 describe('getDraftPost', () => {
   it('returns post in draft phase', () => {
     const dir = makeTempDir();
@@ -440,12 +452,41 @@ describe('completeDraft', () => {
         .replace('{{description}}', 'Real description')
         .replace('tags: []', 'tags:\n  - typescript')
         .replace(/\{\/\* TODO: Fill this section \*\/\}/g, 'Filled content');
-      writeFileSync(mdxPath, content, 'utf-8');
+      writeFileSync(mdxPath, withPlatformImageFrontmatter(content), 'utf-8');
 
       completeDraft(db, 'eta', draftsDir, benchmarkDir);
 
       const post = db.prepare('SELECT * FROM posts WHERE slug = ?').get('eta') as { phase: string };
       expect(post.phase).toBe('evaluate');
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  it('rejects draft before platform image frontmatter is present', () => {
+    const dir = makeTempDir();
+    const dbPath = join(dir, 'state.db');
+    const draftsDir = join(dir, 'drafts');
+    const benchmarkDir = join(dir, 'benchmarks');
+    const researchDir = join(dir, 'research');
+    const config = makeConfig(dir);
+    createDraftPost(dbPath, researchDir, 'eta-no-images', 'analysis-opinion');
+
+    const db = getDatabase(dbPath);
+    try {
+      initDraft(db, 'eta-no-images', draftsDir, benchmarkDir, researchDir, config, join(dir, '.blogrc.yaml'));
+
+      const mdxPath = draftPath(draftsDir, 'eta-no-images');
+      const content = readFileSync(mdxPath, 'utf-8')
+        .replace('{{title}}', 'Real Title')
+        .replace('{{description}}', 'Real description')
+        .replace('tags: []', 'tags:\n  - typescript')
+        .replace(/\{\/\* TODO: Fill this section \*\/\}/g, 'Filled content');
+      writeFileSync(mdxPath, content, 'utf-8');
+
+      expect(() => completeDraft(db, 'eta-no-images', draftsDir, benchmarkDir)).toThrow(
+        'Missing platform image frontmatter',
+      );
     } finally {
       closeDatabase(db);
     }

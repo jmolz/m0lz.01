@@ -22,7 +22,11 @@ import {
 import { parseFrontmatter, validateFrontmatter } from '../core/draft/frontmatter.js';
 import { getBenchmarkContext } from '../core/draft/benchmark-data.js';
 import { readExistingTags } from '../core/draft/tags.js';
-import { ensurePlatformImages } from '../core/publish/platform-images.js';
+import {
+  ensurePlatformImages,
+  missingRequiredPlatformImageFields,
+  platformImageDraftCompleteMessage,
+} from '../core/publish/platform-images.js';
 
 const DB_PATH = resolve('.blog-agent', 'state.db');
 const DRAFTS_DIR = resolve('.blog-agent', 'drafts');
@@ -217,6 +221,7 @@ export function runDraftValidate(slug: string, paths: DraftPaths = {}): void {
     const fm = parseFrontmatter(content);
     const validation = validateFrontmatter(fm);
     const benchmarkErrors = validateDraftBenchmarkEvidence(post, slug, benchmarkDir);
+    const missingPlatformImageFields = missingRequiredPlatformImageFields(fm);
 
     // Check for placeholder sections
     const placeholderCount = (content.match(PLACEHOLDER_PATTERN) || []).length;
@@ -234,6 +239,7 @@ export function runDraftValidate(slug: string, paths: DraftPaths = {}): void {
     const allOk = (
       validation.ok &&
       benchmarkErrors.length === 0 &&
+      missingPlatformImageFields.length === 0 &&
       placeholderCount === 0 &&
       missingAssets.length === 0
     );
@@ -258,6 +264,10 @@ export function runDraftValidate(slug: string, paths: DraftPaths = {}): void {
       for (const err of benchmarkErrors) {
         console.error(`  - ${err}`);
       }
+    }
+
+    if (missingPlatformImageFields.length > 0) {
+      console.error(platformImageDraftCompleteMessage(slug, missingPlatformImageFields));
     }
 
     if (missingAssets.length > 0) {
