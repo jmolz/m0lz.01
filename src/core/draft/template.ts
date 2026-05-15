@@ -20,7 +20,17 @@ export interface DraftContext {
   methodologyRef?: string;
   researchThesis?: string;
   researchFindings?: string;
+  researchDataPoints?: string;
+  researchOpenQuestions?: string;
+  researchBenchmarkTargets?: string;
+  researchRepoScope?: string;
+  researchConclusion?: string;
   existingTags: string[];
+}
+
+function sectionOrTodo(content: string | undefined): string {
+  const trimmed = content?.trim();
+  return trimmed && trimmed.length > 0 ? trimmed : '{/* TODO: Fill this section */}';
 }
 
 export function renderDraftTemplate(frontmatter: PostFrontmatter, context: DraftContext): string {
@@ -46,7 +56,7 @@ export function renderDraftTemplate(frontmatter: PostFrontmatter, context: Draft
     case 'technical-deep-dive':
       sections.push('## Architecture');
       sections.push('');
-      sections.push('{/* TODO: Fill this section */}');
+      sections.push(sectionOrTodo(context.researchFindings));
       sections.push('');
       sections.push('## Benchmark Results');
       sections.push('');
@@ -60,6 +70,8 @@ export function renderDraftTemplate(frontmatter: PostFrontmatter, context: Draft
       sections.push('');
       if (context.methodologyRef) {
         sections.push(context.methodologyRef);
+      } else if (context.researchBenchmarkTargets) {
+        sections.push(context.researchBenchmarkTargets);
       } else {
         sections.push('{/* TODO: Fill this section */}');
       }
@@ -69,15 +81,15 @@ export function renderDraftTemplate(frontmatter: PostFrontmatter, context: Draft
     case 'project-launch':
       sections.push('## What It Does');
       sections.push('');
-      sections.push('{/* TODO: Fill this section */}');
+      sections.push(sectionOrTodo(context.researchFindings));
       sections.push('');
       sections.push('## How It Works');
       sections.push('');
-      sections.push('{/* TODO: Fill this section */}');
+      sections.push(sectionOrTodo(context.researchDataPoints));
       sections.push('');
       sections.push('## Architecture');
       sections.push('');
-      sections.push('{/* TODO: Fill this section */}');
+      sections.push(sectionOrTodo(context.researchRepoScope));
       sections.push('');
       if (context.benchmarkTable) {
         sections.push('## Benchmark Results');
@@ -96,11 +108,11 @@ export function renderDraftTemplate(frontmatter: PostFrontmatter, context: Draft
     case 'analysis-opinion':
       sections.push('## Analysis');
       sections.push('');
-      sections.push('{/* TODO: Fill this section */}');
+      sections.push(sectionOrTodo(context.researchFindings));
       sections.push('');
       sections.push('## Key Takeaways');
       sections.push('');
-      sections.push('{/* TODO: Fill this section */}');
+      sections.push(sectionOrTodo(context.researchDataPoints || context.researchOpenQuestions));
       sections.push('');
       break;
   }
@@ -108,7 +120,7 @@ export function renderDraftTemplate(frontmatter: PostFrontmatter, context: Draft
   // Conclusion (all content types)
   sections.push('## Conclusion');
   sections.push('');
-  sections.push('{/* TODO: Fill this section */}');
+  sections.push(sectionOrTodo(context.researchConclusion));
   sections.push('');
 
   return sections.join('\n');

@@ -278,6 +278,7 @@ export function repairBenchmarkResults(
     const canonical = canonicalizeBenchmarkResults(options.input, runId);
     const writtenResultsPath = writeResults(benchmarkDir, slug, canonical);
     updateBenchmarkStatus(db, runId, 'completed');
+    db.prepare('UPDATE posts SET has_benchmarks = 1 WHERE slug = ?').run(slug);
     const receiptPath = writeRepairReceipt(benchmarkDir, slug, {
       action: 'results-file',
       previous_phase: post.phase,

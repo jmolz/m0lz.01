@@ -79,6 +79,31 @@ describe('formatBenchmarkTable', () => {
     expect(table).toContain('| toolA | 10 | 500 |');
     expect(table).toContain('| toolB | 20 | 300 |');
   });
+
+  it('renders nested values without object string coercion', () => {
+    const results = makeResults({
+      speedup_assertion: {
+        status: 'passed',
+        stats: { ratio: 0.504, target: 0.625 },
+      },
+      fixtures: [
+        { name: 'next-prisma', status: 'passed' },
+      ],
+    });
+    const table = formatBenchmarkTable(results);
+    expect(table).not.toContain('[object Object]');
+    expect(table).toContain('{"ratio":0.504,"target":0.625}');
+    expect(table).toContain('{"name":"next-prisma","status":"passed"}');
+  });
+
+  it('escapes MDX-sensitive table values', () => {
+    const results = makeResults({
+      summary: 'ratio 0.504 <= 0.625 | passed',
+    });
+    const table = formatBenchmarkTable(results);
+    expect(table).toContain('0.504 &lt;= 0.625 \\| passed');
+    expect(table).not.toContain('<= 0.625 | passed');
+  });
 });
 
 describe('formatMethodologyRef', () => {
@@ -99,6 +124,16 @@ describe('formatMethodologyRef', () => {
     const ref = formatMethodologyRef(env, 'test-bench', { githubUser: 'someone-else' });
     expect(ref).toContain('https://github.com/someone-else/test-bench');
     expect(ref).not.toContain('jmolz');
+  });
+
+  it('uses an existing companion repo URL instead of a synthetic methodology repo', () => {
+    const env = makeEnv();
+    const ref = formatMethodologyRef(env, 'project-launch', {
+      githubUser: 'jmolz',
+      companionRepo: 'https://github.com/jmolz/m0lz.02',
+    });
+    expect(ref).toContain('https://github.com/jmolz/m0lz.02');
+    expect(ref).not.toContain('project-launch/blob/main/METHODOLOGY.md');
   });
 });
 

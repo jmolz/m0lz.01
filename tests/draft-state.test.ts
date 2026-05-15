@@ -15,6 +15,7 @@ import {
   draftPath,
 } from '../src/core/draft/state.js';
 import { BlogConfig } from '../src/core/config/types.js';
+import { parseFrontmatter, validateFrontmatter } from '../src/core/draft/frontmatter.js';
 
 let tempDir: string | undefined;
 
@@ -64,7 +65,14 @@ function createDraftPost(
 ): void {
   const db = getDatabase(dbPath);
   try {
-    initResearchPost(db, slug, 'test topic', 'directed', contentType as any);
+    initResearchPost(
+      db,
+      slug,
+      'test topic',
+      'directed',
+      contentType as any,
+      contentType === 'project-launch' ? 'test.01' : null,
+    );
     // Advance through research -> benchmark -> draft
     advancePhase(db, slug, 'benchmark');
     advancePhase(db, slug, 'draft');
@@ -232,6 +240,38 @@ describe('initDraft', () => {
     }
   });
 
+  it('derives project-launch frontmatter and sections from a completed research document', () => {
+    const dir = makeTempDir();
+    const dbPath = join(dir, 'state.db');
+    const draftsDir = join(dir, 'drafts');
+    const benchmarkDir = join(dir, 'benchmarks');
+    const researchDir = join(dir, 'research');
+    const config = makeConfig(dir);
+    createDraftPost(dbPath, researchDir, 'launch-draft', 'project-launch');
+
+    const db = getDatabase(dbPath);
+    try {
+      const result = initDraft(db, 'launch-draft', draftsDir, benchmarkDir, researchDir, config, join(dir, '.blogrc.yaml'));
+      const content = readFileSync(result.draftPath, 'utf-8');
+      const frontmatter = parseFrontmatter(content);
+
+      expect(frontmatter.title).toBe('test.01 -- Launch Draft');
+      expect(frontmatter.description).toBe('Test thesis statement');
+      expect(frontmatter.tags).toContain('project-launch');
+      expect(frontmatter.tags).toContain('test-01');
+      expect(validateFrontmatter(frontmatter).ok).toBe(true);
+      expect(content).toContain('## What It Does');
+      expect(content).toContain('Test findings content');
+      expect(content).toContain('## How It Works');
+      expect(content).toContain('Test data');
+      expect(content).toContain('## Architecture');
+      expect(content).toContain('Test scope');
+      expect(content).not.toContain('{/* TODO: Fill this section */}');
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
   it('throws for missing post', () => {
     const dir = makeTempDir();
     const dbPath = join(dir, 'state.db');
@@ -295,7 +335,8 @@ describe('completeDraft', () => {
       const mdxPath = draftPath(draftsDir, 'eta-placeholders');
       const content = readFileSync(mdxPath, 'utf-8')
         .replace('{{title}}', 'Real Title')
-        .replace('{{description}}', 'Real description');
+        .replace('{{description}}', 'Real description')
+        .replace('Test data', '{/* TODO: Fill this section */}');
       writeFileSync(mdxPath, content, 'utf-8');
 
       expect(() => completeDraft(db, 'eta-placeholders', draftsDir, benchmarkDir)).toThrow('Placeholder sections remaining');

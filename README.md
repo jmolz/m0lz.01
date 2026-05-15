@@ -309,8 +309,9 @@ If you ran `blog benchmark init`, the post is now in the `benchmark` phase. Draf
 ```bash
 blog benchmark env m0lz-02-stack-loops
 
-# Run the real benchmark/test commands from the benchmark targets.
-# Save a BenchmarkResults JSON file, then import it:
+# Run the real benchmark/test commands from the benchmark targets yourself.
+# `benchmark run` only imports the JSON evidence file; it does not execute
+# the target commands for you. Save a BenchmarkResults JSON file, then import it:
 blog benchmark run m0lz-02-stack-loops --results-file path/to/results.json
 
 blog benchmark show m0lz-02-stack-loops
@@ -332,15 +333,17 @@ The operator-supplied results JSON shape is:
 
 Do not pass `.blog-agent/benchmarks/<slug>/environment.json` to `--results-file`. That file only captures machine metadata. `--results-file` must point to benchmark results with the exact shape above; the CLI rejects environment snapshots and slug mismatches. Operator files do not need `run_id`; canonical `.blog-agent/benchmarks/<slug>/results.json` gets the authoritative DB run id when the CLI imports it.
 
-`blog benchmark skip` only works before `blog benchmark init`, while the post is still in `research`.
+`blog benchmark skip` only works before `blog benchmark init`, while the post is still in `research`. Treat `project-launch` as "benchmark optional" only when the launch claim truly does not depend on fresh measurements. If the post is making performance, fixture, release, or validation claims, run the target commands and import real results.
 
 If an optional project-launch benchmark was started and the wrong file was imported, use the explicit repair path instead of editing SQLite:
 
 ```bash
 # Replace bad canonical results with a valid result file. Requires an existing environment.json.
+# A successful results-file repair restores the post to benchmark-backed state.
 blog benchmark repair m0lz-02-stack-loops --results-file path/to/results.json
 
 # Or skip a failed optional benchmark attempt, preserving raw benchmark artifacts.
+# Use this only when the post will not make benchmark claims.
 blog benchmark repair m0lz-02-stack-loops \
   --skip-optional \
   --reason "Optional project-launch benchmark attempt imported environment.json by mistake"
@@ -358,7 +361,9 @@ blog draft complete m0lz-02-stack-loops
 
 blog evaluate init m0lz-02-stack-loops
 blog evaluate structural-autocheck m0lz-02-stack-loops
-# record reviewer JSON, synthesize, then complete when it passes
+# If structural-autocheck reports issues, fix the draft and rerun it before
+# recording reviewer JSON. Deterministic autocheck issues block synthesis.
+# Once autocheck is clean, record reviewer JSON, synthesize, then complete.
 
 blog publish start m0lz-02-stack-loops
 blog publish distribution-kit m0lz-02-stack-loops --image-mode generate

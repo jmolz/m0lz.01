@@ -97,3 +97,26 @@ Template and draft behavior branches on `post.content_type`:
 | `analysis-opinion` | Omit | Omit | Analysis + Key Takeaways only |
 
 Test all three paths whenever modifying `renderDraftTemplate` or `initDraft`.
+
+## Research-derived drafts must be evaluation-ready
+
+`draft init` may derive frontmatter and section bodies from a completed research
+document, but generated content still has to survive the next gate:
+`blog evaluate structural-autocheck`. A draft that passes `draft validate` while
+autocheck emits `mdx-parse`, `benchmark-claim-unbacked`, `[object Object]`
+tables, placeholder frontmatter, or a synthetic methodology repo is still a
+broken generated draft.
+
+Regression anchors from the `m0lz-02-stack-loops` dogfood incident:
+
+- `benchmark repair --results-file` must set `posts.has_benchmarks=1` even when
+  a prior optional-skip repair set it to `0`; see
+  `tests/benchmark-repair-cli.test.ts`.
+- `draft init` must not emit `{{title}}`, `{{description}}`, empty tags, or TODO
+  sections when the finalized research document has usable content; see
+  `tests/draft-state.test.ts` and `tests/draft-cli.test.ts`.
+- Benchmark tables must render nested objects as JSON, never `[object Object]`,
+  and must escape MDX-sensitive characters such as `<`, `>`, and `|`; see
+  `tests/draft-benchmark-data.test.ts`.
+- Existing-project launch methodology must use the resolved `companion_repo`
+  rather than a synthetic `github.com/{author}/{slug}` repo.

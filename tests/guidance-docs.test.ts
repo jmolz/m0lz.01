@@ -79,6 +79,24 @@ describe('guidance docs', () => {
     }
   });
 
+  it('Claude and Codex drafting rules preserve research-derived draft tripwires', () => {
+    const claudeRule = read('.claude/rules/drafting.md');
+    const codexRule = read('.codex/rules/drafting.md');
+    expect(claudeRule).toBe(codexRule);
+    for (const required of [
+      'Research-derived drafts must be evaluation-ready',
+      'blog evaluate structural-autocheck',
+      'tests/benchmark-repair-cli.test.ts',
+      'tests/draft-state.test.ts',
+      'tests/draft-cli.test.ts',
+      'tests/draft-benchmark-data.test.ts',
+      'never `[object Object]`',
+      'resolved `companion_repo`',
+    ]) {
+      expect(codexRule).toContain(required);
+    }
+  });
+
   it('Claude and Codex publish rules capture platform-image review regressions', () => {
     const claudeRule = read('.claude/rules/publish.md');
     const codexRule = read('.codex/rules/publish.md');

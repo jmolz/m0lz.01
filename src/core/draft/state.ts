@@ -41,6 +41,112 @@ function benchmarkRepairHint(slug: string): string {
   );
 }
 
+function titleCaseSlug(value: string): string {
+  return value
+    .split(/[-_\s]+/)
+    .filter(Boolean)
+    .map((part) => {
+      const lower = part.toLowerCase();
+      return lower.charAt(0).toUpperCase() + lower.slice(1);
+    })
+    .join(' ');
+}
+
+function deriveTitle(post: PostRow, topic: string | undefined): string {
+  if (post.project_id) {
+    const projectPrefix = post.project_id.replace(/\./g, '-').toLowerCase();
+    const suffix = post.slug.startsWith(`${projectPrefix}-`)
+      ? post.slug.slice(projectPrefix.length + 1)
+      : post.slug;
+    return `${post.project_id} -- ${titleCaseSlug(suffix)}`;
+  }
+
+  const trimmedTopic = topic?.trim();
+  if (trimmedTopic) {
+    return trimmedTopic.replace(/\s+/g, ' ').slice(0, 120);
+  }
+
+  return titleCaseSlug(post.slug);
+}
+
+function firstSentence(value: string | undefined): string | null {
+  const normalized = value?.replace(/\s+/g, ' ').trim();
+  if (!normalized) return null;
+  const match = normalized.match(/^(.+?[.!?])(?:\s|$)/);
+  return (match ? match[1] : normalized).slice(0, 240);
+}
+
+function slugTag(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/\./g, '-')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+function deriveTags(post: PostRow, researchText: string): string[] {
+  const tags = new Set<string>();
+  if (post.content_type) tags.add(slugTag(post.content_type));
+  if (post.project_id) tags.add(slugTag(post.project_id));
+
+  const lower = researchText.toLowerCase();
+  const keywordTags: Array<[string, string]> = [
+    ['pice', 'pice'],
+    ['stack loops', 'stack-loops'],
+    ['code review', 'ai-code-review'],
+    ['contract', 'contract-evaluation'],
+    ['daemon', 'developer-tools'],
+    ['benchmark', 'benchmarks'],
+    ['typescript', 'typescript'],
+    ['rust', 'rust'],
+  ];
+  for (const [needle, tag] of keywordTags) {
+    if (lower.includes(needle)) tags.add(tag);
+  }
+
+  return Array.from(tags).filter(Boolean).slice(0, 8);
+}
+
+function deriveDraftFrontmatter(
+  base: PostFrontmatter,
+  post: PostRow,
+  research: {
+    topic?: string;
+    thesis?: string;
+    findings?: string;
+    dataPoints?: string;
+  },
+): PostFrontmatter {
+  const researchText = [
+    research.topic,
+    research.thesis,
+    research.findings,
+    research.dataPoints,
+  ].filter(Boolean).join('\n\n');
+
+  return {
+    ...base,
+    title: base.title === '{{title}}' ? deriveTitle(post, research.topic) : base.title,
+    description: base.description === '{{description}}'
+      ? (firstSentence(research.thesis) ?? firstSentence(research.findings) ?? deriveTitle(post, research.topic))
+      : base.description,
+    tags: base.tags.length === 0 ? deriveTags(post, researchText) : base.tags,
+  };
+}
+
+function buildResearchConclusion(
+  thesis: string | undefined,
+  openQuestions: string | undefined,
+): string | undefined {
+  const thesisLine = firstSentence(thesis);
+  if (!thesisLine) return undefined;
+  const trimmedQuestions = openQuestions?.trim();
+  if (trimmedQuestions) {
+    return `${thesisLine}\n\nThe remaining work is bounded by the open questions above; the launch claim should stay tied to the verified benchmark and fixture evidence rather than broader confidence claims.`;
+  }
+  return thesisLine;
+}
+
 export function validateDraftBenchmarkEvidence(
   post: PostRow,
   slug: string,
@@ -91,22 +197,42 @@ export function initDraft(
 
   mkdirSync(assetsDir, { recursive: true });
 
-  const frontmatter = generateFrontmatter(post, config, configPath);
-
   // Build draft context from research and benchmark data
   const contentType = (post.content_type ?? 'technical-deep-dive') as ContentType;
+  let researchTopic: string | undefined;
   let researchThesis: string | undefined;
   let researchFindings: string | undefined;
+  let researchDataPoints: string | undefined;
+  let researchOpenQuestions: string | undefined;
+  let researchBenchmarkTargets: string | undefined;
+  let researchRepoScope: string | undefined;
 
   const docPath = documentPath(researchDir, slug);
   if (existsSync(docPath)) {
     const doc = readResearchDocument(docPath);
+    researchTopic = doc.topic || undefined;
     researchThesis = doc.thesis || undefined;
     researchFindings = doc.findings || undefined;
+    researchDataPoints = doc.data_points || undefined;
+    researchOpenQuestions = doc.open_questions || undefined;
+    researchBenchmarkTargets = doc.benchmark_targets || undefined;
+    researchRepoScope = doc.repo_scope || undefined;
   }
+
+  const frontmatter = deriveDraftFrontmatter(
+    generateFrontmatter(post, config, configPath),
+    post,
+    {
+      topic: researchTopic,
+      thesis: researchThesis,
+      findings: researchFindings,
+      dataPoints: researchDataPoints,
+    },
+  );
 
   const benchmarkCtx = getBenchmarkContext(benchmarkDir, slug, {
     githubUser: config.author.github,
+    companionRepo: frontmatter.companion_repo,
   });
   const existingTags = readExistingTags(config.site.repo_path, config.site.content_dir);
 
@@ -116,6 +242,11 @@ export function initDraft(
     methodologyRef: benchmarkCtx.methodologyRef || undefined,
     researchThesis,
     researchFindings,
+    researchDataPoints,
+    researchOpenQuestions,
+    researchBenchmarkTargets,
+    researchRepoScope,
+    researchConclusion: buildResearchConclusion(researchThesis, researchOpenQuestions),
     existingTags,
   };
 

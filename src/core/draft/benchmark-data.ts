@@ -14,6 +14,22 @@ export interface BenchmarkContext {
 
 export interface MethodologyRefOptions {
   githubUser: string;
+  companionRepo?: string;
+}
+
+function formatBenchmarkValue(value: unknown): string {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'object') {
+    return JSON.stringify(value)
+      .replace(/\|/g, '\\|')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+  }
+  return String(value)
+    .replace(/\n/g, '<br>')
+    .replace(/\|/g, '\\|')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
 }
 
 export function formatBenchmarkTable(results: BenchmarkResults): string {
@@ -39,7 +55,7 @@ export function formatBenchmarkTable(results: BenchmarkResults): string {
     for (let i = 0; i < maxLen; i++) {
       const cells = headers.map((h) => {
         const v = data[h];
-        return Array.isArray(v) && i < v.length ? String(v[i]) : '';
+        return Array.isArray(v) && i < v.length ? formatBenchmarkValue(v[i]) : '';
       });
       rows.push(`| ${cells.join(' | ')} |`);
     }
@@ -63,7 +79,7 @@ export function formatBenchmarkTable(results: BenchmarkResults): string {
     const separator = `| ${headers.map(() => '---').join(' | ')} |`;
     const rows = keys.map((k) => {
       const v = data[k] as Record<string, unknown>;
-      const cells = subKeyArr.map((sk) => String(v[sk] ?? ''));
+      const cells = subKeyArr.map((sk) => formatBenchmarkValue(v[sk]));
       return `| ${k} | ${cells.join(' | ')} |`;
     });
     return [headerRow, separator, ...rows].join('\n');
@@ -72,7 +88,7 @@ export function formatBenchmarkTable(results: BenchmarkResults): string {
   // Simple key-value pairs: two-column table
   const headerRow = '| Metric | Value |';
   const separator = '| --- | --- |';
-  const rows = keys.map((k) => `| ${k} | ${String(data[k])} |`);
+  const rows = keys.map((k) => `| ${k} | ${formatBenchmarkValue(data[k])} |`);
   return [headerRow, separator, ...rows].join('\n');
 }
 
@@ -81,6 +97,13 @@ export function formatMethodologyRef(
   slug: string,
   opts: MethodologyRefOptions,
 ): string {
+  if (opts.companionRepo) {
+    return (
+      `Tested on ${env.os} ${env.arch} (${env.cpus}) with Node.js ${env.node_version}. ` +
+      `Benchmark targets were run against [${opts.companionRepo}](${opts.companionRepo}); ` +
+      `the canonical results JSON records the exact commands and captured outcomes.`
+    );
+  }
   return (
     `Tested on ${env.os} ${env.arch} (${env.cpus}) with Node.js ${env.node_version} -- ` +
     `see [METHODOLOGY.md](https://github.com/${opts.githubUser}/${slug}/blob/main/METHODOLOGY.md) for full reproduction steps.`

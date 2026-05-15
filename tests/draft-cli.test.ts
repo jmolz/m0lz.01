@@ -391,9 +391,14 @@ describe('runDraftValidate', () => {
 
   it('fails for placeholder frontmatter', () => {
     const f = setupFixture();
-    setupDraftSlug(f, 'val-fm');
+    setupDraftSlug(f, 'val-fm', 'analysis-opinion');
     captureLogs();
     runDraftInit('val-fm', paths(f));
+    const mdxPath = join(f.draftsDir, 'val-fm', 'index.mdx');
+    const placeholderFrontmatter = readFileSync(mdxPath, 'utf-8')
+      .replace(/^title: .+$/m, 'title: "{{title}}"')
+      .replace(/^description: .+$/m, 'description: "{{description}}"');
+    writeFileSync(mdxPath, placeholderFrontmatter, 'utf-8');
 
     const savedExitCode = process.exitCode;
     try {
@@ -402,7 +407,8 @@ describe('runDraftValidate', () => {
       runDraftValidate('val-fm', paths(f));
       expect(process.exitCode).toBe(1);
       const combined = errors.join('\n');
-      expect(combined).toContain('placeholder');
+      expect(combined).toContain('Title is still a placeholder');
+      expect(combined).toContain('Description is still a placeholder');
     } finally {
       process.exitCode = savedExitCode;
     }

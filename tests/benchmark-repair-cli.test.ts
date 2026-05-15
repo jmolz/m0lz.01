@@ -182,6 +182,17 @@ describe('runBenchmarkRepair --results-file', () => {
       expect(receipt.action).toBe('results-file');
       expect(receipt.previous_phase).toBe('draft');
       expect(receipt.phase_after).toBe('draft');
+      const verifyDb = getDatabase(f.dbPath);
+      try {
+        const post = verifyDb.prepare('SELECT phase, has_benchmarks FROM posts WHERE slug = ?').get('draft-repair') as {
+          phase: string;
+          has_benchmarks: number;
+        };
+        expect(post.phase).toBe('draft');
+        expect(post.has_benchmarks).toBe(1);
+      } finally {
+        closeDatabase(verifyDb);
+      }
     } finally {
       process.exitCode = saved;
     }
