@@ -79,6 +79,12 @@ function writeResults(benchmarkDir: string, slug: string, data: unknown): void {
   );
 }
 
+function writeEnvironment(benchmarkDir: string, slug: string, data: unknown): void {
+  const dir = join(benchmarkDir, slug);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'environment.json'), JSON.stringify(data, null, 2), 'utf-8');
+}
+
 describe('runStructuralAutocheck — determinism', () => {
   it('produces byte-identical output across runs on the same draft', () => {
     const f = setup();
@@ -202,6 +208,29 @@ describe('runStructuralAutocheck — lint categories', () => {
     insertPost(f.db, 'no-bench');
     writeDraft(f.draftsDir, 'no-bench', 'We measured 42 runs and achieved 99 percent accuracy.');
     const issues = runStructuralAutocheck(f.db, 'no-bench', { draftsDir: f.draftsDir, benchmarkDir: f.benchmarkDir });
+    expect(issues.filter((i) => i.category === 'benchmark-claim-unbacked')).toHaveLength(0);
+  });
+
+  it('does not treat JSX comments as benchmark prose', () => {
+    const f = setup();
+    insertPost(f.db, 'comment-claim');
+    writeDraft(f.draftsDir, 'comment-claim', '{/* Voice rule mentions 500 words. */}\n\nMeasured value: 42.');
+    writeResults(f.benchmarkDir, 'comment-claim', { measured_value: 42 });
+    const issues = runStructuralAutocheck(f.db, 'comment-claim', { draftsDir: f.draftsDir, benchmarkDir: f.benchmarkDir });
+    expect(issues.filter((i) => i.category === 'benchmark-claim-unbacked')).toHaveLength(0);
+  });
+
+  it('accepts numeric environment evidence in methodology prose', () => {
+    const f = setup();
+    insertPost(f.db, 'env-claim');
+    writeDraft(f.draftsDir, 'env-claim', 'Tested on Apple M3 Max x 16 with Node.js v22.15.0 and npm 11.12.1. Measured value: 42.');
+    writeResults(f.benchmarkDir, 'env-claim', { measured_value: 42 });
+    writeEnvironment(f.benchmarkDir, 'env-claim', {
+      cpus: 'Apple M3 Max x 16',
+      node_version: 'v22.15.0',
+      npm_version: '11.12.1',
+    });
+    const issues = runStructuralAutocheck(f.db, 'env-claim', { draftsDir: f.draftsDir, benchmarkDir: f.benchmarkDir });
     expect(issues.filter((i) => i.category === 'benchmark-claim-unbacked')).toHaveLength(0);
   });
 

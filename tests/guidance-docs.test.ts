@@ -86,6 +86,7 @@ describe('guidance docs', () => {
     for (const required of [
       'Research-derived drafts must be evaluation-ready',
       'blog evaluate structural-autocheck',
+      'blog draft regenerate <slug>',
       'tests/benchmark-repair-cli.test.ts',
       'tests/draft-state.test.ts',
       'tests/draft-cli.test.ts',

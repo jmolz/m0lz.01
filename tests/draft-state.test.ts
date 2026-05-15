@@ -10,12 +10,14 @@ import {
   getDraftPost,
   initDraft,
   completeDraft,
+  regenerateDraft,
   registerAsset,
   listAssets,
   draftPath,
 } from '../src/core/draft/state.js';
 import { BlogConfig } from '../src/core/config/types.js';
 import { parseFrontmatter, validateFrontmatter } from '../src/core/draft/frontmatter.js';
+import { runStructuralAutocheck } from '../src/core/evaluate/autocheck.js';
 
 let tempDir: string | undefined;
 
@@ -95,6 +97,57 @@ function createDraftPost(
     repo_scope: 'Test scope',
   };
   writeResearchDocument(researchDir, doc, { force: true });
+}
+
+function writeBenchmarkArtifacts(benchmarkDir: string, slug: string): void {
+  const dir = join(benchmarkDir, slug);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'results.json'), JSON.stringify({
+    slug,
+    run_id: 1,
+    timestamp: '2026-05-15T17:23:50Z',
+    targets: [
+      'cargo test -p pice-daemon --test parallel_cohort_speedup_assertion -- --nocapture',
+      'node scripts/acceptance/phase8-reference-projects.mjs',
+    ],
+    data: {
+      speedup_assertion: {
+        status: 'passed',
+        sequential_mean_seconds: 6.238500097,
+        parallel_mean_seconds: 3.147005138,
+        parallel_to_sequential_ratio: 0.504,
+        target_ratio_max: 0.625,
+        iterations: 3,
+      },
+      phase8_reference_projects: {
+        status: 'passed',
+        fixture_count: 5,
+        fixtures: [
+          {
+            fixture: 'fastapi-postgres',
+            detected_layers: 7,
+            configured_layers: 7,
+            evaluate_status: 'passed',
+            terminal_exit_code: 0,
+            distinct_layer_runs: 7,
+            gate_decisions: 1,
+          },
+        ],
+      },
+      summary: 'Fresh benchmark capture passed: ratio 0.504 <= 0.625.',
+    },
+    summary: 'Fresh benchmark capture passed: ratio 0.504 <= 0.625.',
+  }), 'utf-8');
+  writeFileSync(join(dir, 'environment.json'), JSON.stringify({
+    os: 'darwin',
+    os_release: '25.4.0',
+    arch: 'arm64',
+    cpus: 'Apple M3 Max x 16',
+    total_memory_gb: 128,
+    node_version: 'v22.15.0',
+    npm_version: '11.12.1',
+    captured_at: '2026-05-15T14:30:01.679Z',
+  }), 'utf-8');
 }
 
 describe('getDraftPost', () => {
@@ -267,6 +320,86 @@ describe('initDraft', () => {
       expect(content).toContain('## Architecture');
       expect(content).toContain('Test scope');
       expect(content).not.toContain('{/* TODO: Fill this section */}');
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  it('generates benchmark-backed project-launch drafts that pass structural autocheck', () => {
+    const dir = makeTempDir();
+    const dbPath = join(dir, 'state.db');
+    const draftsDir = join(dir, 'drafts');
+    const benchmarkDir = join(dir, 'benchmarks');
+    const researchDir = join(dir, 'research');
+    const config = makeConfig(dir);
+    createDraftPost(dbPath, researchDir, 'benchmark-launch', 'project-launch');
+
+    writeResearchDocument(researchDir, {
+      slug: 'benchmark-launch',
+      topic: 'benchmark launch',
+      mode: 'directed',
+      content_type: 'project-launch',
+      created_at: new Date().toISOString(),
+      thesis: 'Feature-level review misses seams in v0.2 workflows.',
+      findings: 'Historical notes mention 1,262 tests, 553.273194 ms, and 96.6 percent confidence.',
+      sources_list: 'Test sources',
+      data_points: 'Older release evidence mentioned 586.49 ms and workflow run 25886626757.',
+      open_questions: 'Can a generated draft avoid stale numbers?',
+      benchmark_targets: '- Target A',
+      repo_scope: 'The release notes also mention 100 concurrent CI runs as out of scope.',
+    }, { force: true });
+    writeBenchmarkArtifacts(benchmarkDir, 'benchmark-launch');
+
+    const db = getDatabase(dbPath);
+    try {
+      db.prepare('UPDATE posts SET has_benchmarks = 1 WHERE slug = ?').run('benchmark-launch');
+      const result = initDraft(db, 'benchmark-launch', draftsDir, benchmarkDir, researchDir, config, join(dir, '.blogrc.yaml'));
+      const content = readFileSync(result.draftPath, 'utf-8');
+
+      expect(content).toContain('## Benchmark Results');
+      expect(content).toContain('ratio 0.504 &lt;= 0.625');
+      expect(content).not.toContain('1,262 tests');
+      expect(content).not.toContain('553.273194');
+
+      const issues = runStructuralAutocheck(db, 'benchmark-launch', { draftsDir, benchmarkDir });
+      expect(issues).toEqual([]);
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  it('regenerates stale evaluate-phase draft bodies from benchmark artifacts', () => {
+    const dir = makeTempDir();
+    const dbPath = join(dir, 'state.db');
+    const draftsDir = join(dir, 'drafts');
+    const benchmarkDir = join(dir, 'benchmarks');
+    const researchDir = join(dir, 'research');
+    const config = makeConfig(dir);
+    createDraftPost(dbPath, researchDir, 'stale-launch', 'project-launch');
+    writeBenchmarkArtifacts(benchmarkDir, 'stale-launch');
+
+    const db = getDatabase(dbPath);
+    try {
+      db.prepare('UPDATE posts SET has_benchmarks = 1 WHERE slug = ?').run('stale-launch');
+      initDraft(db, 'stale-launch', draftsDir, benchmarkDir, researchDir, config, join(dir, '.blogrc.yaml'));
+      const mdxPath = draftPath(draftsDir, 'stale-launch');
+      writeFileSync(
+        mdxPath,
+        readFileSync(mdxPath, 'utf-8')
+          .replace('The claim surface is bounded', 'The stale draft says 9999 tests and ratio 0.999 before a bare <= marker. The claim surface is bounded'),
+        'utf-8',
+      );
+      advancePhase(db, 'stale-launch', 'evaluate');
+
+      const before = runStructuralAutocheck(db, 'stale-launch', { draftsDir, benchmarkDir });
+      expect(before.some((issue) => issue.category === 'benchmark-claim-unbacked')).toBe(true);
+      expect(before.some((issue) => issue.category === 'mdx-parse')).toBe(true);
+
+      const result = regenerateDraft(db, 'stale-launch', draftsDir, benchmarkDir, researchDir, config, join(dir, '.blogrc.yaml'));
+      expect(existsSync(result.receiptPath)).toBe(true);
+
+      const after = runStructuralAutocheck(db, 'stale-launch', { draftsDir, benchmarkDir });
+      expect(after).toEqual([]);
     } finally {
       closeDatabase(db);
     }

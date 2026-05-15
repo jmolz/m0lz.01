@@ -14,6 +14,7 @@ import {
   registerAsset,
   listAssets,
   draftPath,
+  regenerateDraft,
   regenerateDraftFrontmatter,
   PLACEHOLDER_PATTERN,
   validateDraftBenchmarkEvidence,
@@ -401,6 +402,57 @@ export function runDraftRegenerateFrontmatter(
   }
 }
 
+export function runDraftRegenerate(slug: string, paths: DraftPaths = {}): void {
+  try {
+    validateSlug(slug);
+  } catch (e) {
+    console.error((e as Error).message);
+    process.exitCode = 1;
+    return;
+  }
+
+  const dbPath = paths.dbPath ?? DB_PATH;
+  const draftsDir = paths.draftsDir ?? DRAFTS_DIR;
+  const benchmarkDir = paths.benchmarkDir ?? BENCHMARK_DIR;
+  const researchDir = paths.researchDir ?? RESEARCH_DIR;
+  const configPath = paths.configPath ?? CONFIG_PATH;
+  requireDb(dbPath);
+
+  if (!existsSync(configPath)) {
+    console.error(`Config not found: ${configPath}. Run 'blog init' first.`);
+    process.exitCode = 1;
+    return;
+  }
+
+  let config;
+  try {
+    config = loadConfig(configPath);
+  } catch (e) {
+    console.error((e as Error).message);
+    process.exitCode = 1;
+    return;
+  }
+
+  const db = getDatabase(dbPath);
+  try {
+    let result;
+    try {
+      result = regenerateDraft(db, slug, draftsDir, benchmarkDir, researchDir, config, configPath);
+    } catch (e) {
+      console.error((e as Error).message);
+      process.exitCode = 1;
+      return;
+    }
+
+    console.log(`Draft regenerated: ${result.draftPath}`);
+    console.log(`Previous hash: ${result.previousHash}`);
+    console.log(`New hash:      ${result.newHash}`);
+    console.log(`Receipt:       ${result.receiptPath}`);
+  } finally {
+    closeDatabase(db);
+  }
+}
+
 export async function runDraftPlatformImages(slug: string, paths: DraftPaths = {}): Promise<void> {
   try {
     validateSlug(slug);
@@ -540,6 +592,13 @@ export function registerDraft(program: Command): void {
     .description('Generate Dev.to, Medium, and Substack platform images for a draft')
     .action((slug: string) => {
       return runDraftPlatformImages(slug);
+    });
+
+  draft
+    .command('regenerate <slug>')
+    .description('Regenerate pre-published draft body from research and benchmark artifacts')
+    .action((slug: string) => {
+      runDraftRegenerate(slug);
     });
 
   draft

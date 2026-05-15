@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 import Database from 'better-sqlite3';
 
@@ -151,7 +152,9 @@ function checkBrokenLinks(
 }
 
 function stripFencedBlocks(body: string): string {
-  return body.replace(/```[\s\S]*?```/g, '');
+  return body
+    .replace(/```[\s\S]*?```/g, '')
+    .replace(/\{\/\*[\s\S]*?\*\/\}/g, '');
 }
 
 function checkMdxParse(draft: Draft, issues: Issue[]): void {
@@ -194,7 +197,16 @@ function checkBenchmarkClaims(
   }
   if (!results) return;
 
-  const knownNumbers = collectNumericTokens(results.data);
+  const knownNumbers = collectNumericTokens(results);
+  const envPath = join(benchmarkDir, slug, 'environment.json');
+  if (existsSync(envPath)) {
+    try {
+      collectNumericTokens(JSON.parse(readFileSync(envPath, 'utf-8')), knownNumbers);
+    } catch {
+      // Invalid environment snapshots are handled by benchmark validation; the
+      // claim checker should not introduce a second failure path here.
+    }
+  }
   if (knownNumbers.size === 0) return;
 
   const prose = stripFencedBlocks(draft.body);

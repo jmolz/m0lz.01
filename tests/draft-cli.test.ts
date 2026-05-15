@@ -15,6 +15,7 @@ import {
   runDraftAddAsset,
   runDraftComplete,
   runDraftPlatformImages,
+  runDraftRegenerate,
   DraftPaths,
 } from '../src/cli/draft.js';
 
@@ -137,6 +138,27 @@ function markBenchmarkedWithInvalidResults(f: Fixture, slug: string): void {
     timestamp: new Date().toISOString(),
     targets: ['Target A'],
     data: {},
+  }), 'utf-8');
+}
+
+function markBenchmarkedWithValidResults(f: Fixture, slug: string): void {
+  const db = getDatabase(f.dbPath);
+  try {
+    db.prepare('UPDATE posts SET has_benchmarks = 1 WHERE slug = ?').run(slug);
+  } finally {
+    closeDatabase(db);
+  }
+  const benchSlugDir = join(f.benchmarkDir, slug);
+  mkdirSync(benchSlugDir, { recursive: true });
+  writeFileSync(join(benchSlugDir, 'results.json'), JSON.stringify({
+    slug,
+    run_id: 1,
+    timestamp: new Date().toISOString(),
+    targets: ['Target A'],
+    data: {
+      score: 42,
+      summary: 'Current benchmark score 42 passed.',
+    },
   }), 'utf-8');
 }
 
@@ -293,6 +315,43 @@ describe('runDraftInit', () => {
       expect(process.exitCode).toBe(1);
       expect(errors.join('\n')).toContain('Invalid benchmark results');
       expect(errors.join('\n')).toContain('blog benchmark repair bad-benchmark');
+    } finally {
+      process.exitCode = savedExitCode;
+    }
+  });
+});
+
+describe('runDraftRegenerate', () => {
+  it('regenerates pre-published draft bodies from benchmark evidence', () => {
+    const f = setupFixture();
+    setupDraftSlug(f, 'regen-bench', 'project-launch');
+    markBenchmarkedWithValidResults(f, 'regen-bench');
+    captureLogs();
+    runDraftInit('regen-bench', paths(f));
+
+    const mdxPath = join(f.draftsDir, 'regen-bench', 'index.mdx');
+    writeFileSync(
+      mdxPath,
+      readFileSync(mdxPath, 'utf-8').replace('The launch frames', 'This stale draft says 9999 tests. The launch frames'),
+      'utf-8',
+    );
+
+    const db = getDatabase(f.dbPath);
+    try {
+      advancePhase(db, 'regen-bench', 'evaluate');
+    } finally {
+      closeDatabase(db);
+    }
+
+    const savedExitCode = process.exitCode;
+    try {
+      const { logs } = captureLogs();
+      process.exitCode = 0;
+      runDraftRegenerate('regen-bench', paths(f));
+      expect(process.exitCode).not.toBe(1);
+      expect(logs.join('\n')).toContain('Draft regenerated:');
+      expect(existsSync(join(f.draftsDir, 'regen-bench', '.draft-regenerated.json'))).toBe(true);
+      expect(readFileSync(mdxPath, 'utf-8')).not.toContain('9999 tests');
     } finally {
       process.exitCode = savedExitCode;
     }

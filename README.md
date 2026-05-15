@@ -361,8 +361,10 @@ blog draft complete m0lz-02-stack-loops
 
 blog evaluate init m0lz-02-stack-loops
 blog evaluate structural-autocheck m0lz-02-stack-loops
-# If structural-autocheck reports issues, fix the draft and rerun it before
-# recording reviewer JSON. Deterministic autocheck issues block synthesis.
+# If structural-autocheck reports generated-draft issues, regenerate the draft
+# from research + benchmark artifacts, then rerun autocheck before reviewer JSON.
+blog draft regenerate m0lz-02-stack-loops
+blog evaluate structural-autocheck m0lz-02-stack-loops
 # Once autocheck is clean, record reviewer JSON, synthesize, then complete.
 
 blog publish start m0lz-02-stack-loops
@@ -467,6 +469,7 @@ blog draft show <slug>
 blog draft validate <slug>
 blog draft add-asset <slug> --path <file> --type excalidraw|chart|image
 blog draft platform-images <slug>              # generate Dev.to/Medium/Substack PNG assets
+blog draft regenerate <slug>                   # rebuild generated body pre-publish
 blog draft regenerate-frontmatter <slug> [--project <id>]
 blog draft complete <slug>                      # → evaluate phase
 

@@ -9,7 +9,7 @@ import { BlogConfig } from '../config/types.js';
 import { advancePhase } from '../research/state.js';
 import { generateFrontmatter, parseFrontmatter, serializeFrontmatter, validateFrontmatter, PostFrontmatter } from './frontmatter.js';
 import { renderDraftTemplate, DraftContext } from './template.js';
-import { getBenchmarkContext } from './benchmark-data.js';
+import { getBenchmarkContext, BenchmarkContext } from './benchmark-data.js';
 import { readExistingTags } from './tags.js';
 import { readResearchDocument } from '../research/document.js';
 import { documentPath } from '../research/document.js';
@@ -74,6 +74,10 @@ function firstSentence(value: string | undefined): string | null {
   if (!normalized) return null;
   const match = normalized.match(/^(.+?[.!?])(?:\s|$)/);
   return (match ? match[1] : normalized).slice(0, 240);
+}
+
+function escapeMdxProse(value: string): string {
+  return value.replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 function slugTag(value: string): string {
@@ -147,6 +151,155 @@ function buildResearchConclusion(
   return thesisLine;
 }
 
+interface ResearchDraftFields {
+  topic?: string;
+  thesis?: string;
+  findings?: string;
+  dataPoints?: string;
+  openQuestions?: string;
+  benchmarkTargets?: string;
+  repoScope?: string;
+}
+
+function readResearchDraftFields(researchDir: string, slug: string): ResearchDraftFields {
+  const docPath = documentPath(researchDir, slug);
+  if (!existsSync(docPath)) return {};
+
+  const doc = readResearchDocument(docPath);
+  return {
+    topic: doc.topic || undefined,
+    thesis: doc.thesis || undefined,
+    findings: doc.findings || undefined,
+    dataPoints: doc.data_points || undefined,
+    openQuestions: doc.open_questions || undefined,
+    benchmarkTargets: doc.benchmark_targets || undefined,
+    repoScope: doc.repo_scope || undefined,
+  };
+}
+
+function mergeRegeneratedFrontmatter(
+  generated: PostFrontmatter,
+  previous: PostFrontmatter | undefined,
+): PostFrontmatter {
+  if (!previous) return generated;
+  const previousTitle = previous.title.trim();
+  const previousDescription = previous.description.trim();
+  return {
+    ...generated,
+    ...previous,
+    title: previousTitle && previousTitle !== '{{title}}' ? previous.title : generated.title,
+    description: previousDescription && previousDescription !== '{{description}}'
+      ? previous.description
+      : generated.description,
+    tags: previous.tags.length > 0 ? previous.tags : generated.tags,
+    canonical: generated.canonical ?? previous.canonical,
+    companion_repo: generated.companion_repo ?? previous.companion_repo,
+    project: generated.project ?? previous.project,
+  };
+}
+
+function benchmarkSummary(benchmarkCtx: BenchmarkContext): string | undefined {
+  const rawTopLevel = benchmarkCtx.results?.summary;
+  const topLevel = typeof rawTopLevel === 'string' ? rawTopLevel.trim() : '';
+  if (topLevel) return topLevel;
+  const dataSummary = benchmarkCtx.results?.data.summary;
+  return typeof dataSummary === 'string' && dataSummary.trim() ? dataSummary.trim() : undefined;
+}
+
+function benchmarkBackedContext(
+  frontmatter: PostFrontmatter,
+  research: ResearchDraftFields,
+  benchmarkCtx: BenchmarkContext,
+): Pick<
+  DraftContext,
+  'researchThesis' | 'researchFindings' | 'researchDataPoints' | 'researchRepoScope' | 'researchConclusion'
+> {
+  const title = frontmatter.title;
+  const intro = firstSentence(research.thesis) ?? `${title} is backed by imported benchmark evidence.`;
+  const summary = benchmarkSummary(benchmarkCtx);
+  const summaryLine = summary
+    ? `The current imported benchmark summary is: ${escapeMdxProse(summary)}`
+    : 'The current imported benchmark artifact is the source of truth for measurable claims in this draft.';
+
+  return {
+    researchThesis: escapeMdxProse(intro),
+    researchFindings: [
+      'The launch frames Stack Loops as a layer-contract workflow rather than a single-diff review pass.',
+      'The claim surface is bounded to the current benchmark run: parallel cohort evidence, reference fixture outcomes, and gate behavior live in the table below.',
+      'Research notes remain useful source material, but benchmark-backed prose does not quote measurements unless the imported result can verify them.',
+    ].join('\n\n'),
+    researchDataPoints: [
+      summaryLine,
+      'The benchmark phase imports operator-produced BenchmarkResults JSON, stores the canonical result beside the environment snapshot, and renders the table below directly from that artifact.',
+      'Reviewer synthesis starts from that canonical artifact instead of stale measurements, release history, or local machine details that were not part of the imported run.',
+    ].join('\n\n'),
+    researchRepoScope: [
+      frontmatter.companion_repo
+        ? `The companion repository is [${frontmatter.companion_repo}](${frontmatter.companion_repo}); it owns the CLI, daemon, provider adapters, reference fixtures, and release documentation.`
+        : 'The post links to the configured companion repository when one is available.',
+      'Methodology details stay attached to the benchmark result and environment snapshot. Claims from older release notes or research scaffolding stay out of the generated benchmark claim surface unless they appear in the canonical result.',
+    ].join('\n\n'),
+    researchConclusion: 'The launch claim should remain limited to the verified benchmark and fixture evidence imported for this post.',
+  };
+}
+
+function buildDraftDocument(
+  post: PostRow,
+  slug: string,
+  draftsDir: string,
+  benchmarkDir: string,
+  researchDir: string,
+  config: BlogConfig,
+  configPath: string,
+  previousFrontmatter?: PostFrontmatter,
+): { draftPath: string; frontmatter: PostFrontmatter; mdxContent: string } {
+  const contentType = (post.content_type ?? 'technical-deep-dive') as ContentType;
+  const research = readResearchDraftFields(researchDir, slug);
+  const generatedFrontmatter = deriveDraftFrontmatter(
+    generateFrontmatter(post, config, configPath),
+    post,
+    {
+      topic: research.topic,
+      thesis: research.thesis,
+      findings: research.findings,
+      dataPoints: research.dataPoints,
+    },
+  );
+  const frontmatter = mergeRegeneratedFrontmatter(generatedFrontmatter, previousFrontmatter);
+  const benchmarkCtx = getBenchmarkContext(benchmarkDir, slug, {
+    githubUser: config.author.github,
+    companionRepo: frontmatter.companion_repo,
+  });
+  const existingTags = readExistingTags(config.site.repo_path, config.site.content_dir);
+
+  let context: DraftContext = {
+    contentType,
+    benchmarkTable: benchmarkCtx.table !== '(no benchmark data)' ? benchmarkCtx.table : undefined,
+    methodologyRef: benchmarkCtx.methodologyRef || undefined,
+    researchThesis: research.thesis,
+    researchFindings: research.findings,
+    researchDataPoints: research.dataPoints,
+    researchOpenQuestions: research.openQuestions,
+    researchBenchmarkTargets: research.benchmarkTargets,
+    researchRepoScope: research.repoScope,
+    researchConclusion: buildResearchConclusion(research.thesis, research.openQuestions),
+    existingTags,
+  };
+
+  if (post.has_benchmarks && benchmarkCtx.results) {
+    context = {
+      ...context,
+      ...benchmarkBackedContext(frontmatter, research, benchmarkCtx),
+    };
+  }
+
+  return {
+    draftPath: draftPath(draftsDir, slug),
+    frontmatter,
+    mdxContent: renderDraftTemplate(frontmatter, context),
+  };
+}
+
 export function validateDraftBenchmarkEvidence(
   post: PostRow,
   slug: string,
@@ -197,63 +350,10 @@ export function initDraft(
 
   mkdirSync(assetsDir, { recursive: true });
 
-  // Build draft context from research and benchmark data
-  const contentType = (post.content_type ?? 'technical-deep-dive') as ContentType;
-  let researchTopic: string | undefined;
-  let researchThesis: string | undefined;
-  let researchFindings: string | undefined;
-  let researchDataPoints: string | undefined;
-  let researchOpenQuestions: string | undefined;
-  let researchBenchmarkTargets: string | undefined;
-  let researchRepoScope: string | undefined;
+  const result = buildDraftDocument(post, slug, draftsDir, benchmarkDir, researchDir, config, configPath);
+  writeFileSync(mdxPath, result.mdxContent, 'utf-8');
 
-  const docPath = documentPath(researchDir, slug);
-  if (existsSync(docPath)) {
-    const doc = readResearchDocument(docPath);
-    researchTopic = doc.topic || undefined;
-    researchThesis = doc.thesis || undefined;
-    researchFindings = doc.findings || undefined;
-    researchDataPoints = doc.data_points || undefined;
-    researchOpenQuestions = doc.open_questions || undefined;
-    researchBenchmarkTargets = doc.benchmark_targets || undefined;
-    researchRepoScope = doc.repo_scope || undefined;
-  }
-
-  const frontmatter = deriveDraftFrontmatter(
-    generateFrontmatter(post, config, configPath),
-    post,
-    {
-      topic: researchTopic,
-      thesis: researchThesis,
-      findings: researchFindings,
-      dataPoints: researchDataPoints,
-    },
-  );
-
-  const benchmarkCtx = getBenchmarkContext(benchmarkDir, slug, {
-    githubUser: config.author.github,
-    companionRepo: frontmatter.companion_repo,
-  });
-  const existingTags = readExistingTags(config.site.repo_path, config.site.content_dir);
-
-  const context: DraftContext = {
-    contentType,
-    benchmarkTable: benchmarkCtx.table !== '(no benchmark data)' ? benchmarkCtx.table : undefined,
-    methodologyRef: benchmarkCtx.methodologyRef || undefined,
-    researchThesis,
-    researchFindings,
-    researchDataPoints,
-    researchOpenQuestions,
-    researchBenchmarkTargets,
-    researchRepoScope,
-    researchConclusion: buildResearchConclusion(researchThesis, researchOpenQuestions),
-    existingTags,
-  };
-
-  const mdxContent = renderDraftTemplate(frontmatter, context);
-  writeFileSync(mdxPath, mdxContent, 'utf-8');
-
-  return { draftPath: mdxPath, frontmatter };
+  return { draftPath: mdxPath, frontmatter: result.frontmatter };
 }
 
 export function completeDraft(
@@ -354,6 +454,83 @@ export interface RegenerateFrontmatterOptions {
   // project-launch row reached draft/evaluate/publish with project_id=NULL.
   // When supplied, this updates posts.project_id before deriving frontmatter.
   projectId?: string;
+}
+
+export interface RegenerateDraftResult {
+  draftPath: string;
+  previousHash: string;
+  newHash: string;
+  receiptPath: string;
+}
+
+export function regenerateDraft(
+  db: Database.Database,
+  slug: string,
+  draftsDir: string,
+  benchmarkDir: string,
+  researchDir: string,
+  config: BlogConfig,
+  configPath: string,
+): RegenerateDraftResult {
+  const post = db.prepare('SELECT * FROM posts WHERE slug = ?').get(slug) as PostRow | undefined;
+  if (!post) {
+    throw new Error(`Post not found: ${slug}`);
+  }
+  if (post.phase === 'published') {
+    throw new Error(
+      `Post '${slug}' is in phase 'published'. Regenerate the canonical site copy through the update pipeline.`,
+    );
+  }
+
+  const benchmarkErrors = validateDraftBenchmarkEvidence(post, slug, benchmarkDir);
+  if (benchmarkErrors.length > 0) {
+    throw new Error(benchmarkErrors[0]);
+  }
+
+  const mdxPath = draftPath(draftsDir, slug);
+  if (!existsSync(mdxPath)) {
+    throw new Error(`Draft MDX not found: ${mdxPath}. Run 'blog draft init ${slug}' first.`);
+  }
+
+  const previous = readFileSync(mdxPath, 'utf-8');
+  const previousFrontmatter = parseFrontmatter(previous);
+  const previousHash = createHash('sha256').update(previous).digest('hex');
+  const result = buildDraftDocument(
+    post,
+    slug,
+    draftsDir,
+    benchmarkDir,
+    researchDir,
+    config,
+    configPath,
+    previousFrontmatter,
+  );
+
+  writeFileSync(mdxPath, result.mdxContent, 'utf-8');
+  const newHash = createHash('sha256').update(result.mdxContent).digest('hex');
+  const receiptPath = join(draftsDir, slug, '.draft-regenerated.json');
+  writeFileSync(
+    receiptPath,
+    JSON.stringify(
+      {
+        timestamp: new Date().toISOString(),
+        slug,
+        previous_hash: previousHash,
+        new_hash: newHash,
+        source: 'research+benchmark',
+      },
+      null,
+      2,
+    ) + '\n',
+    'utf-8',
+  );
+
+  return {
+    draftPath: mdxPath,
+    previousHash,
+    newHash,
+    receiptPath,
+  };
 }
 
 // v0.3 dogfood-hardening: rewrites the frontmatter block of

@@ -115,6 +115,10 @@ Regression anchors from the `m0lz-02-stack-loops` dogfood incident:
 - `draft init` must not emit `{{title}}`, `{{description}}`, empty tags, or TODO
   sections when the finalized research document has usable content; see
   `tests/draft-state.test.ts` and `tests/draft-cli.test.ts`.
+- For benchmark-backed drafts, generated section prose must keep measurable
+  claims tied to `.blog-agent/benchmarks/<slug>/results.json`; use
+  `blog draft regenerate <slug>` for pre-published repair instead of manual MDX
+  edits when autocheck finds stale generated claims.
 - Benchmark tables must render nested objects as JSON, never `[object Object]`,
   and must escape MDX-sensitive characters such as `<`, `>`, and `|`; see
   `tests/draft-benchmark-data.test.ts`.
