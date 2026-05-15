@@ -36,7 +36,9 @@ function renderDisagreements(result: SynthesisResult): string[] {
     return lines;
   }
   lines.push(
-    '_Issues flagged by only one reviewer, grouped by category. Other reviewers did not surface these._',
+    result.gate_policy.single_advisory
+      ? '_Issues flagged by only one reviewer, grouped by category. Other reviewers did not surface these._'
+      : '_Issues flagged by only one reviewer. Clean-pass policy treats these as blocking until fixed or re-reviewed._',
     '',
   );
   const byCategory = new Map<string, IssueCluster[]>();
@@ -88,6 +90,7 @@ export function renderSynthesisReport(
     `- Majority issues: ${result.counts.majority}`,
     `- Single-reviewer issues: ${result.counts.single}`,
     `- Autocheck issues (blocking regardless of reviewer echo): ${result.counts.autocheck}`,
+    `- Single-reviewer policy: ${result.gate_policy.single_advisory ? 'advisory' : 'blocking'}`,
     `- Total issue clusters: ${result.counts.total}`,
     '',
   );
@@ -109,7 +112,9 @@ export function renderSynthesisReport(
   lines.push(
     ...renderClusterSection(
       'Single-Reviewer Issues',
-      'Flagged by one reviewer — advisory.',
+      result.gate_policy.single_advisory
+        ? 'Flagged by one reviewer — advisory.'
+        : 'Flagged by one reviewer — blocking under clean-pass policy.',
       result.categorized.single,
     ),
   );

@@ -75,7 +75,7 @@ evaluation:
   three_reviewer_panel: true       # Run all three reviewers in parallel
   consensus_must_fix: true         # All-3-agree issues block publish
   majority_should_fix: true        # 2-of-3 issues block publish
-  single_advisory: true            # 1-of-3 issues are advisory only
+  single_advisory: false           # false = clean-pass gate; 1-of-3 issues block publish
   verify_benchmark_claims: true    # Check prose claims against results.json
   methodology_completeness: true   # Verify METHODOLOGY.md is reproducible
 

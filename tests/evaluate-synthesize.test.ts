@@ -8,6 +8,7 @@ import {
   computeVerdict,
   synthesize,
   JACCARD_THRESHOLD,
+  DEFAULT_EVALUATION_GATE_POLICY,
 } from '../src/core/evaluate/synthesize.js';
 import { Issue, ReviewerOutput, issueFingerprint } from '../src/core/evaluate/reviewer.js';
 import { ReviewerType } from '../src/core/db/types.js';
@@ -234,15 +235,27 @@ describe('categorize', () => {
 
 describe('computeVerdict', () => {
   it('is pass when both consensus and majority are zero', () => {
-    expect(computeVerdict({ consensus: 0, majority: 0 })).toBe('pass');
+    expect(computeVerdict({ consensus: 0, majority: 0, single: 0, autocheck: 0 })).toBe('pass');
   });
 
   it('is fail when consensus > 0', () => {
-    expect(computeVerdict({ consensus: 1, majority: 0 })).toBe('fail');
+    expect(computeVerdict({ consensus: 1, majority: 0, single: 0, autocheck: 0 })).toBe('fail');
   });
 
   it('is fail when majority > 0', () => {
-    expect(computeVerdict({ consensus: 0, majority: 1 })).toBe('fail');
+    expect(computeVerdict({ consensus: 0, majority: 1, single: 0, autocheck: 0 })).toBe('fail');
+  });
+
+  it('is fail by default when any reviewer issue remains', () => {
+    expect(DEFAULT_EVALUATION_GATE_POLICY.single_advisory).toBe(false);
+    expect(computeVerdict({ consensus: 0, majority: 0, single: 1, autocheck: 0 })).toBe('fail');
+  });
+
+  it('allows single-reviewer issues only when advisory policy is explicit', () => {
+    expect(computeVerdict(
+      { consensus: 0, majority: 0, single: 1, autocheck: 0 },
+      { consensus_must_fix: true, majority_should_fix: true, single_advisory: true },
+    )).toBe('pass');
   });
 });
 
@@ -287,7 +300,7 @@ describe('synthesize — end-to-end', () => {
     expect(result.verdict).toBe('pass');
   });
 
-  it('treats single-reviewer issues as advisory (pass verdict)', () => {
+  it('treats single-reviewer issues as blocking under the default clean-pass policy', () => {
     const outputs = [
       makeOutput('structural', [makeIssue('structural', 'Only one', 'Only one reviewer saw this minor issue')]),
       makeOutput('adversarial', []),
@@ -297,6 +310,22 @@ describe('synthesize — end-to-end', () => {
     expect(result.counts.single).toBe(1);
     expect(result.counts.consensus).toBe(0);
     expect(result.counts.majority).toBe(0);
+    expect(result.verdict).toBe('fail');
+  });
+
+  it('can preserve the older advisory-single behavior when policy opts in', () => {
+    const outputs = [
+      makeOutput('structural', [makeIssue('structural', 'Only one', 'Only one reviewer saw this minor issue')]),
+      makeOutput('adversarial', []),
+      makeOutput('methodology', []),
+    ];
+    const result = synthesize(
+      outputs,
+      ['structural', 'adversarial', 'methodology'],
+      new Set(),
+      { consensus_must_fix: true, majority_should_fix: true, single_advisory: true },
+    );
+    expect(result.counts.single).toBe(1);
     expect(result.verdict).toBe('pass');
   });
 });

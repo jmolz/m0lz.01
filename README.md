@@ -614,7 +614,7 @@ Three-reviewer adversarial evaluation:
 | Adversarial | GPT-5.5 high (Codex) | Thesis challenge, bias, argument gaps |
 | Methodology | GPT-5.5 xhigh (Codex) | Benchmark validity, statistics, reproducibility |
 
-Issues categorize as consensus (all 3 = must fix), majority (2/3 = should fix), single (1/3 = advisory).
+Issues categorize as consensus (all 3), majority (2/3), and single (1/3). By default, the completion gate requires a clean pass: any outstanding reviewer issue blocks `blog evaluate complete`. Set `evaluation.single_advisory: true` only if single-reviewer issues should be advisory.
 
 Full product scope: `.claude/PRD.md`. Per-phase implementation plans: `.claude/plans/`.
 

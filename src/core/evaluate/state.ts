@@ -20,7 +20,14 @@ import {
   validateReviewerOutput,
   normalizeText,
 } from './reviewer.js';
-import { synthesize, SynthesisResult, SynthesisClusterIdentity, crossReviewerFingerprint } from './synthesize.js';
+import {
+  synthesize,
+  SynthesisResult,
+  SynthesisClusterIdentity,
+  crossReviewerFingerprint,
+  EvaluationGatePolicy,
+  DEFAULT_EVALUATION_GATE_POLICY,
+} from './synthesize.js';
 import { renderSynthesisReport } from './report.js';
 
 export type CycleEndedReason = 'passed' | 'rejected';
@@ -1090,10 +1097,11 @@ export function runSynthesis(
   slug: string,
   evaluationsDir: string,
   artifactPaths: SynthesisArtifactPaths,
+  policy: EvaluationGatePolicy = DEFAULT_EVALUATION_GATE_POLICY,
 ): RunSynthesisResult {
   const releaseLock = acquireEvaluateLock(evaluationsDir, slug);
   try {
-    return runSynthesisLocked(db, slug, evaluationsDir, artifactPaths);
+    return runSynthesisLocked(db, slug, evaluationsDir, artifactPaths, policy);
   } finally {
     releaseLock();
   }
@@ -1104,6 +1112,7 @@ function runSynthesisLocked(
   slug: string,
   evaluationsDir: string,
   artifactPaths: SynthesisArtifactPaths,
+  policy: EvaluationGatePolicy,
 ): RunSynthesisResult {
   // Phase 7: read manifest first to surface the update-cycle phase
   // allowance; the original dispatch (post → manifest) rejected 'published'
@@ -1228,7 +1237,7 @@ function runSynthesisLocked(
       }
     }
 
-    const synthesis = synthesize(outputs, expected, snapshot.lintFingerprints);
+    const synthesis = synthesize(outputs, expected, snapshot.lintFingerprints, policy);
     const total = synthesis.counts.total;
     const score = 1 - (synthesis.counts.consensus * 2 + synthesis.counts.majority) / Math.max(1, total);
 
@@ -1327,10 +1336,11 @@ export function completeEvaluation(
   slug: string,
   evaluationsDir: string,
   artifactPaths: SynthesisArtifactPaths,
+  policy: EvaluationGatePolicy = DEFAULT_EVALUATION_GATE_POLICY,
 ): void {
   const releaseLock = acquireEvaluateLock(evaluationsDir, slug);
   try {
-    completeEvaluationLocked(db, slug, evaluationsDir, artifactPaths);
+    completeEvaluationLocked(db, slug, evaluationsDir, artifactPaths, policy);
   } finally {
     releaseLock();
   }
@@ -1341,6 +1351,7 @@ function completeEvaluationLocked(
   slug: string,
   evaluationsDir: string,
   artifactPaths: SynthesisArtifactPaths,
+  policy: EvaluationGatePolicy,
 ): void {
   // Phase 7: read manifest first so update-cycle posts in 'published' are
   // accepted. The original getEvaluatePost → readManifest order rejected
@@ -1378,7 +1389,14 @@ function completeEvaluationLocked(
   if (synthesis.verdict !== 'pass') {
     throw new Error(
       `Latest synthesis verdict is '${synthesis.verdict}', not 'pass'. ` +
-      `Address consensus and majority issues, then re-record reviewers and re-synthesize.`,
+      `Address blocking reviewer issues, then re-record reviewers and re-synthesize.`,
+    );
+  }
+  if (!policy.single_advisory && synthesis.single_issues > 0) {
+    throw new Error(
+      `Latest synthesis contains ${synthesis.single_issues} single-reviewer issue(s). ` +
+      `Clean-pass policy requires zero reviewer issues before completion. ` +
+      `Fix or re-review the draft, then re-record reviewers and re-synthesize.`,
     );
   }
   // Within-cycle stale-pass guard. If any evaluation row was recorded after
@@ -1492,7 +1510,12 @@ function completeEvaluationLocked(
         artifact_hashes: cycle.reviewer_artifact_hashes?.[reviewerType] ?? {},
       });
     }
-    const rederived = synthesize(rederiveOutputs, expectedReviewersInCycle, completeSnapshot.lintFingerprints);
+    const rederived = synthesize(
+      rederiveOutputs,
+      expectedReviewersInCycle,
+      completeSnapshot.lintFingerprints,
+      policy,
+    );
     const mismatches: string[] = [];
     if (rederived.verdict !== synthesis.verdict) {
       mismatches.push(`verdict (stored='${synthesis.verdict}', re-derived='${rederived.verdict}')`);

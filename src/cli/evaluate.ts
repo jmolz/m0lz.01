@@ -3,6 +3,7 @@ import { resolve, join } from 'node:path';
 
 import { Command } from 'commander';
 
+import { loadConfig } from '../core/config/loader.js';
 import { getDatabase, closeDatabase } from '../core/db/database.js';
 import { ReviewerType } from '../core/db/types.js';
 import { validateSlug } from '../core/research/document.js';
@@ -25,12 +26,14 @@ import {
 } from '../core/evaluate/state.js';
 
 const DB_PATH = resolve('.blog-agent', 'state.db');
+const CONFIG_PATH = resolve('.blogrc.yaml');
 const EVALUATIONS_DIR = resolve('.blog-agent', 'evaluations');
 const DRAFTS_DIR = resolve('.blog-agent', 'drafts');
 const BENCHMARK_DIR = resolve('.blog-agent', 'benchmarks');
 
 export interface EvaluatePaths {
   dbPath?: string;
+  configPath?: string;
   evaluationsDir?: string;
   draftsDir?: string;
   benchmarkDir?: string;
@@ -54,6 +57,18 @@ function validateSlugOrFail(slug: string): boolean {
     console.error((e as Error).message);
     process.exitCode = 1;
     return false;
+  }
+}
+
+function loadEvaluationPolicy(paths: EvaluatePaths): ReturnType<typeof loadConfig>['evaluation'] | undefined {
+  const configPath = paths.configPath ?? CONFIG_PATH;
+  if (!existsSync(configPath)) return undefined;
+  try {
+    return loadConfig(configPath).evaluation;
+  } catch (e) {
+    console.error((e as Error).message);
+    process.exitCode = 1;
+    return undefined;
   }
 }
 
@@ -381,13 +396,15 @@ export function runEvaluateSynthesize(slug: string, paths: EvaluatePaths = {}): 
   const evaluationsDir = paths.evaluationsDir ?? EVALUATIONS_DIR;
   const draftsDir = paths.draftsDir ?? DRAFTS_DIR;
   const benchmarkDir = paths.benchmarkDir ?? BENCHMARK_DIR;
+  const policy = loadEvaluationPolicy(paths);
+  if (!policy && existsSync(paths.configPath ?? CONFIG_PATH)) return;
   requireDb(dbPath);
 
   const db = getDatabase(dbPath);
   try {
     let result;
     try {
-      result = runSynthesis(db, slug, evaluationsDir, { draftsDir, benchmarkDir });
+      result = runSynthesis(db, slug, evaluationsDir, { draftsDir, benchmarkDir }, policy);
     } catch (e) {
       console.error((e as Error).message);
       process.exitCode = 1;
@@ -412,12 +429,14 @@ export function runEvaluateComplete(slug: string, paths: EvaluatePaths = {}): vo
   const evaluationsDir = paths.evaluationsDir ?? EVALUATIONS_DIR;
   const draftsDir = paths.draftsDir ?? DRAFTS_DIR;
   const benchmarkDir = paths.benchmarkDir ?? BENCHMARK_DIR;
+  const policy = loadEvaluationPolicy(paths);
+  if (!policy && existsSync(paths.configPath ?? CONFIG_PATH)) return;
   requireDb(dbPath);
 
   const db = getDatabase(dbPath);
   try {
     try {
-      completeEvaluation(db, slug, evaluationsDir, { draftsDir, benchmarkDir });
+      completeEvaluation(db, slug, evaluationsDir, { draftsDir, benchmarkDir }, policy);
     } catch (e) {
       console.error((e as Error).message);
       process.exitCode = 1;

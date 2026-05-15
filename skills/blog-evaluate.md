@@ -264,9 +264,9 @@ Categorization:
 
 - **Consensus:** cluster touched by all expected reviewers (3/3, or 2/2 for analysis-opinion) -> must fix.
 - **Majority:** cluster touched by a strict majority (2/3; N/A for 2-reviewer mode) -> should fix.
-- **Single:** cluster touched by exactly one reviewer -> advisory.
+- **Single:** cluster touched by exactly one reviewer -> blocking by default. Set `evaluation.single_advisory: true` only for workspaces that intentionally treat one-reviewer issues as advisory.
 
-Verdict: `fail` when consensus > 0 OR majority > 0. Otherwise `pass`.
+Verdict: `fail` when any configured blocking bucket has issues. Default policy is clean pass: consensus, majority, single-reviewer, and autocheck issues all block. Autocheck findings always block.
 
 `blog evaluate synthesize` writes `.blog-agent/evaluations/{slug}/synthesis.md`, inserts an `evaluation_synthesis` row, and updates `posts.evaluation_passed`.
 
@@ -276,7 +276,7 @@ Verdict: `fail` when consensus > 0 OR majority > 0. Otherwise `pass`.
 blog evaluate show <slug>
 ```
 
-Read `synthesis.md`. On `pass`:
+Read `synthesis.md`. On `pass`, verify that the configured policy is the one you intend. With the default clean-pass policy, pass means every reviewer issue array is empty and autocheck is clean:
 
 ```bash
 blog evaluate complete <slug>   # advances to publish phase
@@ -285,7 +285,7 @@ blog evaluate complete <slug>   # advances to publish phase
 On `fail`:
 
 - If the author accepts the findings: `blog evaluate reject <slug>`, edit the draft, then run through the workflow again from Step 1 (or Step 3 if the autocheck output is still valid).
-- If the author disputes single-reviewer advisory issues: those never block the verdict. Only consensus and majority issues determine pass/fail.
+- If the author disputes a single-reviewer issue under the default policy: resolve it by editing the draft or re-recording a clean reviewer output after review. Do not complete with outstanding issues unless the workspace explicitly opts into `evaluation.single_advisory: true`.
 
 ## ReviewerOutput schema (shared by all three reviewers)
 

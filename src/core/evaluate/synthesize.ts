@@ -37,6 +37,18 @@ export interface IssueCounts {
 
 export type Verdict = 'pass' | 'fail';
 
+export interface EvaluationGatePolicy {
+  consensus_must_fix: boolean;
+  majority_should_fix: boolean;
+  single_advisory: boolean;
+}
+
+export const DEFAULT_EVALUATION_GATE_POLICY: EvaluationGatePolicy = {
+  consensus_must_fix: true,
+  majority_should_fix: true,
+  single_advisory: false,
+};
+
 // Stable identity of a cluster for coverage comparison. The representative's
 // cross-reviewer fingerprint (SHA-256 of normalized title+description) is the
 // same field used for exact-match clustering, so two synthesis runs that
@@ -50,6 +62,7 @@ export interface SynthesisClusterIdentity {
 
 export interface SynthesisResult {
   verdict: Verdict;
+  gate_policy: EvaluationGatePolicy;
   counts: IssueCounts;
   categorized: CategorizedClusters;
   // Per-bucket cluster representative fingerprints. Used by
@@ -199,7 +212,8 @@ export function categorize(
 }
 
 export function computeVerdict(
-  counts: Pick<IssueCounts, 'consensus' | 'majority' | 'autocheck'>,
+  counts: Pick<IssueCounts, 'consensus' | 'majority' | 'single' | 'autocheck'>,
+  policy: EvaluationGatePolicy = DEFAULT_EVALUATION_GATE_POLICY,
 ): Verdict {
   // Autocheck findings are deterministic mechanical lints — any outstanding
   // autocheck cluster blocks the verdict even if it landed in the `single`
@@ -207,7 +221,10 @@ export function computeVerdict(
   // / internal link / unbacked benchmark claim from shipping merely because
   // one human reviewer missed it.
   if (counts.autocheck > 0) return 'fail';
-  return counts.consensus > 0 || counts.majority > 0 ? 'fail' : 'pass';
+  if (policy.consensus_must_fix && counts.consensus > 0) return 'fail';
+  if (policy.majority_should_fix && counts.majority > 0) return 'fail';
+  if (!policy.single_advisory && counts.single > 0) return 'fail';
+  return 'pass';
 }
 
 // Count clusters that intersect the authoritative autocheck fingerprint set.
@@ -256,6 +273,7 @@ export function synthesize(
   // whose normalized text matches one of these fingerprints is autocheck-
   // blocking, independent of the `issue.source` tag on contributing issues.
   autocheckFingerprints: Set<string> = new Set(),
+  policy: EvaluationGatePolicy = DEFAULT_EVALUATION_GATE_POLICY,
 ): SynthesisResult {
   const clusters = matchIssues(outputs);
   const categorized = categorize(clusters, expectedReviewers);
@@ -266,7 +284,7 @@ export function synthesize(
     autocheck: countAutocheckClusters(clusters, autocheckFingerprints),
     total: clusters.length,
   };
-  const verdict = computeVerdict(counts);
+  const verdict = computeVerdict(counts, policy);
   const cluster_identity = clusterIdentityOf(categorized);
-  return { verdict, counts, categorized, cluster_identity };
+  return { verdict, gate_policy: policy, counts, categorized, cluster_identity };
 }

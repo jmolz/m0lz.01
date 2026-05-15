@@ -23,6 +23,13 @@ import {
 } from '../src/core/evaluate/state.js';
 import { ContentType, ReviewerType, EvaluationRow } from '../src/core/db/types.js';
 import { Issue, ReviewerOutput, issueFingerprint } from '../src/core/evaluate/reviewer.js';
+import { EvaluationGatePolicy } from '../src/core/evaluate/synthesize.js';
+
+const ADVISORY_SINGLE_POLICY: EvaluationGatePolicy = {
+  consensus_must_fix: true,
+  majority_should_fix: true,
+  single_advisory: true,
+};
 
 interface Fixture {
   tempDir: string;
@@ -322,6 +329,58 @@ describe('runSynthesis', () => {
     expect(post.evaluation_passed).toBe(0);
   });
 
+  it('produces fail verdict by default when one reviewer still has an issue', () => {
+    const f = setup();
+    seedEvaluatePost(f.db, 'single-block');
+    initEvaluation(f.db, 'single-block', f.evaluationsDir);
+    writeEmptyAutocheck(f.evaluationsDir, 'single-block');
+    recordReview(
+      f.db,
+      'single-block',
+      'structural',
+      '/tmp/r.md',
+      makeOutput('structural', [makeIssue('structural', 'Only one', 'One reviewer found a remaining issue.')], 'single-block'),
+      f.evaluationsDir,
+      artifactPaths(f),
+    );
+    recordReview(f.db, 'single-block', 'adversarial', '/tmp/r.md', makeOutput('adversarial', [], 'single-block'), f.evaluationsDir, artifactPaths(f));
+    recordReview(f.db, 'single-block', 'methodology', '/tmp/r.md', makeOutput('methodology', [], 'single-block'), f.evaluationsDir, artifactPaths(f));
+
+    const result = runSynthesis(f.db, 'single-block', f.evaluationsDir, artifactPaths(f));
+    expect(result.synthesis.counts.single).toBe(1);
+    expect(result.synthesis.verdict).toBe('fail');
+    const post = f.db.prepare('SELECT evaluation_passed FROM posts WHERE slug = ?').get('single-block') as { evaluation_passed: number };
+    expect(post.evaluation_passed).toBe(0);
+  });
+
+  it('preserves advisory-single mode when explicitly requested', () => {
+    const f = setup();
+    seedEvaluatePost(f.db, 'single-advisory');
+    initEvaluation(f.db, 'single-advisory', f.evaluationsDir);
+    writeEmptyAutocheck(f.evaluationsDir, 'single-advisory');
+    recordReview(
+      f.db,
+      'single-advisory',
+      'structural',
+      '/tmp/r.md',
+      makeOutput('structural', [makeIssue('structural', 'Only one', 'One reviewer found a remaining issue.')], 'single-advisory'),
+      f.evaluationsDir,
+      artifactPaths(f),
+    );
+    recordReview(f.db, 'single-advisory', 'adversarial', '/tmp/r.md', makeOutput('adversarial', [], 'single-advisory'), f.evaluationsDir, artifactPaths(f));
+    recordReview(f.db, 'single-advisory', 'methodology', '/tmp/r.md', makeOutput('methodology', [], 'single-advisory'), f.evaluationsDir, artifactPaths(f));
+
+    const result = runSynthesis(
+      f.db,
+      'single-advisory',
+      f.evaluationsDir,
+      artifactPaths(f),
+      ADVISORY_SINGLE_POLICY,
+    );
+    expect(result.synthesis.counts.single).toBe(1);
+    expect(result.synthesis.verdict).toBe('pass');
+  });
+
   it('throws on corrupt stored issues_json and does not write a synthesis row', () => {
     const f = setup();
     seedEvaluatePost(f.db, 'corrupt');
@@ -369,6 +428,34 @@ describe('completeEvaluation', () => {
     recordAllAndSynthesize(f, 'complete-fail', true);
     expect(() => completeEvaluation(f.db, 'complete-fail', f.evaluationsDir, artifactPaths(f))).toThrow(/not 'pass'/);
     const post = f.db.prepare('SELECT phase FROM posts WHERE slug = ?').get('complete-fail') as { phase: string };
+    expect(post.phase).toBe('evaluate');
+  });
+
+  it('refuses a stored advisory-single pass when current policy requires a clean pass', () => {
+    const f = setup();
+    const slug = 'complete-single';
+    seedEvaluatePost(f.db, slug);
+    initEvaluation(f.db, slug, f.evaluationsDir);
+    writeEmptyAutocheck(f.evaluationsDir, slug);
+    recordReview(
+      f.db,
+      slug,
+      'structural',
+      '/tmp/r.md',
+      makeOutput('structural', [makeIssue('structural', 'Only one', 'One reviewer still found an issue.')], slug),
+      f.evaluationsDir,
+      artifactPaths(f),
+    );
+    recordReview(f.db, slug, 'adversarial', '/tmp/r.md', makeOutput('adversarial', [], slug), f.evaluationsDir, artifactPaths(f));
+    recordReview(f.db, slug, 'methodology', '/tmp/r.md', makeOutput('methodology', [], slug), f.evaluationsDir, artifactPaths(f));
+
+    const result = runSynthesis(f.db, slug, f.evaluationsDir, artifactPaths(f), ADVISORY_SINGLE_POLICY);
+    expect(result.synthesis.verdict).toBe('pass');
+    expect(result.synthesis.counts.single).toBe(1);
+
+    expect(() => completeEvaluation(f.db, slug, f.evaluationsDir, artifactPaths(f)))
+      .toThrow(/Clean-pass policy requires zero reviewer issues/);
+    const post = f.db.prepare('SELECT phase FROM posts WHERE slug = ?').get(slug) as { phase: string };
     expect(post.phase).toBe('evaluate');
   });
 
@@ -1316,12 +1403,12 @@ describe('completeEvaluation — cluster-identity re-derivation', () => {
     );
     recordReview(f.db, slug, 'adversarial', '/tmp/r.md', makeOutput('adversarial', [], slug), f.evaluationsDir, artifactPaths(f));
     recordReview(f.db, slug, 'methodology', '/tmp/r.md', makeOutput('methodology', [], slug), f.evaluationsDir, artifactPaths(f));
-    const result = runSynthesis(f.db, slug, f.evaluationsDir, artifactPaths(f));
+    const result = runSynthesis(f.db, slug, f.evaluationsDir, artifactPaths(f), ADVISORY_SINGLE_POLICY);
     expect(result.synthesis.counts.single).toBe(1);
-    // Single-bucket issues don't block the verdict — this post passes. The
-    // attacker's goal is to swap the single issue for a different one
-    // (same count distribution) AFTER synthesis, then advance to publish
-    // with unreviewed new content.
+    // Explicit advisory-single mode preserves the old behavior: singleton
+    // issues do not block the verdict. The attacker's goal is to swap the
+    // single issue for a different one (same count distribution) AFTER
+    // synthesis, then advance to publish with unreviewed new content.
     expect(result.synthesis.verdict).toBe('pass');
 
     // Attacker gets the reviewer to re-record with a DIFFERENT singleton.
@@ -1370,7 +1457,7 @@ describe('completeEvaluation — cluster-identity re-derivation', () => {
     // The forged receipt passes self-hash + manifest cross-check + bucket-count
     // re-derive. Cluster-identity comparison is what catches the bypass —
     // "Different B" has a different fingerprint than "Original A".
-    expect(() => completeEvaluation(f.db, slug, f.evaluationsDir, artifactPaths(f)))
+    expect(() => completeEvaluation(f.db, slug, f.evaluationsDir, artifactPaths(f), ADVISORY_SINGLE_POLICY))
       .toThrow(/cluster identity|DB state drifted/);
     const post = f.db.prepare('SELECT phase FROM posts WHERE slug = ?').get(slug) as { phase: string };
     expect(post.phase).toBe('evaluate');

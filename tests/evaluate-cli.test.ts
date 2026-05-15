@@ -24,6 +24,7 @@ import { computeReviewedArtifactHashes, initEvaluation } from '../src/core/evalu
 interface Fixture {
   tempDir: string;
   dbPath: string;
+  configPath: string;
   evaluationsDir: string;
   draftsDir: string;
   benchmarkDir: string;
@@ -42,6 +43,7 @@ afterEach(() => {
 function setupFixture(): Fixture {
   const tempDir = mkdtempSync(join(tmpdir(), 'eval-cli-'));
   const dbPath = join(tempDir, 'state.db');
+  const configPath = join(tempDir, '.blogrc.yaml');
   const evaluationsDir = join(tempDir, 'evaluations');
   const draftsDir = join(tempDir, 'drafts');
   const benchmarkDir = join(tempDir, 'benchmarks');
@@ -53,17 +55,36 @@ function setupFixture(): Fixture {
   const db = getDatabase(dbPath);
   closeDatabase(db);
 
-  fixture = { tempDir, dbPath, evaluationsDir, draftsDir, benchmarkDir };
+  fixture = { tempDir, dbPath, configPath, evaluationsDir, draftsDir, benchmarkDir };
   return fixture;
 }
 
 function paths(f: Fixture): EvaluatePaths {
   return {
     dbPath: f.dbPath,
+    configPath: f.configPath,
     evaluationsDir: f.evaluationsDir,
     draftsDir: f.draftsDir,
     benchmarkDir: f.benchmarkDir,
   };
+}
+
+function writeConfig(f: Fixture, singleAdvisory: boolean): void {
+  writeFileSync(
+    f.configPath,
+    [
+      'site:',
+      '  repo_path: ./site',
+      '  base_url: https://example.com',
+      'author:',
+      '  name: Example',
+      '  github: example',
+      'evaluation:',
+      `  single_advisory: ${singleAdvisory ? 'true' : 'false'}`,
+      '',
+    ].join('\n'),
+    'utf-8',
+  );
 }
 
 function seedEvaluateSlug(f: Fixture, slug: string, contentType: ContentType = 'technical-deep-dive'): void {
@@ -176,6 +197,30 @@ function recordThreeReviewers(f: Fixture, slug: string, fail: boolean): void {
     const output = makeOutput(reviewer, fail ? [makeIssue(reviewer, title, desc)] : [], diskHashes);
     const issuesPath = writeReviewerJson(workspace, reviewer, output);
     runEvaluateRecord(slug, { reviewer, report: '/tmp/r.md', issues: issuesPath }, paths(f));
+  }
+}
+
+function recordOneReviewerIssue(f: Fixture, slug: string): void {
+  const workspace = join(f.evaluationsDir, slug);
+  mkdirSync(workspace, { recursive: true });
+  writeFileSync(join(workspace, 'structural.lint.json'), '[]\n', 'utf-8');
+  const draftDir = join(f.draftsDir, slug);
+  mkdirSync(draftDir, { recursive: true });
+  writeFileSync(join(draftDir, 'index.mdx'), '---\ntitle: test\n---\nbody', 'utf-8');
+  const diskHashes = computeReviewedArtifactHashes(
+    { draftsDir: f.draftsDir, benchmarkDir: f.benchmarkDir },
+    f.evaluationsDir,
+    slug,
+  );
+  const structural = makeOutput(
+    'structural',
+    [makeIssue('structural', 'Only structural', 'One reviewer still sees an issue')],
+    diskHashes,
+  );
+  runEvaluateRecord(slug, { reviewer: 'structural', report: '/tmp/r.md', issues: writeReviewerJson(workspace, 'structural', structural) }, paths(f));
+  for (const reviewer of ['adversarial', 'methodology'] as ReviewerType[]) {
+    const output = makeOutput(reviewer, [], diskHashes);
+    runEvaluateRecord(slug, { reviewer, report: '/tmp/r.md', issues: writeReviewerJson(workspace, reviewer, output) }, paths(f));
   }
 }
 
@@ -548,6 +593,40 @@ describe('runEvaluateSynthesize', () => {
       runEvaluateSynthesize('okk', paths(f));
       expect(logs.join('\n')).toMatch(/Verdict: pass/);
       expect(existsSync(join(f.evaluationsDir, 'okk', 'synthesis.md'))).toBe(true);
+    } finally {
+      process.exitCode = saved;
+    }
+  });
+
+  it('uses config policy: single-reviewer issues fail by default', () => {
+    const f = setupFixture();
+    writeConfig(f, false);
+    seedEvaluateSlug(f, 'single-fail');
+    runEvaluateInit('single-fail', paths(f));
+    recordOneReviewerIssue(f, 'single-fail');
+    const { logs } = captureLogs();
+    const saved = process.exitCode;
+    try {
+      runEvaluateSynthesize('single-fail', paths(f));
+      expect(logs.join('\n')).toMatch(/Verdict: fail/);
+      expect(logs.join('\n')).toMatch(/single:\s+1/);
+    } finally {
+      process.exitCode = saved;
+    }
+  });
+
+  it('uses config policy: single-reviewer issues can be advisory by explicit opt-in', () => {
+    const f = setupFixture();
+    writeConfig(f, true);
+    seedEvaluateSlug(f, 'single-pass');
+    runEvaluateInit('single-pass', paths(f));
+    recordOneReviewerIssue(f, 'single-pass');
+    const { logs } = captureLogs();
+    const saved = process.exitCode;
+    try {
+      runEvaluateSynthesize('single-pass', paths(f));
+      expect(logs.join('\n')).toMatch(/Verdict: pass/);
+      expect(logs.join('\n')).toMatch(/single:\s+1/);
     } finally {
       process.exitCode = saved;
     }

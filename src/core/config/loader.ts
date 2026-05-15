@@ -44,7 +44,7 @@ const DEFAULT_EVALUATION: BlogConfig['evaluation'] = {
   three_reviewer_panel: true,
   consensus_must_fix: true,
   majority_should_fix: true,
-  single_advisory: true,
+  single_advisory: false,
   verify_benchmark_claims: true,
   methodology_completeness: true,
 };
