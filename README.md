@@ -244,7 +244,18 @@ blog research show m0lz-02-stack-loops
 
 If `blog research show` prints something like `doc status: 7 empty`, the command worked. It means the CLI created the research template and is waiting for authored content.
 
-Next, fill the sections in the research document printed by `blog research show`, or write sections through the CLI:
+At this point, switch to Codex or Claude Code if you want AI help doing the research and writing. Use a prompt like this:
+
+```text
+In workspace ~/blog, continue m0lz-02-stack-loops.
+Inspect https://github.com/jmolz/m0lz.02.git as the primary source.
+Run the relevant tests for the project.
+Fill every empty section in /Users/jacobmolz/blog/.blog-agent/research/m0lz-02-stack-loops.md.
+Then run blog research show m0lz-02-stack-loops.
+Do not run blog research finalize m0lz-02-stack-loops until doc status is ok.
+```
+
+If you are working manually instead, fill the sections in the research document printed by `blog research show`, or write sections through the CLI:
 
 ```bash
 blog research set-section m0lz-02-stack-loops --section thesis --from-file thesis.md
