@@ -10,13 +10,15 @@ Rules for the publish layer (`src/core/publish/**`, `src/cli/publish.ts`). These
 
 ## Site PR validates evaluated drafts; it does not rewrite them
 
-`createSitePR` and `createSiteUpdate` may verify or generate missing stable assets, but they must not rewrite `.blog-agent/drafts/{slug}/index.mdx` or write draft receipts after the evaluation gate. Platform-image fields are authored during draft phase with `blog draft platform-images <slug>`.
+`createSitePR` and `createSiteUpdate` may verify stable assets, but they must not rewrite `.blog-agent/drafts/{slug}/index.mdx` or write draft receipts after the evaluation gate. Platform-image fields and `.platform-images.json` receipts are authored during draft phase with `blog draft platform-images <slug>`.
 
 Forensic anchors:
 - `src/core/publish/site.ts` calls `ensurePlatformImages(..., { updateFrontmatter: false, writeReceipt: false })` before branch checkout and asset copy.
-- `tests/publish-site.test.ts` asserts `createSitePR` keeps the source draft byte-for-byte unchanged and does not write `.platform-images.json`.
+- `tests/publish-site.test.ts` asserts `createSitePR` keeps the source draft byte-for-byte unchanged and does not create or refresh `.platform-images.json`.
 - `completeDraft` requires `devto_main_image`, `medium_featured_image`, and `substack_preview_image` before evaluation starts.
+- `completeDraft` and `createSitePR` reject generator-owned default image paths when the receipt input hash or file hashes are stale after a title/frontmatter edit.
 - Missing `devto_main_image`, `medium_featured_image`, or `substack_preview_image` during publish is an actionable draft-phase error, not permission for `site-pr` to serialize new frontmatter. If an old workspace already reached this failed pre-site-pr state, use `blog publish reopen-draft <slug> --reason "missing platform images"` so the post is re-evaluated after `blog draft platform-images`.
+  For a post already published with stale PNG bytes, use `blog publish platform-images <slug> --commit-site`.
 
 ## Platform image references have distinct modes
 

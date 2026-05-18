@@ -48,12 +48,13 @@ Example step sequence for `fast-path` + `project-launch` starting from `research
 | 1h..1j+ | `blog research add-source <slug> --url "<...>" --title "<...>" --excerpt "<...>"` | At least 3; omit if operator has added sources interactively. |
 | 2 | `blog research finalize <slug>` | Validate both gates (sections + source count) |
 | 3 | `blog draft init <slug>` | Scaffold the MDX draft |
-| 4 | `blog draft complete <slug>` | Advance to evaluate |
-| 5 | `blog evaluate init <slug>` | Open the evaluation cycle |
-| 6 | `blog evaluate record <slug> --reviewer structural --report <path> --issues <path>` | Record the structural reviewer |
-| 7 | `blog evaluate synthesize <slug>` | Compute verdict |
-| 8 | `blog evaluate complete <slug>` | Gate pass → publish-ready |
-| 9 | `blog publish start <slug>` | Run the 11-step publish pipeline |
+| 4 | `blog draft platform-images <slug>` | Generate Dev.to, Medium, and Substack images |
+| 5 | `blog draft complete <slug>` | Advance to evaluate |
+| 6 | `blog evaluate init <slug>` | Open the evaluation cycle |
+| 7 | `blog evaluate record <slug> --reviewer structural --report <path> --issues <path>` | Record the structural reviewer |
+| 8 | `blog evaluate synthesize <slug>` | Compute verdict |
+| 9 | `blog evaluate complete <slug>` | Gate pass → publish-ready |
+| 10 | `blog publish start <slug>` | Run the 11-step publish pipeline |
 
 Every destructive step (`draft init`, `evaluate complete`, `publish start`, any `update`/`unpublish` command) MUST appear only inside a `blog agent apply` handoff — never as a direct invocation from this skill. Research-authoring steps (`set-section`, `add-source`) are destructive in the same sense — they live inside the plan, not in the skill's direct exec scope.
 

@@ -30,7 +30,7 @@ All identity values (`<your-user>`, `<your-domain>`, etc.) come from `.blogrc.ya
 | 1h..1j+ | `blog research add-source` | `[<slug>, --url, "<...>", --title, "<...>", --excerpt, "<why it matters>"]` | Approve this source citation? (at least `config.evaluation.min_sources` = 3; omit entirely if the operator has already added sources interactively) |
 | 2 | `blog research finalize` | `[<slug>]` | Finalize research (both gates: sections + source count)? |
 | 3 | `blog draft init` | `[<slug>]` | Scaffold MDX draft? |
-| 4 | `blog draft platform-images` | `[<slug>]` | Generate Medium/Substack platform images? |
+| 4 | `blog draft platform-images` | `[<slug>]` | Generate Dev.to/Medium/Substack platform images? |
 | 5 | `blog draft complete` | `[<slug>]` | Advance to evaluate? |
 | 6 | `blog evaluate init` | `[<slug>]` | Open evaluation cycle? |
 | 7 | `blog evaluate structural-autocheck` | `[<slug>]` | Run deterministic lints? |

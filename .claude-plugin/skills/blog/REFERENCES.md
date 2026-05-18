@@ -74,7 +74,7 @@ v0.3 dogfood-hardening command. Rewrites the frontmatter block of `.blog-agent/d
 
 ## Platform images (`blog draft platform-images <slug>`)
 
-Generates deterministic local distribution images under `.blog-agent/drafts/<slug>/assets/`: `medium-featured.png` (`1200x675`) and `substack-header.png` (`1100x220`). The command updates draft frontmatter with `medium_featured_image: ./assets/medium-featured.png` and `substack_header_image: ./assets/substack-header.png`, then writes `.blog-agent/drafts/<slug>/.platform-images.json`. It uses local assets only: explicit platform-image fields when valid, `devto_main_image`, `assets/devto-cover.webp`, then a deterministic fallback SVG rendered through `sharp`.
+Generates deterministic local distribution images under `.blog-agent/drafts/<slug>/assets/`: `devto-cover.png` (`1000x420`), `medium-featured.png` (`1200x675`), and `substack-preview.png` (`1200x630`). The command updates draft frontmatter with `devto_main_image: ./assets/devto-cover.png`, `medium_featured_image: ./assets/medium-featured.png`, and `substack_preview_image: ./assets/substack-preview.png`, then writes `.blog-agent/drafts/<slug>/.platform-images.json`. The receipt records an input hash for the current title/project/site/template dimensions and SHA256 hashes for generator-owned files, so `draft complete` and `publish site-pr` reject stale images after a title/frontmatter edit. It uses local assets only: explicit platform-image fields when valid, legacy `assets/devto-cover.webp`, then a deterministic fallback SVG rendered through `sharp`.
 
 ## Plan file schema (v2)
 

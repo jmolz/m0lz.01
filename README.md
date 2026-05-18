@@ -355,6 +355,7 @@ Then continue through draft, evaluate, and publish:
 
 ```bash
 blog draft init m0lz-02-stack-loops
+blog draft platform-images m0lz-02-stack-loops
 blog draft show m0lz-02-stack-loops
 blog draft validate m0lz-02-stack-loops
 blog draft complete m0lz-02-stack-loops
@@ -367,8 +368,7 @@ blog draft regenerate m0lz-02-stack-loops
 blog evaluate structural-autocheck m0lz-02-stack-loops
 # Once autocheck is clean, record reviewer JSON, synthesize, then complete.
 
-blog publish start m0lz-02-stack-loops
-blog publish distribution-kit m0lz-02-stack-loops --image-mode generate
+blog publish start m0lz-02-stack-loops --image-mode generate
 ```
 
 For normal draft reviews, `blog evaluate structural-autocheck` only runs after
@@ -483,9 +483,10 @@ blog evaluate complete <slug>                   # → publish phase
 blog evaluate reject <slug>                     # → draft phase
 
 # Publish phase (11-step resumable pipeline)
-blog publish start <slug>                       # initialize OR resume
+blog publish start <slug> [--image-mode off|prompt-only|generate|required]
 blog publish show <slug>                        # per-step status table
 blog publish reopen-draft <slug> --reason "..." # repair pre-site-pr draft defects
+blog publish platform-images <slug> [--commit-site]
 blog publish distribution-kit <slug> \
   [--commit-site] [--image-mode off|prompt-only|generate|required] [--force]
 
@@ -528,7 +529,10 @@ dimensions. The command updates draft frontmatter with `devto_main_image`,
 `medium_featured_image`, and `substack_preview_image`; later `site-pr` /
 `site-update` verifies those fields without rewriting the evaluated draft.
 `blog draft complete` requires those fields, so a post cannot reach
-evaluation/publish with missing platform-image frontmatter.
+evaluation/publish with missing platform-image frontmatter. The command also
+writes `.platform-images.json` with an input hash over the title, project label,
+host, template version, and platform dimensions. Publish rejects generator-owned
+image paths when that receipt is missing, stale, or points at different bytes.
 
 Initial `site-pr` writes the hub-site copy with `published: true` so the
 Vercel preview renders the post on `/writing` and at `/writing/<slug>` while
@@ -563,11 +567,26 @@ social:
     quality: "high"
 ```
 
-`prompt-only` is the default and never calls OpenAI. `generate` and `required`
-use `OPENAI_API_KEY` with GPT Image 2 and fail before site checkout/copy/commit
-if image generation is unavailable. Use
-`blog publish distribution-kit <slug> --image-mode prompt-only` to backfill a
-published post without an image API call.
+`prompt-only` is the default and never calls OpenAI. Pass
+`blog publish start <slug> --image-mode generate` or `--image-mode required`
+when the initial publish must include the generated LinkedIn PNG. Both modes use
+`OPENAI_API_KEY` with GPT Image 2 and fail before site checkout/copy/commit if
+image generation is unavailable. Use
+`blog publish distribution-kit <slug> --image-mode generate --force --commit-site`
+to backfill a published post's LinkedIn image, or
+`blog publish distribution-kit <slug> --image-mode prompt-only` to backfill only
+the paste-ready files without an image API call.
+
+For a published post whose Dev.to, Medium, or Substack header images were
+generated from stale frontmatter, run:
+
+```bash
+blog publish platform-images <slug> --commit-site
+```
+
+That regenerates the three deterministic platform images from the current draft
+frontmatter, refreshes `.platform-images.json`, and commits the changed PNGs to
+the configured hub site repo.
 
 ---
 
