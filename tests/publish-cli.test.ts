@@ -28,6 +28,7 @@ import {
   runPublishStart,
   runPublishShow,
   runPublishDistributionKit,
+  runPublishPlatformImages,
   runPublishReopenDraft,
   PublishCliPaths,
 } from '../src/cli/publish.js';
@@ -550,5 +551,34 @@ Body
     expect(logs.join('\n')).toContain('distribution kit');
     expect(readFileSync(join(f.socialDir, 'kit/linkedin.md'), 'utf-8')).toContain('Draft Kit Title');
     expect(readFileSync(join(f.socialDir, 'kit/manifest.json'), 'utf-8')).toContain('gpt-image-2-2026-04-21');
+  });
+});
+
+describe('runPublishPlatformImages', () => {
+  it('regenerates platform image assets for published posts without requiring draft phase', async () => {
+    const f = setup();
+    seedPublishedPost(f.dbPath, 'platform-backfill');
+    const draftDir = join(f.draftsDir, 'platform-backfill');
+    mkdirSync(draftDir, { recursive: true });
+    writeFileSync(join(draftDir, 'index.mdx'), `---
+title: "Platform Backfill"
+description: "Platform image backfill."
+date: "2026-05-18"
+tags:
+  - TypeScript
+published: true
+canonical: "https://m0lz.dev/writing/platform-backfill"
+---
+
+Body
+`, 'utf-8');
+
+    const { logs } = captureLogs();
+    await runPublishPlatformImages('platform-backfill', {}, paths(f));
+
+    expect(process.exitCode).toBe(0);
+    expect(logs.join('\n')).toContain('Generated platform images');
+    expect(readFileSync(join(draftDir, 'index.mdx'), 'utf-8')).toContain('devto_main_image: ./assets/devto-cover.png');
+    expect(readFileSync(join(draftDir, '.platform-images.json'), 'utf-8')).toContain('input_hash');
   });
 });

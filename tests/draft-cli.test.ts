@@ -482,7 +482,7 @@ describe('runDraftValidate', () => {
     }
   });
 
-  it('passes for complete draft', () => {
+  it('passes for complete draft', async () => {
     const f = setupFixture();
     setupDraftSlug(f, 'val-good', 'analysis-opinion');
     captureLogs();
@@ -505,6 +505,7 @@ describe('runDraftValidate', () => {
       )
       .replace(/\{\/\* TODO: Fill this section \*\/\}/g, 'Real content');
     writeFileSync(mdxPath, content, 'utf-8');
+    await runDraftPlatformImages('val-good', paths(f));
 
     const savedExitCode = process.exitCode;
     try {
@@ -731,7 +732,7 @@ describe('runDraftPlatformImages', () => {
 });
 
 describe('runDraftComplete', () => {
-  it('advances to evaluate phase', () => {
+  it('advances to evaluate phase', async () => {
     const f = setupFixture();
     setupDraftSlug(f, 'complete-test', 'analysis-opinion');
     captureLogs();
@@ -739,6 +740,7 @@ describe('runDraftComplete', () => {
 
     // Fill in the draft
     fillDraftPlaceholders(f.draftsDir, 'complete-test');
+    await runDraftPlatformImages('complete-test', paths(f));
 
     const { logs } = captureLogs();
     const savedExitCode = process.exitCode;
@@ -759,12 +761,13 @@ describe('runDraftComplete', () => {
     }
   });
 
-  it('does not advance when benchmarked post has malformed results', () => {
+  it('does not advance when benchmarked post has malformed results', async () => {
     const f = setupFixture();
     setupDraftSlug(f, 'complete-bad-benchmark', 'project-launch');
     captureLogs();
     runDraftInit('complete-bad-benchmark', paths(f));
     fillDraftPlaceholders(f.draftsDir, 'complete-bad-benchmark');
+    await runDraftPlatformImages('complete-bad-benchmark', paths(f));
     markBenchmarkedWithInvalidResults(f, 'complete-bad-benchmark');
 
     const savedExitCode = process.exitCode;

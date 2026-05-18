@@ -167,6 +167,15 @@ describe('site-pr --allow-main-ahead override', () => {
         requireOriginMatch: mockRequireOriginMatch,
         assertOriginInSync: mockAssertOriginInSync,
       }));
+      vi.doMock('../src/core/publish/platform-images.js', () => ({
+        ensurePlatformImages: vi.fn(async () => ({
+          slug: 'alpha',
+          draftPath: '',
+          receiptPath: '',
+          frontmatterUpdated: false,
+          images: [],
+        })),
+      }));
 
       const warnSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
       const { createSitePR } = await import('../src/core/publish/site.js');

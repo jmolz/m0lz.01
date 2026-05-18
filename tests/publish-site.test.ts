@@ -22,6 +22,8 @@ import { initResearchPost, advancePhase } from '../src/core/research/state.js';
 import { createSitePR, checkPreviewGate, SitePaths } from '../src/core/publish/site.js';
 // eslint-disable-next-line import/first
 import { BlogConfig } from '../src/core/config/types.js';
+// eslint-disable-next-line import/first
+import { ensurePlatformImages } from '../src/core/publish/platform-images.js';
 
 const mockExec = execFileSync as unknown as ReturnType<typeof vi.fn>;
 
@@ -134,6 +136,10 @@ Body.`,
   writeFileSync(join(dir, 'index.mdx'), content, 'utf-8');
 }
 
+async function seedFreshPlatformImages(f: Fixture, slug: string): Promise<void> {
+  await ensurePlatformImages(slug, f.config, { draftsDir: f.draftsDir });
+}
+
 afterEach(() => {
   if (fixture?.db) closeDatabase(fixture.db);
   if (fixture) rmSync(fixture.tempDir, { recursive: true, force: true });
@@ -201,6 +207,7 @@ describe('createSitePR — happy path', () => {
     const f = setup();
     seedPost(f.db, 'alpha');
     seedDraftMdx(f.draftsDir, 'alpha');
+    await seedFreshPlatformImages(f, 'alpha');
 
     let createCalls = 0;
     installExec((cmd, args) => {
@@ -254,6 +261,7 @@ describe('createSitePR — happy path', () => {
     const f = setup();
     seedPost(f.db, 'withassets');
     seedDraftMdx(f.draftsDir, 'withassets');
+    await seedFreshPlatformImages(f, 'withassets');
     const assetsDir = join(f.draftsDir, 'withassets', 'assets');
     mkdirSync(assetsDir, { recursive: true });
     writeFileSync(join(assetsDir, 'diagram.svg'), '<svg/>');
@@ -279,7 +287,7 @@ describe('createSitePR — happy path', () => {
     expect(existsSync(join(f.siteRepoPath, 'content/posts/withassets/assets/medium-featured.png'))).toBe(true);
     expect(existsSync(join(f.siteRepoPath, 'content/posts/withassets/assets/substack-preview.png'))).toBe(true);
     expect(readFileSync(sourceDraftPath, 'utf-8')).toBe(sourceBefore);
-    expect(existsSync(join(f.draftsDir, 'withassets', '.platform-images.json'))).toBe(false);
+    expect(existsSync(join(f.draftsDir, 'withassets', '.platform-images.json'))).toBe(true);
     const copiedMdx = readFileSync(join(f.siteRepoPath, 'content/posts/withassets/index.mdx'), 'utf-8');
     expect(copiedMdx).toMatch(/published:\s*true/);
     expect(copiedMdx).toContain('devto_main_image: ./assets/devto-cover.png');
@@ -313,7 +321,7 @@ canonical: "https://m0lz.dev/writing/missingimages"
     });
 
     await expect(createSitePR('missingimages', f.config, f.paths, f.db))
-      .rejects.toThrow(/Missing devto_main_image.*blog publish reopen-draft missingimages/s);
+      .rejects.toThrow(/Missing platform image frontmatter: devto_main_image.*blog publish reopen-draft missingimages/s);
 
     expect(execCalls.some((call) => call.includes(' checkout '))).toBe(false);
     expect(existsSync(join(f.siteRepoPath, 'content/posts/missingimages'))).toBe(false);
@@ -326,6 +334,7 @@ canonical: "https://m0lz.dev/writing/missingimages"
     const f = setup();
     seedPost(f.db, 'withresearch');
     seedDraftMdx(f.draftsDir, 'withresearch');
+    await seedFreshPlatformImages(f, 'withresearch');
     const rpDir = join(f.researchPagesDir, 'withresearch');
     mkdirSync(rpDir, { recursive: true });
     writeFileSync(join(rpDir, 'index.mdx'), '# Research');
@@ -351,6 +360,7 @@ canonical: "https://m0lz.dev/writing/missingimages"
     const f = setup();
     seedPost(f.db, 'noresearch');
     seedDraftMdx(f.draftsDir, 'noresearch');
+    await seedFreshPlatformImages(f, 'noresearch');
 
     installExec((cmd, args) => {
       if (cmd === 'git' && args.includes('--get')) return 'git@github.com:jmolz/m0lz.00.git';
@@ -373,6 +383,7 @@ canonical: "https://m0lz.dev/writing/missingimages"
     const f = setup();
     seedPost(f.db, 'prnumber');
     seedDraftMdx(f.draftsDir, 'prnumber');
+    await seedFreshPlatformImages(f, 'prnumber');
 
     installExec((cmd, args) => {
       if (cmd === 'git' && args.includes('--get')) return 'git@github.com:jmolz/m0lz.00.git';
@@ -399,6 +410,7 @@ describe('createSitePR — idempotency', () => {
     const f = setup();
     seedPost(f.db, 'existbranch');
     seedDraftMdx(f.draftsDir, 'existbranch');
+    await seedFreshPlatformImages(f, 'existbranch');
 
     const checkoutArgs: string[][] = [];
     installExec((cmd, args) => {
@@ -430,6 +442,7 @@ describe('createSitePR — idempotency', () => {
     const f = setup();
     seedPost(f.db, 'existingpr');
     seedDraftMdx(f.draftsDir, 'existingpr');
+    await seedFreshPlatformImages(f, 'existingpr');
 
     let createCalls = 0;
     installExec((cmd, args) => {
@@ -460,6 +473,7 @@ describe('createSitePR — idempotency', () => {
     const f = setup();
     seedPost(f.db, 'nochanges');
     seedDraftMdx(f.draftsDir, 'nochanges');
+    await seedFreshPlatformImages(f, 'nochanges');
 
     let commitCalls = 0;
     installExec((cmd, args) => {
@@ -488,6 +502,7 @@ describe('createSitePR — git remote parsing', () => {
     const f = setup();
     seedPost(f.db, 'https');
     seedDraftMdx(f.draftsDir, 'https');
+    await seedFreshPlatformImages(f, 'https');
 
     installExec((cmd, args) => {
       if (cmd === 'git' && args.includes('--get')) return 'https://github.com/jmolz/m0lz.00.git\n';
@@ -510,6 +525,7 @@ describe('createSitePR — git remote parsing', () => {
     const f = setup();
     seedPost(f.db, 'weirdremote');
     seedDraftMdx(f.draftsDir, 'weirdremote');
+    await seedFreshPlatformImages(f, 'weirdremote');
 
     installExec((cmd, args) => {
       if (cmd === 'git' && args.includes('--get')) return 'ftp://some/nonsense';
@@ -526,6 +542,7 @@ describe('createSitePR — dirty-state guardrail (Codex Pass 4 regression)', () 
     const f = setup();
     seedPost(f.db, 'dirty');
     seedDraftMdx(f.draftsDir, 'dirty');
+    await seedFreshPlatformImages(f, 'dirty');
 
     // Bypass installExec — we want full control of the status --porcelain
     // response. The simulated dirty state includes an UNRELATED file that
@@ -545,6 +562,7 @@ describe('createSitePR — dirty-state guardrail (Codex Pass 4 regression)', () 
     const f = setup();
     seedPost(f.db, 'ownedonly');
     seedDraftMdx(f.draftsDir, 'ownedonly');
+    await seedFreshPlatformImages(f, 'ownedonly');
 
     // Dirty state touches ONLY pipeline-owned paths — this is allowed
     // because the copy + add sequence will overwrite it deterministically.
@@ -586,6 +604,7 @@ describe('createSitePR — dirty-state guardrail (Codex Pass 4 regression)', () 
     const f = setup();
     seedPost(f.db, 'renamed');
     seedDraftMdx(f.draftsDir, 'renamed');
+    await seedFreshPlatformImages(f, 'renamed');
 
     mockExec.mockImplementation((cmd: string, args: string[]) => {
       if (cmd === 'git' && args.includes('status') && args.includes('--porcelain')) {
@@ -602,6 +621,7 @@ describe('createSitePR — dirty-state guardrail (Codex Pass 4 regression)', () 
     const f = setup();
     seedPost(f.db, 'owned-rename');
     seedDraftMdx(f.draftsDir, 'owned-rename');
+    await seedFreshPlatformImages(f, 'owned-rename');
 
     // Both source and destination under content/posts/owned-rename/ — a
     // rename within the pipeline's own directory is tolerable.
@@ -637,6 +657,7 @@ describe('createSitePR — dirty-state guardrail (Codex Pass 4 regression)', () 
     const f = setup();
     seedPost(f.db, 'scoped');
     seedDraftMdx(f.draftsDir, 'scoped');
+    await seedFreshPlatformImages(f, 'scoped');
 
     installExec((cmd, args) => {
       if (cmd === 'git' && args.includes('config') && args.includes('--get')) {

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -101,6 +102,8 @@ export interface PlatformImageResult {
     | 'fallback-template';
   source_path?: string;
   generated: boolean;
+  sha256?: string;
+  input_hash?: string;
 }
 
 export interface EnsurePlatformImagesResult {
@@ -120,6 +123,18 @@ interface PlatformImagePaths {
 type PlatformReferenceMap = Map<PlatformImageSpec['field'], ResolvedAssetReference | undefined>;
 
 const FRONTMATTER_SPLIT_RE = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n)?/;
+const PLATFORM_IMAGE_TEMPLATE_VERSION = 2;
+
+interface PlatformImagesReceipt {
+  timestamp: string;
+  slug: string;
+  input_hash?: string;
+  images?: PlatformImageResult[];
+}
+
+function sha256File(path: string): string {
+  return createHash('sha256').update(readFileSync(path)).digest('hex');
+}
 
 export function missingRequiredPlatformImageFields(fm: PostFrontmatter): GeneratedPlatformImageField[] {
   return PLATFORM_IMAGE_SPECS
@@ -259,6 +274,24 @@ function displayHost(baseUrl: string): string {
   }
 }
 
+export function platformImageInputHash(fm: PostFrontmatter, config: BlogConfig): string {
+  const host = displayHost(config.site.base_url);
+  const title = fm.title && fm.title !== '{{title}}' ? fm.title : host;
+  const label = fm.project ?? config.author.github;
+  return createHash('sha256').update(JSON.stringify({
+    version: PLATFORM_IMAGE_TEMPLATE_VERSION,
+    title,
+    label,
+    host,
+    specs: PLATFORM_IMAGE_SPECS.map((spec) => ({
+      field: spec.field,
+      filename: spec.filename,
+      width: spec.width,
+      height: spec.height,
+    })),
+  })).digest('hex');
+}
+
 function fallbackSvg(spec: PlatformImageSpec, fm: PostFrontmatter, config: BlogConfig): string {
   const host = displayHost(config.site.base_url);
   const title = fm.title && fm.title !== '{{title}}' ? fm.title : host;
@@ -296,6 +329,87 @@ function fallbackSvg(spec: PlatformImageSpec, fm: PostFrontmatter, config: BlogC
 ${titleText}
 <text x="${textX}" y="${labelY}" fill="#b7b7ad" font-family="Inter, Arial, sans-serif" font-size="${labelSize}" font-weight="600">${escapeXml(label)} / ${escapeXml(host)}</text>
 </svg>`;
+}
+
+function receiptPathFor(draftsDir: string, slug: string): string {
+  return join(draftsDir, slug, '.platform-images.json');
+}
+
+function readReceipt(draftsDir: string, slug: string): PlatformImagesReceipt | null {
+  const path = receiptPathFor(draftsDir, slug);
+  if (!existsSync(path)) return null;
+  try {
+    return JSON.parse(readFileSync(path, 'utf-8')) as PlatformImagesReceipt;
+  } catch {
+    return null;
+  }
+}
+
+function receiptImageFor(
+  receipt: PlatformImagesReceipt | null,
+  field: GeneratedPlatformImageField,
+): PlatformImageResult | null {
+  return receipt?.images?.find((image) => image.field === field) ?? null;
+}
+
+export function validatePlatformImageArtifacts(
+  slug: string,
+  config: BlogConfig,
+  paths: Pick<PlatformImagePaths, 'draftsDir'>,
+): string[] {
+  const draftPath = join(paths.draftsDir, slug, 'index.mdx');
+  if (!existsSync(draftPath)) {
+    return [`Draft MDX not found: ${draftPath}`];
+  }
+
+  const fm = parseFrontmatter(readFileSync(draftPath, 'utf-8'));
+  const inputHash = platformImageInputHash(fm, config);
+  const receipt = readReceipt(paths.draftsDir, slug);
+  const errors: string[] = [];
+
+  for (const spec of PLATFORM_IMAGE_SPECS) {
+    const resolved = resolvePostAssetReference(
+      fm[spec.field],
+      slug,
+      config.site.base_url,
+      spec.field,
+      paths,
+    );
+    if (resolved === undefined) {
+      errors.push(platformImageDraftCompleteMessage(slug, [spec.field]));
+      continue;
+    }
+    if (resolved.kind === 'url') continue;
+    if (!resolved.localPath) {
+      errors.push(`${spec.field} asset path could not be resolved`);
+      continue;
+    }
+    if (!existsSync(resolved.localPath)) {
+      errors.push(`${spec.field} asset not found: ${resolved.normalizedAssetPath}`);
+      continue;
+    }
+
+    const isGeneratorDefault = resolved.filename === spec.filename;
+    if (!isGeneratorDefault) continue;
+
+    const receiptImage = receiptImageFor(receipt, spec.field);
+    if (!receipt || receipt.input_hash !== inputHash || !receiptImage?.sha256) {
+      errors.push(
+        `${spec.field} is stale or lacks a current generation receipt. ` +
+        `Run 'blog draft platform-images ${slug}' after the latest title/frontmatter edit.`,
+      );
+      continue;
+    }
+    const actualHash = sha256File(resolved.localPath);
+    if (actualHash !== receiptImage.sha256) {
+      errors.push(
+        `${spec.field} asset hash does not match .platform-images.json. ` +
+        `Run 'blog draft platform-images ${slug}' to regenerate the platform images.`,
+      );
+    }
+  }
+
+  return errors;
 }
 
 async function assertImageDimensions(path: string, spec: PlatformImageSpec): Promise<void> {
@@ -388,6 +502,18 @@ export async function ensurePlatformImages(
   const originalMdx = readFileSync(draftPath, 'utf-8');
   const fm = parseFrontmatter(originalMdx);
   const platformRefs = await resolveAndValidatePlatformReferences(fm, slug, config, paths);
+  const inputHash = platformImageInputHash(fm, config);
+
+  if (!updateFrontmatter) {
+    const staleErrors = validatePlatformImageArtifacts(slug, config, paths);
+    if (staleErrors.length > 0) {
+      throw new Error(
+        staleErrors.join('\n') + '\n' +
+        `Run 'blog publish reopen-draft ${slug} --reason "stale platform images"', ` +
+        `then run 'blog draft platform-images ${slug}' and re-run draft/evaluate before publishing.`,
+      );
+    }
+  }
 
   const assetsDir = join(paths.draftsDir, slug, 'assets');
   const results: PlatformImageResult[] = [];
@@ -466,6 +592,7 @@ export async function ensurePlatformImages(
             source: 'configured-platform-image',
             source_path: resolved.normalizedAssetPath,
             generated: false,
+            sha256: sha256File(localPath),
           });
           continue;
         }
@@ -489,6 +616,7 @@ export async function ensurePlatformImages(
     const outputPath = join(assetsDir, spec.filename);
     const generation = await generatePlatformImage(spec, fm, config, outputPath);
     await assertImageDimensions(outputPath, spec);
+    const generatedHash = sha256File(outputPath);
     const nextValue = `./assets/${spec.filename}`;
     if (fm[spec.field] !== nextValue) {
       if (!updateFrontmatter) {
@@ -508,6 +636,8 @@ export async function ensurePlatformImages(
       source: generation.source,
       source_path: generation.source_path,
       generated: true,
+      sha256: generatedHash,
+      input_hash: inputHash,
     });
   }
 
@@ -523,6 +653,7 @@ export async function ensurePlatformImages(
         {
           timestamp: new Date().toISOString(),
           slug,
+          input_hash: inputHash,
           images: results,
         },
         null,

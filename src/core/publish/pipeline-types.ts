@@ -1,6 +1,6 @@
 import Database from 'better-sqlite3';
 
-import { BlogConfig } from '../config/types.js';
+import { BlogConfig, LinkedInImageMode } from '../config/types.js';
 import { PublishPaths, PublishStepName, PublishUrls } from './types.js';
 
 // Mode dispatch for the publish pipeline. `initial` is the Phase 6 flow —
@@ -40,6 +40,10 @@ export interface PipelineContext {
   // flag on the plan-step args array so the SHA256 plan hash binds the
   // operator's consent. Absence or false = origin-sync check enforced.
   allowMainAhead?: boolean;
+  // Optional one-run override for distribution-kit LinkedIn image generation.
+  // Flows from `blog publish start --image-mode <mode>` into the pre-site
+  // distribution-kit generation step.
+  distributionImageMode?: LinkedInImageMode;
 }
 
 export type StepOutcome = 'completed' | 'failed' | 'skipped' | 'paused';

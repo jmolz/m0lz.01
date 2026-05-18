@@ -20,6 +20,7 @@ import { PostRow } from '../core/db/types.js';
 import { LinkedInImageMode } from '../core/config/types.js';
 import { generateDistributionKit } from '../core/publish/distribution-kit.js';
 import { persistDistributionKitToSite } from '../core/publish/site-artifacts.js';
+import { backfillPlatformImages } from '../core/publish/platform-image-site.js';
 
 // CLI handlers for the publish phase. Mirrors the pattern in `evaluate.ts`
 // and `draft.ts`: `runPublishStart` and `runPublishShow` are exported and
@@ -60,12 +61,17 @@ export interface PublishCliPaths {
   // forwarded through PipelineContext. The flag is a plan-step arg so
   // the SHA256 plan hash binds operator consent (see site.ts).
   allowMainAhead?: boolean;
+  distributionImageMode?: LinkedInImageMode;
 }
 
 export interface PublishDistributionKitOptions {
   commitSite?: boolean;
   imageMode?: LinkedInImageMode;
   force?: boolean;
+}
+
+export interface PublishPlatformImagesOptions {
+  commitSite?: boolean;
 }
 
 export interface PublishReopenDraftOptions {
@@ -268,6 +274,7 @@ export async function runPublishStart(
       publishMode: 'initial',
       cycleId: 0,
       allowMainAhead: paths.allowMainAhead,
+      distributionImageMode: paths.distributionImageMode,
     };
 
     let result;
@@ -546,6 +553,74 @@ export async function runPublishDistributionKit(
   }
 }
 
+export async function runPublishPlatformImages(
+  slug: string,
+  opts: PublishPlatformImagesOptions = {},
+  paths: PublishCliPaths = {},
+): Promise<void> {
+  try {
+    validateSlug(slug);
+  } catch (e) {
+    console.error((e as Error).message);
+    process.exitCode = 1;
+    return;
+  }
+
+  const dbPath = paths.dbPath ?? DB_PATH;
+  const configPath = paths.configPath ?? CONFIG_PATH;
+  const draftsDir = paths.draftsDir ?? DRAFTS_DIR;
+  requireDb(dbPath);
+
+  if (!existsSync(configPath)) {
+    console.error(`Config not found: ${configPath}. Run 'blog init' first.`);
+    process.exit(1);
+  }
+
+  let config;
+  try {
+    config = loadConfig(configPath);
+  } catch (e) {
+    console.error((e as Error).message);
+    process.exit(1);
+  }
+
+  const db = getDatabase(dbPath);
+  try {
+    const post = db
+      .prepare('SELECT phase FROM posts WHERE slug = ?')
+      .get(slug) as { phase: string } | undefined;
+    if (!post) {
+      console.error(`Post not found: ${slug}`);
+      process.exitCode = 1;
+      return;
+    }
+    if (post.phase !== 'publish' && post.phase !== 'published') {
+      console.error(
+        `Post '${slug}' is in phase '${post.phase}' — platform-image backfill requires 'publish' or 'published'.`,
+      );
+      process.exitCode = 1;
+      return;
+    }
+
+    const result = await backfillPlatformImages(slug, config!, { configPath, draftsDir }, {
+      commitSite: opts.commitSite,
+    });
+    console.log(`Generated platform images for '${slug}': ${result.images.receiptPath}`);
+    if (result.site) {
+      console.log(
+        result.site.updated
+          ? `Committed platform images to site repo: ${result.site.paths.join(', ')}`
+          : `Site platform images already current: ${result.site.reason ?? 'no changes'}`,
+      );
+    }
+  } catch (e) {
+    console.error((e as Error).message);
+    process.exitCode = 1;
+  } finally {
+    closeDatabase(db);
+  }
+}
+
 export function runPublishReopenDraft(
   slug: string,
   opts: PublishReopenDraftOptions = {},
@@ -649,8 +724,21 @@ export function registerPublish(program: Command): void {
       '--allow-main-ahead',
       "Bypass the site-pr origin-sync check (local main ahead of origin/main). The flag becomes part of the approved plan's hash, so an edit after approval requires re-consent.",
     )
-    .action(async (slug: string, opts: { allowMainAhead?: boolean }) => {
-      await runPublishStart(slug, { allowMainAhead: opts.allowMainAhead });
+    .option(
+      '--image-mode <mode>',
+      'One-run LinkedIn image mode override for the distribution kit: off, prompt-only, generate, required',
+    )
+    .action(async (slug: string, opts: { allowMainAhead?: boolean; imageMode?: string }) => {
+      const imageMode = opts.imageMode as LinkedInImageMode | undefined;
+      if (imageMode && !['off', 'prompt-only', 'generate', 'required'].includes(imageMode)) {
+        console.error(`Invalid --image-mode: ${imageMode}`);
+        process.exitCode = 1;
+        return;
+      }
+      await runPublishStart(slug, {
+        allowMainAhead: opts.allowMainAhead,
+        distributionImageMode: imageMode,
+      });
     });
 
   publish
@@ -690,5 +778,13 @@ export function registerPublish(program: Command): void {
         imageMode,
         force: opts.force,
       });
+    });
+
+  publish
+    .command('platform-images <slug>')
+    .description('Regenerate or backfill Dev.to, Medium, and Substack platform images for a published post')
+    .option('--commit-site', 'Commit refreshed image assets to the configured site repo')
+    .action(async (slug: string, opts: { commitSite?: boolean }) => {
+      await runPublishPlatformImages(slug, { commitSite: opts.commitSite });
     });
 }

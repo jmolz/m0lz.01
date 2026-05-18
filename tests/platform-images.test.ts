@@ -12,6 +12,7 @@ import {
   ensurePlatformImages,
   MEDIUM_FEATURED_IMAGE,
   SUBSTACK_PREVIEW_IMAGE,
+  validatePlatformImageArtifacts,
 } from '../src/core/publish/platform-images.js';
 
 let tempDir: string | undefined;
@@ -126,12 +127,20 @@ describe('ensurePlatformImages', () => {
       'fallback-template',
       'fallback-template',
     ]);
+    expect(result.images.every((i) => i.sha256?.match(/^[a-f0-9]{64}$/))).toBe(true);
+    expect(result.images.every((i) => i.input_hash === result.images[0].input_hash)).toBe(true);
 
     const fm = parseFrontmatter(readFileSync(join(f.draftsDir, f.slug, 'index.mdx'), 'utf-8'));
     expect(fm.devto_main_image).toBe('./assets/devto-cover.png');
     expect(fm.medium_featured_image).toBe('./assets/medium-featured.png');
     expect(fm.substack_preview_image).toBe('./assets/substack-preview.png');
-    expect(existsSync(join(f.draftsDir, f.slug, '.platform-images.json'))).toBe(true);
+    const receipt = JSON.parse(readFileSync(join(f.draftsDir, f.slug, '.platform-images.json'), 'utf-8')) as {
+      input_hash: string;
+      images: Array<{ sha256?: string; input_hash?: string }>;
+    };
+    expect(receipt.input_hash).toBe(result.images[0].input_hash);
+    expect(receipt.images.every((i) => i.sha256?.match(/^[a-f0-9]{64}$/))).toBe(true);
+    expect(validatePlatformImageArtifacts(f.slug, makeConfig(), { draftsDir: f.draftsDir })).toEqual([]);
   });
 
   it('upgrades the legacy generated WebP Dev.to cover to the shared article-card PNG', async () => {
@@ -260,18 +269,16 @@ describe('ensurePlatformImages', () => {
     expect(readFileSync(substackPath)).not.toEqual(substackBefore);
   });
 
-  it('keeps default filename assets untouched during publish-phase verification', async () => {
+  it('keeps default filename assets untouched during publish-phase verification when the receipt is fresh', async () => {
     const f = setup('explicit-defaults-publish', [
       'devto_main_image: ./assets/devto-cover.png',
       'medium_featured_image: ./assets/medium-featured.png',
       'substack_preview_image: ./assets/substack-preview.png',
     ]);
+    await ensurePlatformImages(f.slug, makeConfig(), { draftsDir: f.draftsDir });
     const devtoPath = join(f.draftsDir, f.slug, 'assets', 'devto-cover.png');
     const mediumPath = join(f.draftsDir, f.slug, 'assets', 'medium-featured.png');
     const substackPath = join(f.draftsDir, f.slug, 'assets', 'substack-preview.png');
-    await writeImage(devtoPath, 1000, 420, '#111111');
-    await writeImage(mediumPath, 1200, 675, '#112233');
-    await writeImage(substackPath, 1200, 630, '#445566');
     const devtoBefore = readFileSync(devtoPath);
     const mediumBefore = readFileSync(mediumPath);
     const substackBefore = readFileSync(substackPath);
@@ -286,6 +293,29 @@ describe('ensurePlatformImages', () => {
     expect(readFileSync(devtoPath)).toEqual(devtoBefore);
     expect(readFileSync(mediumPath)).toEqual(mediumBefore);
     expect(readFileSync(substackPath)).toEqual(substackBefore);
+  });
+
+  it('rejects publish-phase verification when generator-owned assets are stale after a title edit', async () => {
+    const f = setup('stale-defaults', [
+      'devto_main_image: ./assets/devto-cover.png',
+      'medium_featured_image: ./assets/medium-featured.png',
+      'substack_preview_image: ./assets/substack-preview.png',
+    ]);
+    await ensurePlatformImages(f.slug, makeConfig(), { draftsDir: f.draftsDir });
+    const draftPath = join(f.draftsDir, f.slug, 'index.mdx');
+    writeFileSync(
+      draftPath,
+      readFileSync(draftPath, 'utf-8').replace('Sample Platform Post', 'Changed Platform Post'),
+      'utf-8',
+    );
+
+    expect(validatePlatformImageArtifacts(f.slug, makeConfig(), { draftsDir: f.draftsDir }).join('\n'))
+      .toMatch(/stale|current generation receipt/);
+    await expect(ensurePlatformImages(f.slug, makeConfig(), {
+      draftsDir: f.draftsDir,
+      updateFrontmatter: false,
+      writeReceipt: false,
+    })).rejects.toThrow(/stale platform images/);
   });
 
   it('keeps a valid explicit Dev.to image from being reused as the Medium or Substack output', async () => {

@@ -4,7 +4,7 @@ import { dirname, isAbsolute, join, resolve } from 'node:path';
 
 import Database from 'better-sqlite3';
 
-import { BlogConfig } from '../config/types.js';
+import { BlogConfig, LinkedInImageMode } from '../config/types.js';
 import { parseFrontmatter, serializeFrontmatter } from '../draft/frontmatter.js';
 import { assertOriginInSync, expectedSiteCoords, requireOriginMatch } from './origin-guard.js';
 import { generateDistributionKit } from './distribution-kit.js';
@@ -146,6 +146,7 @@ export interface SitePROverrides {
   // consent. Default (undefined/false) enforces the sync check.
   allowMainAhead?: boolean;
   publishMode?: 'publish' | 'update';
+  distributionImageMode?: LinkedInImageMode;
 }
 
 export async function createSitePR(
@@ -289,6 +290,7 @@ export async function createSitePR(
       configPath: paths.configPath,
     }, db, {
       sourceMode: overrides?.publishMode ?? 'publish',
+      imageMode: overrides?.distributionImageMode,
     });
   }
 

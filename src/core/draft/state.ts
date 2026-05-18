@@ -16,6 +16,7 @@ import { documentPath } from '../research/document.js';
 import {
   missingRequiredPlatformImageFields,
   platformImageDraftCompleteMessage,
+  validatePlatformImageArtifacts,
 } from '../publish/platform-images.js';
 
 // Any TODO-flavored marker the template or skill emits counts as an
@@ -365,6 +366,7 @@ export function completeDraft(
   slug: string,
   draftsDir: string,
   benchmarkDir: string,
+  config: BlogConfig,
 ): void {
   const post = getDraftPost(db, slug);
   if (!post) {
@@ -384,6 +386,12 @@ export function completeDraft(
   const missingPlatformImageFields = missingRequiredPlatformImageFields(fm);
   if (missingPlatformImageFields.length > 0) {
     errors.push(platformImageDraftCompleteMessage(slug, missingPlatformImageFields));
+  } else {
+    try {
+      errors.push(...validatePlatformImageArtifacts(slug, config, { draftsDir }));
+    } catch (e) {
+      errors.push((e as Error).message);
+    }
   }
 
   // Check for placeholder sections
@@ -405,7 +413,13 @@ export function completeDraft(
     throw new Error(`Draft validation failed:\n${errors.join('\n')}`);
   }
 
-  advancePhase(db, slug, 'evaluate');
+  const completeTx = db.transaction(() => {
+    db.prepare(
+      'UPDATE posts SET title = ?, updated_at = CURRENT_TIMESTAMP WHERE slug = ?',
+    ).run(fm.title, slug);
+    advancePhase(db, slug, 'evaluate');
+  });
+  completeTx();
 }
 
 export function registerAsset(

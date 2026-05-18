@@ -171,11 +171,13 @@ export function generateResearchPage(
   // an absent draft is not fatal because the research page can still
   // render with the title alone.
   let description = '';
+  let draftTitle = '';
   const draftPath = join(paths.draftsDir, slug, 'index.mdx');
   if (existsSync(draftPath)) {
     try {
       const fm = parseFrontmatter(readFileSync(draftPath, 'utf-8'));
       description = fm.description ?? '';
+      draftTitle = fm.title ?? '';
     } catch {
       // Malformed frontmatter — fall back to empty description rather than
       // blocking the pipeline. site-pr will surface draft issues separately.
@@ -205,7 +207,9 @@ export function generateResearchPage(
   const template = readFileSync(templatePath, 'utf-8');
 
   // Derive template variables.
-  const title = post.title ?? slug;
+  const title = draftTitle.trim().length > 0 && draftTitle !== '{{title}}'
+    ? draftTitle
+    : post.title ?? slug;
   const date = new Date().toISOString().slice(0, 10);
   const tagsYaml = renderTagsYaml([
     'research',

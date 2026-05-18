@@ -26,6 +26,7 @@ import {
   ensurePlatformImages,
   missingRequiredPlatformImageFields,
   platformImageDraftCompleteMessage,
+  validatePlatformImageArtifacts,
 } from '../core/publish/platform-images.js';
 
 const DB_PATH = resolve('.blog-agent', 'state.db');
@@ -192,7 +193,23 @@ export function runDraftValidate(slug: string, paths: DraftPaths = {}): void {
   const dbPath = paths.dbPath ?? DB_PATH;
   const draftsDir = paths.draftsDir ?? DRAFTS_DIR;
   const benchmarkDir = paths.benchmarkDir ?? BENCHMARK_DIR;
+  const configPath = paths.configPath ?? CONFIG_PATH;
   requireDb(dbPath);
+
+  if (!existsSync(configPath)) {
+    console.error(`Config not found: ${configPath}. Run 'blog init' first.`);
+    process.exitCode = 1;
+    return;
+  }
+
+  let config;
+  try {
+    config = loadConfig(configPath);
+  } catch (e) {
+    console.error((e as Error).message);
+    process.exitCode = 1;
+    return;
+  }
 
   const db = getDatabase(dbPath);
   try {
@@ -222,6 +239,14 @@ export function runDraftValidate(slug: string, paths: DraftPaths = {}): void {
     const validation = validateFrontmatter(fm);
     const benchmarkErrors = validateDraftBenchmarkEvidence(post, slug, benchmarkDir);
     const missingPlatformImageFields = missingRequiredPlatformImageFields(fm);
+    let platformImageErrors: string[] = [];
+    if (missingPlatformImageFields.length === 0) {
+      try {
+        platformImageErrors = validatePlatformImageArtifacts(slug, config, { draftsDir });
+      } catch (e) {
+        platformImageErrors = [(e as Error).message];
+      }
+    }
 
     // Check for placeholder sections
     const placeholderCount = (content.match(PLACEHOLDER_PATTERN) || []).length;
@@ -240,6 +265,7 @@ export function runDraftValidate(slug: string, paths: DraftPaths = {}): void {
       validation.ok &&
       benchmarkErrors.length === 0 &&
       missingPlatformImageFields.length === 0 &&
+      platformImageErrors.length === 0 &&
       placeholderCount === 0 &&
       missingAssets.length === 0
     );
@@ -268,6 +294,12 @@ export function runDraftValidate(slug: string, paths: DraftPaths = {}): void {
 
     if (missingPlatformImageFields.length > 0) {
       console.error(platformImageDraftCompleteMessage(slug, missingPlatformImageFields));
+    }
+    if (platformImageErrors.length > 0) {
+      console.error('Platform image errors:');
+      for (const err of platformImageErrors) {
+        console.error(`  - ${err}`);
+      }
     }
 
     if (missingAssets.length > 0) {
@@ -540,12 +572,28 @@ export function runDraftComplete(slug: string, paths: DraftPaths = {}): void {
   const dbPath = paths.dbPath ?? DB_PATH;
   const draftsDir = paths.draftsDir ?? DRAFTS_DIR;
   const benchmarkDir = paths.benchmarkDir ?? BENCHMARK_DIR;
+  const configPath = paths.configPath ?? CONFIG_PATH;
   requireDb(dbPath);
+
+  if (!existsSync(configPath)) {
+    console.error(`Config not found: ${configPath}. Run 'blog init' first.`);
+    process.exitCode = 1;
+    return;
+  }
+
+  let config;
+  try {
+    config = loadConfig(configPath);
+  } catch (e) {
+    console.error((e as Error).message);
+    process.exitCode = 1;
+    return;
+  }
 
   const db = getDatabase(dbPath);
   try {
     try {
-      completeDraft(db, slug, draftsDir, benchmarkDir);
+      completeDraft(db, slug, draftsDir, benchmarkDir, config);
     } catch (e) {
       console.error((e as Error).message);
       process.exitCode = 1;

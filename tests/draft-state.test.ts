@@ -1,4 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
+import { createHash } from 'node:crypto';
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -18,6 +19,12 @@ import {
 import { BlogConfig } from '../src/core/config/types.js';
 import { parseFrontmatter, validateFrontmatter } from '../src/core/draft/frontmatter.js';
 import { runStructuralAutocheck } from '../src/core/evaluate/autocheck.js';
+import {
+  DEVTO_MAIN_IMAGE,
+  MEDIUM_FEATURED_IMAGE,
+  SUBSTACK_PREVIEW_IMAGE,
+  platformImageInputHash,
+} from '../src/core/publish/platform-images.js';
 
 let tempDir: string | undefined;
 
@@ -160,6 +167,49 @@ function withPlatformImageFrontmatter(content: string): string {
       'substack_preview_image: ./assets/substack-preview.png',
     ].join('\n'),
   );
+}
+
+function replaceFrontmatterField(content: string, field: string, value: string): string {
+  const pattern = new RegExp(`^${field}: .*`, 'm');
+  return content.replace(pattern, `${field}: ${value}`);
+}
+
+function sha256(bytes: string | Buffer): string {
+  return createHash('sha256').update(bytes).digest('hex');
+}
+
+function writePlatformImageArtifacts(draftsDir: string, slug: string, config: BlogConfig): void {
+  const draftDir = join(draftsDir, slug);
+  const assetsDir = join(draftDir, 'assets');
+  mkdirSync(assetsDir, { recursive: true });
+  const specs = [DEVTO_MAIN_IMAGE, MEDIUM_FEATURED_IMAGE, SUBSTACK_PREVIEW_IMAGE];
+  const images = specs.map((spec) => {
+    const bytes = Buffer.from(`${slug}:${spec.field}:test-platform-image`);
+    const outputPath = join(assetsDir, spec.filename);
+    writeFileSync(outputPath, bytes);
+    return {
+      platform: spec.platform,
+      field: spec.field,
+      filename: spec.filename,
+      width: spec.width,
+      height: spec.height,
+      output_path: outputPath,
+      public_url: `https://m0lz.dev/writing/${slug}/assets/${spec.filename}`,
+      source: 'fallback-template',
+      generated: true,
+      sha256: sha256(bytes),
+      input_hash: platformImageInputHash(
+        parseFrontmatter(readFileSync(join(draftDir, 'index.mdx'), 'utf-8')),
+        config,
+      ),
+    };
+  });
+  writeFileSync(join(draftDir, '.platform-images.json'), JSON.stringify({
+    timestamp: '2026-05-18T00:00:00.000Z',
+    slug,
+    input_hash: images[0].input_hash,
+    images,
+  }, null, 2), 'utf-8');
 }
 
 describe('getDraftPost', () => {
@@ -447,17 +497,22 @@ describe('completeDraft', () => {
 
       // Write a valid draft (replace placeholders)
       const mdxPath = draftPath(draftsDir, 'eta');
-      const content = readFileSync(mdxPath, 'utf-8')
-        .replace('{{title}}', 'Real Title')
+      let content = readFileSync(mdxPath, 'utf-8')
         .replace('{{description}}', 'Real description')
         .replace('tags: []', 'tags:\n  - typescript')
         .replace(/\{\/\* TODO: Fill this section \*\/\}/g, 'Filled content');
+      content = replaceFrontmatterField(content, 'title', '"Real Title"');
       writeFileSync(mdxPath, withPlatformImageFrontmatter(content), 'utf-8');
+      writePlatformImageArtifacts(draftsDir, 'eta', config);
 
-      completeDraft(db, 'eta', draftsDir, benchmarkDir);
+      completeDraft(db, 'eta', draftsDir, benchmarkDir, config);
 
-      const post = db.prepare('SELECT * FROM posts WHERE slug = ?').get('eta') as { phase: string };
+      const post = db.prepare('SELECT * FROM posts WHERE slug = ?').get('eta') as {
+        phase: string;
+        title: string;
+      };
       expect(post.phase).toBe('evaluate');
+      expect(post.title).toBe('Real Title');
     } finally {
       closeDatabase(db);
     }
@@ -484,8 +539,42 @@ describe('completeDraft', () => {
         .replace(/\{\/\* TODO: Fill this section \*\/\}/g, 'Filled content');
       writeFileSync(mdxPath, content, 'utf-8');
 
-      expect(() => completeDraft(db, 'eta-no-images', draftsDir, benchmarkDir)).toThrow(
+      expect(() => completeDraft(db, 'eta-no-images', draftsDir, benchmarkDir, config)).toThrow(
         'Missing platform image frontmatter',
+      );
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  it('rejects generator-owned platform images after the title changes without regeneration', () => {
+    const dir = makeTempDir();
+    const dbPath = join(dir, 'state.db');
+    const draftsDir = join(dir, 'drafts');
+    const benchmarkDir = join(dir, 'benchmarks');
+    const researchDir = join(dir, 'research');
+    const config = makeConfig(dir);
+    createDraftPost(dbPath, researchDir, 'eta-stale-images', 'analysis-opinion');
+
+    const db = getDatabase(dbPath);
+    try {
+      initDraft(db, 'eta-stale-images', draftsDir, benchmarkDir, researchDir, config, join(dir, '.blogrc.yaml'));
+      const mdxPath = draftPath(draftsDir, 'eta-stale-images');
+      let content = readFileSync(mdxPath, 'utf-8')
+        .replace('{{description}}', 'Real description')
+        .replace('tags: []', 'tags:\n  - typescript')
+        .replace(/\{\/\* TODO: Fill this section \*\/\}/g, 'Filled content');
+      content = replaceFrontmatterField(content, 'title', '"Original Title"');
+      writeFileSync(mdxPath, withPlatformImageFrontmatter(content), 'utf-8');
+      writePlatformImageArtifacts(draftsDir, 'eta-stale-images', config);
+      writeFileSync(
+        mdxPath,
+        readFileSync(mdxPath, 'utf-8').replace('Original Title', 'Changed Title'),
+        'utf-8',
+      );
+
+      expect(() => completeDraft(db, 'eta-stale-images', draftsDir, benchmarkDir, config)).toThrow(
+        /stale|current generation receipt/,
       );
     } finally {
       closeDatabase(db);
@@ -510,10 +599,12 @@ describe('completeDraft', () => {
       const content = readFileSync(mdxPath, 'utf-8')
         .replace('{{title}}', 'Real Title')
         .replace('{{description}}', 'Real description')
+        .replace('tags: []', 'tags:\n  - typescript')
         .replace('Test data', '{/* TODO: Fill this section */}');
-      writeFileSync(mdxPath, content, 'utf-8');
+      writeFileSync(mdxPath, withPlatformImageFrontmatter(content), 'utf-8');
+      writePlatformImageArtifacts(draftsDir, 'eta-placeholders', config);
 
-      expect(() => completeDraft(db, 'eta-placeholders', draftsDir, benchmarkDir)).toThrow('Placeholder sections remaining');
+      expect(() => completeDraft(db, 'eta-placeholders', draftsDir, benchmarkDir, config)).toThrow('Placeholder sections remaining');
     } finally {
       closeDatabase(db);
     }
@@ -537,13 +628,15 @@ describe('completeDraft', () => {
       const content = readFileSync(mdxPath, 'utf-8')
         .replace('{{title}}', 'Real Title')
         .replace('{{description}}', 'Real description')
+        .replace('tags: []', 'tags:\n  - typescript')
         .replace(/\{\/\* TODO: Fill this section \*\/\}/g, 'Content');
-      writeFileSync(mdxPath, content, 'utf-8');
+      writeFileSync(mdxPath, withPlatformImageFrontmatter(content), 'utf-8');
+      writePlatformImageArtifacts(draftsDir, 'eta-assets', config);
 
       // Register an asset that doesn't exist on disk
       registerAsset(db, 'eta-assets', 'excalidraw', 'ghost.svg');
 
-      expect(() => completeDraft(db, 'eta-assets', draftsDir, benchmarkDir)).toThrow('Missing asset file: ghost.svg');
+      expect(() => completeDraft(db, 'eta-assets', draftsDir, benchmarkDir, config)).toThrow('Missing asset file: ghost.svg');
     } finally {
       closeDatabase(db);
     }
@@ -568,7 +661,8 @@ describe('completeDraft', () => {
         .replace('{{description}}', 'Real description')
         .replace('tags: []', 'tags:\n  - typescript')
         .replace(/\{\/\* TODO: Fill this section \*\/\}/g, 'Content');
-      writeFileSync(mdxPath, content, 'utf-8');
+      writeFileSync(mdxPath, withPlatformImageFrontmatter(content), 'utf-8');
+      writePlatformImageArtifacts(draftsDir, 'eta-bad-benchmark', config);
 
       db.prepare('UPDATE posts SET has_benchmarks = 1 WHERE slug = ?').run('eta-bad-benchmark');
       const benchSlugDir = join(benchmarkDir, 'eta-bad-benchmark');
@@ -580,7 +674,7 @@ describe('completeDraft', () => {
         data: {},
       }), 'utf-8');
 
-      expect(() => completeDraft(db, 'eta-bad-benchmark', draftsDir, benchmarkDir)).toThrow(
+      expect(() => completeDraft(db, 'eta-bad-benchmark', draftsDir, benchmarkDir, config)).toThrow(
         'Invalid benchmark results',
       );
     } finally {
@@ -594,7 +688,7 @@ describe('completeDraft', () => {
     const db = getDatabase(dbPath);
     try {
       initResearchPost(db, 'theta', 'test', 'directed', 'technical-deep-dive');
-      expect(() => completeDraft(db, 'theta', join(dir, 'drafts'), join(dir, 'benchmarks'))).toThrow("not 'draft'");
+      expect(() => completeDraft(db, 'theta', join(dir, 'drafts'), join(dir, 'benchmarks'), makeConfig(dir))).toThrow("not 'draft'");
     } finally {
       closeDatabase(db);
     }
@@ -605,7 +699,7 @@ describe('completeDraft', () => {
     const dbPath = join(dir, 'state.db');
     const db = getDatabase(dbPath);
     try {
-      expect(() => completeDraft(db, 'nonexistent', join(dir, 'drafts'), join(dir, 'benchmarks'))).toThrow('Post not found');
+      expect(() => completeDraft(db, 'nonexistent', join(dir, 'drafts'), join(dir, 'benchmarks'), makeConfig(dir))).toThrow('Post not found');
     } finally {
       closeDatabase(db);
     }

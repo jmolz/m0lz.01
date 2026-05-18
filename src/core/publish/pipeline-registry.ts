@@ -120,7 +120,10 @@ export const PIPELINE_STEPS: StepDefinition[] = [
         configPath: ctx.paths.configPath,
         socialDir: ctx.paths.socialDir,
         templatesDir: ctx.paths.templatesDir,
-      }, ctx.db, { allowMainAhead: ctx.allowMainAhead });
+      }, ctx.db, {
+        allowMainAhead: ctx.allowMainAhead,
+        distributionImageMode: ctx.distributionImageMode,
+      });
       return {
         outcome: 'completed',
         message: `PR #${result.prNumber} opened: ${result.prUrl}`,

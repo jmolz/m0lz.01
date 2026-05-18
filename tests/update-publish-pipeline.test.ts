@@ -22,6 +22,8 @@ import { openUpdateCycle } from '../src/core/update/cycles.js';
 // eslint-disable-next-line import/first
 import { createSiteUpdate } from '../src/core/publish/site-update.js';
 // eslint-disable-next-line import/first
+import { ensurePlatformImages } from '../src/core/publish/platform-images.js';
+// eslint-disable-next-line import/first
 import { completeUpdateUnderLock } from '../src/core/publish/phase.js';
 // eslint-disable-next-line import/first
 import { acquirePublishLock } from '../src/core/publish/lock.js';
@@ -164,6 +166,7 @@ describe('createSiteUpdate — update-branch commit carries body + frontmatter',
     seedPublishedPost(f.db, 'alpha');
     openUpdateCycle(f.db, 'alpha', 'Re-ran benchmarks');
     seedDraftMdx(f.draftsDir, 'alpha', UPDATED_MDX);
+    await ensurePlatformImages('alpha', f.config, { draftsDir: f.draftsDir });
 
     let prCreateCalls = 0;
     let observedBranch: string | null = null;
