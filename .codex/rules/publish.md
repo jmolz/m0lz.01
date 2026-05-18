@@ -63,11 +63,15 @@ Forensic anchors:
 
 Bundle persistence is fail-closed. `persistDistributionKitToSite` must reject path escapes, hash mismatches, conflicting reviewed site artifacts, unrelated dirty state, and unexpected ahead commits before staging.
 
+Stale owned-artifact cleanup is branch-dependent. `site-pr` and `site-update` may precompute an allowed cleanup set for the dirty guard, but tracked stale deletion paths must be recomputed after checking out or reusing the target branch before staging. Generated `assets/linkedin-feed.png` is an owned image artifact like generated portable tables: when the current manifest omits it, tracked stale copies must be deleted, staged, and included in crash-replay expected paths instead of being left in the reviewed bundle.
+
 Forensic anchors:
 - `src/core/publish/site.ts` generates and copies the bundle before site checkout/mutation completes.
+- `src/core/publish/site.ts` recomputes cleanup stage paths after branch checkout/reuse so existing PR/update branches cannot hide stale tracked bundle files.
 - `src/core/publish/site-artifacts.ts` copies manifest-derived text/table/image artifacts and refuses conflicting reviewed bytes.
+- `src/core/publish/site-artifacts.ts` treats omitted `assets/linkedin-feed.png` as a generator-owned cleanup candidate.
 - `src/core/publish/pipeline-registry.ts` loads verified Medium/Substack manifest artifacts in paste steps.
-- `tests/publish-site.test.ts`, `tests/update-publish-pipeline.test.ts`, and `tests/publish-distribution-kit.test.ts` cover pre-preview bundle copy and strict persistence.
+- `tests/publish-site.test.ts`, `tests/update-publish-pipeline.test.ts`, and `tests/publish-distribution-kit.test.ts` cover pre-preview bundle copy, branch-relative cleanup, stale image deletion, crash replay, and strict persistence.
 
 ## Image generation must be deterministic and config-derived
 

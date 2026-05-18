@@ -120,6 +120,11 @@ describe('guidance docs', () => {
       'fixed manifest paths',
       'recalculate every recorded SHA256',
       'tampered bytes beside stale provenance',
+      'tracked stale deletion paths must be recomputed after checking out or reusing the target branch',
+      'assets/linkedin-feed.png',
+      'included in crash-replay expected paths',
+      'branch-relative cleanup',
+      'stale image deletion',
     ]) {
       expect(codexRule).toContain(required);
     }
