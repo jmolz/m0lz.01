@@ -108,7 +108,15 @@ function renderProjectFrontmatter(projectId: string | null): string {
 
 function renderResearchTitle(title: string, projectId: string | null): string {
   if (!projectId) return `Research: ${title}`;
-  return title.startsWith(projectId) ? title : `${projectId} Research: ${title}`;
+  if (title === projectId) return `${projectId} Research`;
+
+  const prefixPattern = new RegExp(`^${projectId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*(?:—|--|:)?\\s*`);
+  const suffix = title.replace(prefixPattern, '').trim();
+  if (suffix.length === 0 || suffix.toLowerCase() === 'research') {
+    return `${projectId} Research`;
+  }
+
+  return `${projectId} Research: ${suffix}`;
 }
 
 function resolveResearchRepoUrl(

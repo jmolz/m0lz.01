@@ -152,12 +152,13 @@ function writeDraft(
   draftsDir: string,
   slug: string,
   description = 'Sample description from draft',
+  title = 'Sample Research',
 ): void {
   const dir = join(draftsDir, slug);
   mkdirSync(dir, { recursive: true });
   const frontmatter = [
     '---',
-    'title: "Sample Research"',
+    `title: "${title}"`,
     `description: "${description}"`,
     'date: "2026-04-16"',
     'tags:',
@@ -258,6 +259,18 @@ describe('generateResearchPage — happy path', () => {
     expect(content).toContain('project: "m0lz.01"');
     expect(content).not.toContain('{{project_frontmatter}}');
     expect(content).not.toContain('{{author_name}}');
+  });
+
+  it('renders project-prefixed draft titles as project research titles with a readable suffix', () => {
+    const f = setup();
+    seedPost(f.db, 'project-prefixed', 'project-launch', 'm0lz.02');
+    writeResearchDoc(f.researchDir, 'project-prefixed');
+    writeDraft(f.draftsDir, 'project-prefixed', 'Sample description from draft', 'm0lz.02 — Stack Loops');
+
+    const result = generateResearchPage('project-prefixed', makeConfig(), f.paths, f.db);
+    const content = readFileSync(result.path!, 'utf-8');
+
+    expect(content).toContain('title: "m0lz.02 Research: Stack Loops"');
   });
 
   it('omits project frontmatter without leaving placeholder text when project_id is absent', () => {
