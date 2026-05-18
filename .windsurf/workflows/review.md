@@ -108,6 +108,7 @@ npx vitest run \
   tests/publish-site-updates.test.ts \
   tests/publish-origin-divergence.test.ts \
   tests/publish-seed-on-start.test.ts \
+  tests/publish-verify-artifacts.test.ts \
   tests/preview-gate-urls.test.ts \
   tests/db-migration-v3.test.ts \
   tests/update-cycles.test.ts \
@@ -124,6 +125,7 @@ npx vitest run \
   tests/unpublish-pipeline.test.ts \
   tests/skills-crossref.test.ts \
   tests/guidance-docs.test.ts \
+  tests/review-inventory.test.ts \
   tests/update-runner-pipeline.test.ts \
   tests/cross-flow-lock.test.ts \
   tests/frontmatter-phase7.test.ts \
@@ -131,6 +133,8 @@ npx vitest run \
   tests/pipeline-registry-integrity.test.ts \
   tests/paths.test.ts \
   tests/cli-templates-cwd-independence.test.ts \
+  tests/build-bin-executable.test.ts \
+  tests/voice-parity.test.ts \
   tests/workspace-root.test.ts \
   tests/cli-json.test.ts \
   tests/plan-file.test.ts \
@@ -230,6 +234,7 @@ npx vitest run \
 | `tests/unpublish-pipeline.test.ts` (4 tests) | runUnpublishPipeline E2E | Happy path drives all 7 steps → phase=unpublished + unpublished_at set + metrics [unpublish_started, unpublished]; per-slug lock contention via acquirePublishLock; runner imports from `../publish/lock.js` (trust-boundary proof); failure path leaves phase=published and records failedStep |
 | `tests/skills-crossref.test.ts` (2 tests) | Orchestrator skill files contract | All three (blog-pipeline, blog-update, blog-unpublish) contain exactly H2 {Preflight, Workflow, CLI Reference, Troubleshooting, Degraded Mode}; every `blog <cmd>` in fenced blocks resolves to a registered Commander handler in src/cli/index.ts (AST parse, not grep) |
 | `tests/guidance-docs.test.ts` (4 tests) | Command/rule guidance tripwires | Review command docs must describe Dev.to tags as alphanumeric-only and never preserve punctuation; evaluate/plan-feature docs must treat tenant-policy data-exfiltration denials as `policy-blocked` with no Responses API fallback; Codex source-command review docs must reference the real `.claude-plugin` surface, not absent Codex plugin paths; `.claude` and `.codex` drafting rules must agree on the `PostFrontmatter` field list including `devto_main_image` and lifecycle fields |
+| `tests/review-inventory.test.ts` (2 tests) | Review regression inventory tripwire | Asserts `.agents/skills/source-command-review/SKILL.md` and `.windsurf/workflows/review.md` mention every current `tests/*.test.ts` file, so newly added tripwire tests cannot be silently omitted from the cumulative review command. |
 | `tests/update-runner-pipeline.test.ts` (3 tests) | TRUE E2E update-mode runPipeline | Every UPDATE_STEP_NAMES step runs in order via real runPipeline({publishMode:'update', cycleId}); cycle_id persists on every pipeline_steps row (no cycle_id=0 leakage); post.phase stays 'published'; update_count increments; update_completed metric with value=cycleId; pause/resume works in update mode |
 | `tests/cross-flow-lock.test.ts` (3 tests) | Cross-flow lock mutual exclusion | TRUE same-slug contention: runPipeline(alpha) blocks on step 2 → lockfile contains process.pid → runUnpublishPipeline(alpha, lockTimeoutMs=100) throws with contention error (real runner); release-then-reacquire succeeds; disjoint slugs don't contend (concurrent publish+unpublish) |
 | `tests/frontmatter-phase7.test.ts` (15 tests) | PostFrontmatter Phase 7 round-trip + cross-repo fixtures | serialize+parse preserves unpublished_at / updated_at / update_count (numeric); emits all three together; omits when unset (legacy compat); parses legacy MDX with new fields undefined; parses production-shape Phase 7 MDX with all platform + lifecycle fields; tolerates update_count as YAML string `"5"`; reads 6 fixture files from `fixtures/frontmatter-phase7/`; drift guard: every .mdx on disk appears in REGISTERED_FIXTURES and vice versa |
@@ -267,6 +272,7 @@ Five connected fixes from the first live `blog publish` dogfood. See CHANGELOG.m
 | `tests/research-project-linking.test.ts` (15 tests) | `--project` flag + prompt-regex + PROJECT_UNLINKED guard | `extractProjectIdFromPrompt` matches generic catalog IDs, returns null for prose without matches and for bare decimals; `initResearchPost` stores `project_id`, throws `[AGENT_ERROR] PROJECT_UNLINKED` when project-launch has no projectId; `runResearchInit` resolves via flag → regex → null, auto-classifies m0lz.N as project-launch via CATALOG_PATTERN. |
 | `tests/publish-origin-divergence.test.ts` (6 tests) | `assertOriginInSync` + `--allow-main-ahead` | Origin+clone bare-repo fixture; passes when matched; `[AGENT_ERROR] ORIGIN_OUT_OF_SYNC` with commit count when ahead; same sentinel when branch missing on origin; re-throws environment errors with context; direct `createSitePR` exercise verifies `allowMainAhead=true` skips the assertion and emits the bypass warning. |
 | `tests/publish-seed-on-start.test.ts` (4 tests) | `runPublishStart` always seeds on phase=publish | Phase=publish with 0 step rows now seeds 11 on start (`seeded N pipeline_steps for <slug>` log); idempotent re-run; phase=evaluate still promotes; phase=published rejected with actionable error. |
+| `tests/publish-verify-artifacts.test.ts` (1 test) | Publish verify pins evaluated artifacts | Mutates `.blog-agent/drafts/{slug}/index.mdx` after `completeEvaluation`; real `PIPELINE_STEPS.verify` succeeds before the mutation and fails after it with the `blog publish reopen-draft ... --reason "evaluated artifact drift"` recovery command before any site-pr mutation can run. |
 | `tests/preview-gate-urls.test.ts` (9 tests) | `computePreviewUrls` + `publish show --json` envelope | canonicalUrl always emitted; supplementaryUrl null unless `research-pages/<slug>/index.mdx` exists; companionRepoUrl prefers post.repo_url, falls back to config.projects origin lookup, null on miss; envelope surfaces `data.preview_urls`. |
 | `tests/draft-regenerate-frontmatter.test.ts` (9 tests) | `blog draft regenerate-frontmatter` recovery command | Rewrites frontmatter in place preserving body (even with thematic break); `--project <id>` repairs stale project-launch rows with `project_id=NULL`; missing project IDs fail with `PROJECT_UNLINKED`; writes `.frontmatter-regenerated.json` receipt with hashes + fields_changed; preserves operator-authored title/description/tags; rejects phase=published without touching the file; fails on missing MDX; leaves siblings untouched; rejects invalid slugs. |
 
@@ -408,7 +414,7 @@ npm test
 npm run build
 ```
 
-Expected baseline: **0 TypeScript errors, 1040 tests passing across 76 suites, clean build**. v0.3 dogfood-hardening added +43 tests across +5 new suites — `research-project-linking` (15), `publish-origin-divergence` (6), `publish-seed-on-start` (4), `preview-gate-urls` (9), `draft-regenerate-frontmatter` (9) — plus +8 tests in `draft-frontmatter.test.ts` for companion_repo resolution. Platform article images added Dev.to/Medium/Substack-preview coverage and expanded draft/crosspost coverage. Durable distribution kits add `distribution-kit.test.ts`, `publish-distribution-kit.test.ts`, and CLI/config/plan-file coverage. Benchmark phase-gates bring the current suite to 1040/76; any drift from this baseline is a signal to investigate before merging.
+Expected baseline: **0 TypeScript errors, 1071 tests passing across 78 suites, clean build**. v0.3 dogfood-hardening added +43 tests across +5 new suites — `research-project-linking` (15), `publish-origin-divergence` (6), `publish-seed-on-start` (4), `preview-gate-urls` (9), `draft-regenerate-frontmatter` (9) — plus +8 tests in `draft-frontmatter.test.ts` for companion_repo resolution. Platform article images added Dev.to/Medium/Substack-preview coverage and expanded draft/crosspost coverage. Durable distribution kits add `distribution-kit.test.ts`, `publish-distribution-kit.test.ts`, and CLI/config/plan-file coverage. Benchmark phase-gates, publish artifact verification, and review-inventory tripwires bring the current suite to 1071/78; any drift from this baseline is a signal to investigate before merging.
 
 ## Phase 3: Code Review of Current Changes
 
