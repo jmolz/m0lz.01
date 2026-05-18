@@ -237,6 +237,7 @@ export function generateResearchPage(
     title,
     research_title: renderResearchTitle(title, post.project_id),
     description,
+    author_name: config.author.name,
     date,
     tags: tagsYaml,
     project_frontmatter: renderProjectFrontmatter(post.project_id),

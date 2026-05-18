@@ -184,6 +184,10 @@ describe('generateResearchPage — happy path', () => {
     const content = readFileSync(result.path!, 'utf-8');
     expect(content).toContain('This is the thesis paragraph');
     expect(content).toContain('Finding one');
+    expect(content).toContain('author: "Tester"');
+    expect(content).toContain('sections:');
+    expect(content).toContain('  - id: "thesis"');
+    expect(content).toContain('  - id: "open-questions"');
     // Source A appears in findings AND bibliography (once each — bibliography
     // dedupes within itself). Dedupe is list-scoped, not document-scoped.
     const sourceACount = (content.match(/\[source A\]/g) ?? []).length;
@@ -253,6 +257,7 @@ describe('generateResearchPage — happy path', () => {
     expect(content).toContain('title: "m0lz.01 Research: Sample Research"');
     expect(content).toContain('project: "m0lz.01"');
     expect(content).not.toContain('{{project_frontmatter}}');
+    expect(content).not.toContain('{{author_name}}');
   });
 
   it('omits project frontmatter without leaving placeholder text when project_id is absent', () => {

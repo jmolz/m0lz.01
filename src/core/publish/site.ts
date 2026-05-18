@@ -5,6 +5,7 @@ import { dirname, isAbsolute, join, resolve } from 'node:path';
 import Database from 'better-sqlite3';
 
 import { BlogConfig } from '../config/types.js';
+import { parseFrontmatter, serializeFrontmatter } from '../draft/frontmatter.js';
 import { assertOriginInSync, expectedSiteCoords, requireOriginMatch } from './origin-guard.js';
 import { generateDistributionKit } from './distribution-kit.js';
 import { ensurePlatformImages } from './platform-images.js';
@@ -85,6 +86,20 @@ function parseRepoCoords(remoteUrl: string): RepoCoords {
     return { owner: https[1], name: https[2] };
   }
   throw new Error(`Could not parse git remote URL: ${remoteUrl}`);
+}
+
+function renderSitePostMdx(source: string, slug: string, config: BlogConfig): string {
+  const fmMatch = source.match(/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/);
+  if (!fmMatch) {
+    throw new Error(`Draft MDX missing frontmatter delimiters for '${slug}'`);
+  }
+
+  const fm = parseFrontmatter(source);
+  fm.published = true;
+  fm.canonical = `${config.site.base_url}/writing/${slug}`;
+
+  const body = source.slice(fmMatch[0].length);
+  return `${serializeFrontmatter(fm)}\n${body}`;
 }
 
 // Best-effort retrieval of the PR URL from `gh pr create`. gh prints a
@@ -299,7 +314,14 @@ export async function createSitePR(
   // Copy draft MDX into the site repo's content directory.
   const targetContentDir = join(siteRepoPath, config.site.content_dir, slug);
   mkdirSync(targetContentDir, { recursive: true });
-  cpSync(sourceDraftMdx, join(targetContentDir, 'index.mdx'));
+  const sourceDraftContent = readFileSync(sourceDraftMdx, 'utf-8');
+  writeFileSync(
+    join(targetContentDir, 'index.mdx'),
+    overrides?.publishMode === 'update'
+      ? sourceDraftContent
+      : renderSitePostMdx(sourceDraftContent, slug, config),
+    'utf-8',
+  );
 
   // Copy assets directory if present.
   const sourceAssetsDir = join(paths.draftsDir, slug, 'assets');

@@ -244,7 +244,10 @@ describe('createSitePR — happy path', () => {
     expect(result.branchName).toBe('post/alpha');
     expect(createCalls).toBe(1);
     // The MDX was copied into the site repo.
-    expect(existsSync(join(f.siteRepoPath, 'content/posts/alpha/index.mdx'))).toBe(true);
+    const copiedPath = join(f.siteRepoPath, 'content/posts/alpha/index.mdx');
+    expect(existsSync(copiedPath)).toBe(true);
+    expect(readFileSync(copiedPath, 'utf-8')).toMatch(/published:\s*true/);
+    expect(readFileSync(join(f.draftsDir, 'alpha', 'index.mdx'), 'utf-8')).toMatch(/published:\s*false/);
   });
 
   it('copies assets directory when present', async () => {
@@ -278,6 +281,7 @@ describe('createSitePR — happy path', () => {
     expect(readFileSync(sourceDraftPath, 'utf-8')).toBe(sourceBefore);
     expect(existsSync(join(f.draftsDir, 'withassets', '.platform-images.json'))).toBe(false);
     const copiedMdx = readFileSync(join(f.siteRepoPath, 'content/posts/withassets/index.mdx'), 'utf-8');
+    expect(copiedMdx).toMatch(/published:\s*true/);
     expect(copiedMdx).toContain('devto_main_image: ./assets/devto-cover.png');
     expect(copiedMdx).toContain('medium_featured_image: ./assets/medium-featured.png');
     expect(copiedMdx).toContain('substack_preview_image: ./assets/substack-preview.png');

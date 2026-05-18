@@ -530,6 +530,14 @@ dimensions. The command updates draft frontmatter with `devto_main_image`,
 `blog draft complete` requires those fields, so a post cannot reach
 evaluation/publish with missing platform-image frontmatter.
 
+Initial `site-pr` writes the hub-site copy with `published: true` so the
+Vercel preview renders the post on `/writing` and at `/writing/<slug>` while
+the source draft remains unchanged in `.blog-agent/drafts/<slug>/index.mdx`.
+Update-mode site PRs copy the update draft verbatim. Generated research
+companion pages include `project`, `author`, and `sections` frontmatter so the
+hub research index and post research panel render the same structure as
+hand-authored research pages.
+
 `blog publish start` and `blog update publish` also generate a durable
 distribution kit before the site repo is mutated. Local artifacts land in
 `.blog-agent/social/<slug>/`: `linkedin.md`, `hackernews.md`,
