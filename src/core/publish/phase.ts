@@ -123,12 +123,26 @@ function isPlatformImagePublishFailure(step: PipelineStepRow): boolean {
   );
 }
 
-// Recovery path for a post that reached publish before the evaluated draft
-// carried required platform-image frontmatter. The site-pr preflight catches
-// this before checkout/copy/push, so it is safe to delete the initial publish
-// step rows, reset the stale evaluation flag, and move back to draft. The
-// draft still must run platform image generation, draft completion, and a
-// fresh evaluation cycle before publish can resume.
+function isEvaluatedArtifactPublishFailure(step: PipelineStepRow): boolean {
+  if (step.step_name !== 'verify' || step.status !== 'failed') return false;
+  const message = step.error_message ?? '';
+  return (
+    /Evaluation artifact verification failed/.test(message) ||
+    /Evaluated artifacts changed after evaluation completed/.test(message) ||
+    /not a completed pass/.test(message)
+  );
+}
+
+function isReopenablePreSiteDraftFailure(step: PipelineStepRow): boolean {
+  return isPlatformImagePublishFailure(step) || isEvaluatedArtifactPublishFailure(step);
+}
+
+// Recovery path for a post that reached publish before the evaluated draft was
+// safe to copy into the site repo. The verify/site-pr preflights catch these
+// failures before checkout/copy/push, so it is safe to delete the initial
+// publish step rows, reset the stale evaluation flag, and move back to draft.
+// The draft still must run draft completion and a fresh evaluation cycle before
+// publish can resume.
 export function reopenPublishDraft(
   db: Database.Database,
   slug: string,
@@ -151,23 +165,24 @@ export function reopenPublishDraft(
   }
 
   const steps = getPipelineSteps(db, slug, 0);
-  const sitePr = steps.find((step) => step.step_name === 'site-pr');
-  if (!sitePr || !isPlatformImagePublishFailure(sitePr)) {
+  const failedPreSiteStep = steps.find(isReopenablePreSiteDraftFailure);
+  if (!failedPreSiteStep) {
     throw new Error(
-      `Cannot reopen '${slug}' to draft automatically: expected a failed site-pr step caused by missing ` +
-      `platform image frontmatter. Inspect 'blog publish show ${slug}' before choosing a manual recovery.`,
+      `Cannot reopen '${slug}' to draft automatically: expected a failed verify step caused by evaluated ` +
+      `artifact drift, or a failed site-pr step caused by missing platform image frontmatter. ` +
+      `Inspect 'blog publish show ${slug}' before choosing a manual recovery.`,
     );
   }
 
   const advancedRows = steps.filter(
     (step) =>
-      step.step_number > sitePr.step_number &&
+      step.step_number > failedPreSiteStep.step_number &&
       step.status !== 'pending' &&
       step.status !== 'skipped',
   );
   if (advancedRows.length > 0) {
     throw new Error(
-      `Cannot reopen '${slug}' to draft because publish advanced past site-pr: ` +
+      `Cannot reopen '${slug}' to draft because publish advanced past ${failedPreSiteStep.step_name}: ` +
       advancedRows.map((step) => `${step.step_name}=${step.status}`).join(', '),
     );
   }

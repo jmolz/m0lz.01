@@ -488,6 +488,42 @@ describe('runPublishReopenDraft', () => {
     }
   });
 
+  it('moves a verify artifact-drift failure back to draft and clears stale publish steps', () => {
+    const f = setup();
+    seedPublishPost(f.dbPath, 'repair-drift');
+    const db = getDatabase(f.dbPath);
+    try {
+      createPipelineSteps(db, 'repair-drift', 'technical-deep-dive', {
+        publish: { devto: true, medium: true, substack: true, github_repos: true, social_drafts: true, research_pages: true },
+      } as any);
+      markStepFailed(
+        db,
+        'repair-drift',
+        'verify',
+        'Evaluation artifact verification failed -- Evaluated artifacts changed after evaluation completed: draft/index.mdx.',
+      );
+    } finally {
+      closeDatabase(db);
+    }
+
+    const { logs } = captureLogs();
+    runPublishReopenDraft('repair-drift', { reason: 'evaluated artifact drift' }, paths(f));
+
+    expect(process.exitCode).toBe(0);
+    expect(logs.join('\n')).toContain('Phase moved back to draft');
+    const db2 = getDatabase(f.dbPath);
+    try {
+      const post = db2
+        .prepare('SELECT phase, evaluation_passed FROM posts WHERE slug = ?')
+        .get('repair-drift') as { phase: string; evaluation_passed: number | null };
+      expect(post.phase).toBe('draft');
+      expect(post.evaluation_passed).toBeNull();
+      expect(getPipelineSteps(db2, 'repair-drift')).toHaveLength(0);
+    } finally {
+      closeDatabase(db2);
+    }
+  });
+
   it('refuses to reopen when publish advanced beyond site-pr', () => {
     const f = setup();
     seedPublishPost(f.dbPath, 'too-late');

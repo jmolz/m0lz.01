@@ -600,6 +600,18 @@ the configured hub site repo.
 
 Re-run `blog publish start <slug>` — the pipeline picks up at the first non-completed step. State lives in `.blog-agent/state.db` (`pipeline_steps` table). Every step is idempotent.
 
+The first publish step re-checks the latest passed evaluation manifest,
+synthesis receipt, and reviewed artifact hashes. If the draft, benchmark
+results, environment snapshot, or structural autocheck output changed after
+`blog evaluate complete`, publish fails before any site files are copied. Run:
+
+```bash
+blog publish reopen-draft <slug> --reason "evaluated artifact drift"
+```
+
+Then re-run draft completion, the reviewer panel, synthesis, and
+`blog evaluate complete <slug>` before resuming `blog publish start <slug>`.
+
 If the failed step is `site-pr` because the evaluated draft is missing
 `devto_main_image`, `medium_featured_image`, or `substack_preview_image`, run:
 

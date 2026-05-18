@@ -8,6 +8,15 @@ paths:
 
 Rules for the publish layer (`src/core/publish/**`, `src/cli/publish.ts`). These protect the evaluated draft boundary and the public site/cross-post contract.
 
+## Publish verify re-checks evaluated artifacts
+
+`blog publish start` must not trust `posts.evaluation_passed` alone. The `verify` step re-reads the latest passed evaluation manifest, synthesis receipt, and reviewed artifact SHA256 set before any site mutation. If `.blog-agent/drafts/{slug}/index.mdx`, benchmark results, environment metadata, or structural autocheck output changed after `blog evaluate complete`, publish fails before `research-page`/`site-pr` can copy stale bytes. Use `blog publish reopen-draft <slug> --reason "evaluated artifact drift"` only for that pre-site failure, then re-run draft completion and evaluation.
+
+Forensic anchors:
+- `src/core/publish/pipeline-registry.ts` calls `assertLatestEvaluationArtifactsCurrent` from the `verify` step.
+- `tests/publish-verify-artifacts.test.ts` mutates draft bytes after `completeEvaluation` and asserts `verify` fails before `site-pr`.
+- `tests/publish-cli.test.ts` covers the matching `blog publish reopen-draft` recovery path for evaluated artifact drift.
+
 ## Site PR validates evaluated drafts; it does not rewrite them
 
 `createSitePR` and `createSiteUpdate` may verify stable assets, but they must not rewrite `.blog-agent/drafts/{slug}/index.mdx` or write draft receipts after the evaluation gate. Platform-image fields and `.platform-images.json` receipts are authored during draft phase with `blog draft platform-images <slug>`.

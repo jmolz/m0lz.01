@@ -11,6 +11,7 @@ import { updateProjectReadme } from './readme.js';
 import { loadDistributionKit } from './distribution-kit.js';
 import { persistDistributionKitToSite } from './site-artifacts.js';
 import { getOpenUpdateCycle } from '../update/cycles.js';
+import { assertLatestEvaluationArtifactsCurrent } from '../evaluate/state.js';
 
 // Ordered list of all 11 publish pipeline steps. Each step's execute
 // function translates the unified PipelineContext into the step-specific
@@ -72,6 +73,17 @@ export const PIPELINE_STEPS: StepDefinition[] = [
             message: `verify (update mode): synthesis verdict is '${row.verdict}', not 'pass'.`,
           };
         }
+        try {
+          assertLatestEvaluationArtifactsCurrent(ctx.db, ctx.slug, ctx.paths.evaluationsDir, {
+            draftsDir: ctx.paths.draftsDir,
+            benchmarkDir: ctx.paths.benchmarkDir,
+          });
+        } catch (e) {
+          return {
+            outcome: 'failed',
+            message: `verify (update mode): ${(e as Error).message}`,
+          };
+        }
         return { outcome: 'completed', message: 'Update evaluation verified' };
       }
       const post = ctx.db
@@ -82,6 +94,17 @@ export const PIPELINE_STEPS: StepDefinition[] = [
       }
       if (!post.evaluation_passed) {
         return { outcome: 'failed', message: 'Evaluation not passed -- cannot publish' };
+      }
+      try {
+        assertLatestEvaluationArtifactsCurrent(ctx.db, ctx.slug, ctx.paths.evaluationsDir, {
+          draftsDir: ctx.paths.draftsDir,
+          benchmarkDir: ctx.paths.benchmarkDir,
+        });
+      } catch (e) {
+        return {
+          outcome: 'failed',
+          message: `Evaluation artifact verification failed -- ${(e as Error).message}`,
+        };
       }
       return { outcome: 'completed', message: 'Evaluation verified' };
     },

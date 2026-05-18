@@ -283,6 +283,20 @@ export function computeReviewedArtifactHashes(
   };
 }
 
+function diffArtifactHashes(
+  pinnedHashes: Record<string, string>,
+  currentHashes: Record<string, string>,
+): string[] {
+  const drifted: string[] = [];
+  for (const [key, pinnedHash] of Object.entries(pinnedHashes)) {
+    if (currentHashes[key] !== pinnedHash) drifted.push(key);
+  }
+  for (const key of Object.keys(currentHashes)) {
+    if (!(key in pinnedHashes)) drifted.push(key);
+  }
+  return Array.from(new Set(drifted)).sort();
+}
+
 // Canonical serialization for dedupe: sort each issue's keys alphabetically
 // and sort the issues array by id. Makes the comparison robust against
 // key-order and array-order variations in reviewer output.
@@ -1331,6 +1345,91 @@ export function latestSynthesisInCycle(
   `).get(slug, synthesisIdFloor) as EvaluationSynthesisRow | undefined;
 }
 
+export function assertLatestEvaluationArtifactsCurrent(
+  db: Database.Database,
+  slug: string,
+  evaluationsDir: string,
+  artifactPaths: SynthesisArtifactPaths,
+): void {
+  const releaseLock = acquireEvaluateLock(evaluationsDir, slug);
+  try {
+    const manifest = readManifest(evaluationsDir, slug);
+    if (!manifest) {
+      throw new Error(
+        `Evaluation manifest missing for '${slug}'. ` +
+        `Run 'blog evaluate init', record reviewers, synthesize, and complete evaluation before publishing.`,
+      );
+    }
+    const post = db.prepare('SELECT * FROM posts WHERE slug = ?').get(slug) as PostRow | undefined;
+    if (!post) {
+      throw new Error(`Post not found: ${slug}`);
+    }
+    validateManifestAgainstDb(db, slug, manifest, post);
+
+    const cycle = currentCycle(manifest);
+    if (cycle.ended_reason !== 'passed') {
+      throw new Error(
+        `Latest evaluation cycle for '${slug}' is not a completed pass (${cycle.ended_reason ?? 'open'}). ` +
+        `Run 'blog evaluate complete ${slug}' before publishing.`,
+      );
+    }
+    const pin = cycle.last_synthesis_eval_id;
+    if (pin === undefined) {
+      throw new Error(
+        `Synthesis pin is missing for '${slug}' — the completed evaluation cannot prove reviewer coverage. ` +
+        `Re-open draft/evaluation and re-run synthesis before publishing.`,
+      );
+    }
+    if (!cycle.reviewed_artifact_hashes) {
+      throw new Error(
+        `Reviewed artifact hashes are missing for '${slug}' — the completed evaluation cannot prove draft integrity. ` +
+        `Re-open draft/evaluation and re-run synthesis before publishing.`,
+      );
+    }
+    const synthesis = latestSynthesisInCycle(db, slug, cycle.synthesis_id_floor);
+    if (!synthesis) {
+      throw new Error(
+        `No synthesis recorded for '${slug}' in the latest evaluation cycle. ` +
+        `Run 'blog evaluate synthesize' and 'blog evaluate complete' before publishing.`,
+      );
+    }
+    if (synthesis.verdict !== 'pass') {
+      throw new Error(
+        `Latest synthesis verdict is '${synthesis.verdict}', not 'pass'. ` +
+        `Address reviewer issues before publishing.`,
+      );
+    }
+    const currentMaxEval = maxId(db, 'evaluations', slug);
+    if (currentMaxEval > pin) {
+      throw new Error(
+        `Evaluation rows were recorded after the synthesis that completed evaluation for '${slug}' ` +
+        `(synthesis covered up to eval id ${pin}, current max is ${currentMaxEval}). ` +
+        `Re-run evaluation before publishing.`,
+      );
+    }
+
+    loadAndVerifySynthesisReceipt(evaluationDir(evaluationsDir, slug), {
+      pin,
+      verdict: synthesis.verdict,
+      reviewed_artifact_hashes: cycle.reviewed_artifact_hashes,
+      reviewer_artifact_hashes: cycle.reviewer_artifact_hashes ?? {},
+      synthesis_row_id: synthesis.id,
+    });
+
+    const currentHashes = computeReviewedArtifactHashes(artifactPaths, evaluationsDir, slug);
+    const drifted = diffArtifactHashes(cycle.reviewed_artifact_hashes, currentHashes);
+    if (drifted.length > 0) {
+      throw new Error(
+        `Evaluated artifacts changed after evaluation completed: ${drifted.join(', ')}. ` +
+        `Run 'blog publish reopen-draft ${slug} --reason "evaluated artifact drift"', ` +
+        `then re-run draft completion and evaluation before publishing.`,
+      );
+    }
+  } finally {
+    releaseLock();
+  }
+}
+
 export function completeEvaluation(
   db: Database.Database,
   slug: string,
@@ -1457,13 +1556,7 @@ function completeEvaluationLocked(
     const completeSnapshot = captureSynthesisSnapshot(artifactPaths, evaluationsDir, slug);
     const currentHashes = completeSnapshot.hashes;
     const pinnedHashes = cycle.reviewed_artifact_hashes!;
-    const drifted: string[] = [];
-    for (const [k, pinnedHash] of Object.entries(pinnedHashes)) {
-      if (currentHashes[k] !== pinnedHash) drifted.push(k);
-    }
-    for (const k of Object.keys(currentHashes)) {
-      if (!(k in pinnedHashes)) drifted.push(k);
-    }
+    const drifted = diffArtifactHashes(pinnedHashes, currentHashes);
     if (drifted.length > 0) {
       throw new Error(
         `Reviewed artifacts changed after synthesis: ${drifted.join(', ')}. ` +

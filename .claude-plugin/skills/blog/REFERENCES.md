@@ -76,6 +76,16 @@ v0.3 dogfood-hardening command. Rewrites the frontmatter block of `.blog-agent/d
 
 Generates deterministic local distribution images under `.blog-agent/drafts/<slug>/assets/`: `devto-cover.png` (`1000x420`), `medium-featured.png` (`1200x675`), and `substack-preview.png` (`1200x630`). The command updates draft frontmatter with `devto_main_image: ./assets/devto-cover.png`, `medium_featured_image: ./assets/medium-featured.png`, and `substack_preview_image: ./assets/substack-preview.png`, then writes `.blog-agent/drafts/<slug>/.platform-images.json`. The receipt records an input hash for the current title/project/site/template dimensions and SHA256 hashes for generator-owned files, so `draft complete` and `publish site-pr` reject stale images after a title/frontmatter edit. It uses local assets only: explicit platform-image fields when valid, legacy `assets/devto-cover.webp`, then a deterministic fallback SVG rendered through `sharp`.
 
+## Publish artifact guard (`blog publish start <slug>`)
+
+The first publish step re-checks the latest passed evaluation manifest,
+synthesis receipt, and reviewed artifact hashes. If the draft, benchmark
+results, environment snapshot, or structural autocheck output changed after
+`blog evaluate complete`, publish fails before site mutation. The recovery
+command is `blog publish reopen-draft <slug> --reason "evaluated artifact drift"`,
+followed by draft completion, reviewer recording, synthesis, and evaluation
+completion.
+
 ## Plan file schema (v2)
 
 ```json
