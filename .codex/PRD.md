@@ -364,7 +364,7 @@ Interactive or automated MDX generation with strict PostFrontmatter schema compl
 **PostFrontmatter contract (must match m0lz.00 exactly):**
 ```typescript
 interface PostFrontmatter {
-  title: string           // "{catalogId} -- Description" for catalog projects
+  title: string           // "{catalogId} — Description" for catalog projects
   description: string     // One-line for SEO and post cards
   date: string            // "YYYY-MM-DD"
   tags: string[]          // Agent-driven taxonomy

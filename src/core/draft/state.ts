@@ -62,7 +62,7 @@ function deriveTitle(post: PostRow, topic: string | undefined): string {
     const suffix = post.slug.startsWith(`${projectPrefix}-`)
       ? post.slug.slice(projectPrefix.length + 1)
       : post.slug;
-    return `${post.project_id} -- ${titleCaseSlug(suffix)}`;
+    return `${post.project_id} — ${titleCaseSlug(suffix)}`;
   }
 
   const trimmedTopic = topic?.trim();

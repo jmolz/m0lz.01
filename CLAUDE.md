@@ -334,7 +334,7 @@ m0lz.dev owns all content and SEO authority. The agent commits MDX to `m0lz.00/c
 
 ```typescript
 interface PostFrontmatter {
-  title: string           // "{catalogId} -- Description" for catalog projects
+  title: string           // "{catalogId} — Description" for catalog projects
   description: string     // One-line for SEO
   date: string            // "YYYY-MM-DD"
   tags: string[]          // Agent-driven taxonomy

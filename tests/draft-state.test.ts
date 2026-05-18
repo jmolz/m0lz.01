@@ -320,7 +320,7 @@ describe('initDraft', () => {
       const content = readFileSync(result.draftPath, 'utf-8');
       const frontmatter = parseFrontmatter(content);
 
-      expect(frontmatter.title).toBe('test.01 -- Launch Draft');
+      expect(frontmatter.title).toBe('test.01 — Launch Draft');
       expect(frontmatter.description).toBe('Test thesis statement');
       expect(frontmatter.tags).toContain('project-launch');
       expect(frontmatter.tags).toContain('test-01');
