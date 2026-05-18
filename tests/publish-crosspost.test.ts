@@ -100,6 +100,26 @@ function mdxWithImageChart(): string {
   );
 }
 
+function mdxWithMarkdownTable(): string {
+  return SAMPLE_MDX.replace(
+    'Body paragraph here.',
+    [
+      'Body paragraph here.',
+      '',
+      '| Runtime | Median |',
+      '| --- | ---: |',
+      '| Node | 12ms |',
+      '| Bun | 9ms |',
+      '',
+      '```md',
+      '| Keep | Raw |',
+      '| --- | --- |',
+      '| A | B |',
+      '```',
+    ].join('\n'),
+  );
+}
+
 interface Fixture {
   tempDir: string;
   draftsDir: string;
@@ -627,6 +647,18 @@ describe('generateMediumPaste', () => {
     );
     expect(content).not.toContain('<BenchmarkChart');
   });
+
+  it('replaces Markdown pipe tables with portable table image links outside code fences', () => {
+    const f = setup('table-medium', mdxWithMarkdownTable());
+    generateMediumPaste('table-medium', makeConfig(), {
+      draftsDir: f.draftsDir,
+      socialDir: f.socialDir,
+    });
+    const content = readFileSync(join(f.socialDir, 'table-medium', 'medium-paste.md'), 'utf-8');
+    expect(content).toMatch(/!\[Table: Heading\]\(https:\/\/m0lz\.dev\/writing\/table-medium\/assets\/portable-table-[0-9a-f]{12}\.png\)/);
+    expect(content).not.toContain('| Runtime | Median |');
+    expect(content).toContain('| Keep | Raw |');
+  });
 });
 
 describe('generateSubstackPaste', () => {
@@ -710,5 +742,17 @@ describe('generateSubstackPaste', () => {
       '![Parallel cohort speedup chart](https://m0lz.dev/writing/chart-substack/assets/parallel-cohort-speedup.png)',
     );
     expect(content).not.toContain('<BenchmarkChart');
+  });
+
+  it('replaces Markdown pipe tables with portable table image links outside code fences', () => {
+    const f = setup('table-substack', mdxWithMarkdownTable());
+    generateSubstackPaste('table-substack', makeConfig(), {
+      draftsDir: f.draftsDir,
+      socialDir: f.socialDir,
+    });
+    const content = readFileSync(join(f.socialDir, 'table-substack', 'substack-paste.md'), 'utf-8');
+    expect(content).toMatch(/!\[Table: Heading\]\(https:\/\/m0lz\.dev\/writing\/table-substack\/assets\/portable-table-[0-9a-f]{12}\.png\)/);
+    expect(content).not.toContain('| Runtime | Median |');
+    expect(content).toContain('| Keep | Raw |');
   });
 });

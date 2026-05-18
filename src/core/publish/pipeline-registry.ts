@@ -3,12 +3,10 @@ import { generateResearchPage } from './research-page.js';
 import { createSitePR, checkPreviewGate } from './site.js';
 import { createSiteUpdate } from './site-update.js';
 import { crosspostToDevTo, updateDevToArticle } from './devto.js';
-import { generateMediumPaste } from './medium.js';
-import { generateSubstackPaste } from './substack.js';
 import { pushCompanionRepo } from './repo.js';
 import { updateFrontmatter } from './frontmatter.js';
 import { updateProjectReadme } from './readme.js';
-import { loadDistributionKit } from './distribution-kit.js';
+import { loadDistributionKit, shouldGeneratePublicationBundle } from './distribution-kit.js';
 import { persistDistributionKitToSite } from './site-artifacts.js';
 import { getOpenUpdateCycle } from '../update/cycles.js';
 import { assertLatestEvaluationArtifactsCurrent } from '../evaluate/state.js';
@@ -276,11 +274,27 @@ export const PIPELINE_STEPS: StepDefinition[] = [
     number: 6,
     name: 'paste-medium',
     execute: (ctx: PipelineContext): StepResult => {
-      const result = generateMediumPaste(ctx.slug, ctx.config, {
-        draftsDir: ctx.paths.draftsDir,
-        socialDir: ctx.paths.socialDir,
-      });
-      return { outcome: 'completed', message: `Medium paste generated: ${result.path}` };
+      if (ctx.config.publish.medium === false) {
+        return { outcome: 'skipped', message: 'Medium paste disabled by config' };
+      }
+      try {
+        const kit = loadDistributionKit(ctx.slug, {
+          socialDir: ctx.paths.socialDir,
+          draftsDir: ctx.paths.draftsDir,
+        });
+        if (!kit.mediumPath) {
+          return {
+            outcome: 'failed',
+            message: 'Medium paste missing from manifest; reopen the site step and regenerate the publication bundle.',
+          };
+        }
+        return { outcome: 'completed', message: `Medium paste verified: ${kit.mediumPath}` };
+      } catch (e) {
+        return {
+          outcome: 'failed',
+          message: `Medium paste verification failed: ${(e as Error).message}`,
+        };
+      }
     },
   },
 
@@ -289,11 +303,27 @@ export const PIPELINE_STEPS: StepDefinition[] = [
     number: 7,
     name: 'paste-substack',
     execute: (ctx: PipelineContext): StepResult => {
-      const result = generateSubstackPaste(ctx.slug, ctx.config, {
-        draftsDir: ctx.paths.draftsDir,
-        socialDir: ctx.paths.socialDir,
-      });
-      return { outcome: 'completed', message: `Substack paste generated: ${result.path}` };
+      if (ctx.config.publish.substack === false) {
+        return { outcome: 'skipped', message: 'Substack paste disabled by config' };
+      }
+      try {
+        const kit = loadDistributionKit(ctx.slug, {
+          socialDir: ctx.paths.socialDir,
+          draftsDir: ctx.paths.draftsDir,
+        });
+        if (!kit.substackPath) {
+          return {
+            outcome: 'failed',
+            message: 'Substack paste missing from manifest; reopen the site step and regenerate the publication bundle.',
+          };
+        }
+        return { outcome: 'completed', message: `Substack paste verified: ${kit.substackPath}` };
+      } catch (e) {
+        return {
+          outcome: 'failed',
+          message: `Substack paste verification failed: ${(e as Error).message}`,
+        };
+      }
     },
   },
 
@@ -355,17 +385,17 @@ export const PIPELINE_STEPS: StepDefinition[] = [
     number: 11,
     name: 'social-text',
     execute: (ctx: PipelineContext): StepResult => {
-      if (ctx.config.social.distribution_kit.enabled === false) {
+      if (!shouldGeneratePublicationBundle(ctx.config)) {
         return {
           outcome: 'skipped',
-          message: 'Distribution kit disabled in config (social.distribution_kit.enabled=false)',
+          message: 'Publication bundle disabled in config',
         };
       }
       const kit = loadDistributionKit(ctx.slug, {
         socialDir: ctx.paths.socialDir,
         draftsDir: ctx.paths.draftsDir,
       });
-      if (ctx.config.social.distribution_kit.persist_to_site === false) {
+      if (ctx.config.social.distribution_kit?.persist_to_site === false) {
         return {
           outcome: 'skipped',
           message: `Distribution kit left local only: ${kit.directory}`,

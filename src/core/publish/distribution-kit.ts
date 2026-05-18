@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 
 import Database from 'better-sqlite3';
@@ -9,7 +9,10 @@ import { BlogConfig, LinkedInImageConfig, LinkedInImageMode } from '../config/ty
 import { ContentType, PostRow, UpdateCycleRow } from '../db/types.js';
 import { parseFrontmatter, PostFrontmatter } from '../draft/frontmatter.js';
 import { getOpenUpdateCycle } from '../update/cycles.js';
+import { renderMediumPaste, writeMediumPaste } from './medium.js';
 import { ImageProvider, OpenAIImageProvider } from './openai-image.js';
+import { renderSubstackPaste, writeSubstackPaste } from './substack.js';
+import { PortableTableAsset, PortableTableSource, writePortableTableAssets } from './table-assets.js';
 
 export const LINKEDIN_IMAGE_FILENAME = 'linkedin-feed.png';
 export const LINKEDIN_IMAGE_FORMAT = 'png';
@@ -51,6 +54,13 @@ interface ImageManifestEntry extends ArtifactManifestEntry {
   bytes: number;
 }
 
+export interface TableImageManifestEntry extends ImageManifestEntry {
+  alt: string;
+  source_hash: string;
+  row_count: number;
+  column_count: number;
+}
+
 export interface DistributionKitManifest {
   slug: string;
   canonical_url: string;
@@ -59,11 +69,14 @@ export interface DistributionKitManifest {
   generated_at: string;
   platforms: string[];
   text: {
-    linkedin: ArtifactManifestEntry;
-    hackernews: ArtifactManifestEntry;
+    linkedin: ArtifactManifestEntry | null;
+    hackernews: ArtifactManifestEntry | null;
+    medium: ArtifactManifestEntry | null;
+    substack: ArtifactManifestEntry | null;
   };
   prompt: ArtifactManifestEntry | null;
   image: ImageManifestEntry | null;
+  tables: TableImageManifestEntry[];
   image_provider: 'openai';
   image_model: string;
   image_size: string;
@@ -83,10 +96,13 @@ export interface GenerateDistributionKitOptions {
 export interface GenerateDistributionKitResult {
   slug: string;
   directory: string;
-  linkedinPath: string;
-  hackerNewsPath: string;
+  linkedinPath: string | null;
+  hackerNewsPath: string | null;
+  mediumPath: string | null;
+  substackPath: string | null;
   promptPath: string | null;
   imagePath: string | null;
+  tableImagePaths: string[];
   manifestPath: string;
   manifest: DistributionKitManifest;
   reused: boolean;
@@ -110,6 +126,21 @@ const BANNED_PROMPT_TERMS = [
 ];
 
 const EMOJI_PATTERN = /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u;
+const TEXT_ARTIFACT_PATH_BY_ROLE = {
+  linkedin: 'linkedin.md',
+  hackernews: 'hackernews.md',
+  medium: 'medium-paste.md',
+  substack: 'substack-paste.md',
+  prompt: 'linkedin-image-prompt.md',
+} as const;
+const TEXT_ARTIFACT_PATHS: ReadonlySet<string> = new Set(Object.values(TEXT_ARTIFACT_PATH_BY_ROLE));
+
+const DEFAULT_LINKEDIN_IMAGE_CONFIG: LinkedInImageConfig = {
+  mode: 'prompt-only',
+  model: 'gpt-image-2-2026-04-21',
+  size: '1200x1200',
+  quality: 'high',
+};
 
 function sha256(value: string | Buffer): string {
   return createHash('sha256').update(value).digest('hex');
@@ -128,6 +159,28 @@ function stableJson(value: unknown): string {
 
 function cleanBaseUrl(baseUrl: string): string {
   return baseUrl.replace(/\/+$/, '');
+}
+
+export function distributionDirectory(config: BlogConfig): string {
+  return config.social?.distribution_kit?.directory ?? 'distribution';
+}
+
+function socialArtifactsEnabled(config: BlogConfig): boolean {
+  return config.social ? config.social.distribution_kit?.enabled !== false : false;
+}
+
+function mediumEnabled(config: BlogConfig): boolean {
+  return config.publish ? config.publish.medium !== false : false;
+}
+
+function substackEnabled(config: BlogConfig): boolean {
+  return config.publish ? config.publish.substack !== false : false;
+}
+
+export function shouldGeneratePublicationBundle(config: BlogConfig): boolean {
+  return socialArtifactsEnabled(config) ||
+    mediumEnabled(config) ||
+    substackEnabled(config);
 }
 
 function resolveSiteRepoPath(configPath: string, repoPath: string): string {
@@ -327,7 +380,7 @@ export function renderLinkedInText(
     canonical_url: metadata.canonicalUrl,
     image_reference: imageReferenceFor(
       imageMode,
-      config.social.distribution_kit?.directory ?? 'distribution',
+      distributionDirectory(config),
     ),
     alt_text:
       `${metadata.title} visual for ${metadata.project ?? 'a local technical publishing workflow'} in a real workspace.`,
@@ -410,8 +463,9 @@ function imageConfigWithOverride(
   imageMode?: LinkedInImageMode,
 ): LinkedInImageConfig {
   return {
-    ...config.social.linkedin_image,
-    mode: imageMode ?? config.social.linkedin_image.mode,
+    ...DEFAULT_LINKEDIN_IMAGE_CONFIG,
+    ...(config.social?.linkedin_image ?? {}),
+    mode: imageMode ?? config.social?.linkedin_image?.mode ?? DEFAULT_LINKEDIN_IMAGE_CONFIG.mode,
   };
 }
 
@@ -428,24 +482,47 @@ function readManifest(path: string): DistributionKitManifest | null {
   }
 }
 
-function artifactMatches(baseDir: string, entry: ArtifactManifestEntry | null): boolean {
+function artifactMatches(baseDir: string, entry: ArtifactManifestEntry | null | undefined): boolean {
   if (!entry) return true;
   const path = join(baseDir, entry.path);
-  return existsSync(path) && sha256(readFileSync(path)) === entry.sha256;
+  if (!existsSync(path)) return false;
+  const stat = lstatSync(path);
+  return !stat.isSymbolicLink() && stat.isFile() && sha256(readFileSync(path)) === entry.sha256;
 }
 
-function assertManifestPath(
+function assertSafeTextManifestPath(
   slug: string,
   entry: ArtifactManifestEntry,
-  expectedPath: string,
   label: string,
+  expectedPath: string,
 ): void {
+  if (!TEXT_ARTIFACT_PATHS.has(entry.path)) {
+    throw new Error(
+      `Distribution kit ${label} artifact path mismatch for '${slug}': ` +
+      `manifest points to unsafe or non-allowlisted path '${entry.path}'`,
+    );
+  }
   if (entry.path !== expectedPath) {
     throw new Error(
       `Distribution kit ${label} artifact path mismatch for '${slug}': ` +
       `manifest points to '${entry.path}' but expected '${expectedPath}'`,
     );
   }
+}
+
+function assertUniqueTextManifestPath(
+  slug: string,
+  seen: Set<string>,
+  entry: ArtifactManifestEntry,
+  label: string,
+): void {
+  if (seen.has(entry.path)) {
+    throw new Error(
+      `Distribution kit ${label} artifact path mismatch for '${slug}': ` +
+      `manifest reuses text artifact path '${entry.path}'`,
+    );
+  }
+  seen.add(entry.path);
 }
 
 function verifiedArtifactPath(
@@ -458,6 +535,10 @@ function verifiedArtifactPath(
   if (!existsSync(path)) {
     throw new Error(`Distribution kit ${label} artifact is missing for '${slug}'`);
   }
+  const stat = lstatSync(path);
+  if (stat.isSymbolicLink() || !stat.isFile()) {
+    throw new Error(`Distribution kit ${label} artifact path is not a regular file for '${slug}'`);
+  }
   const actual = sha256(readFileSync(path));
   if (actual !== entry.sha256) {
     throw new Error(
@@ -468,22 +549,101 @@ function verifiedArtifactPath(
   return path;
 }
 
+function assertTableManifestPath(slug: string, entry: ArtifactManifestEntry, label: string): void {
+  if (!/^assets\/portable-table-[0-9a-f]{12}\.png$/.test(entry.path)) {
+    throw new Error(
+      `Distribution kit ${label} artifact path mismatch for '${slug}': ` +
+      `manifest points to unsafe or non-allowlisted path '${entry.path}'`,
+    );
+  }
+}
+
 function manifestStillValid(
+  slug: string,
   manifest: DistributionKitManifest,
   inputHash: string,
   kitDir: string,
-  draftAssetsDir: string,
 ): boolean {
   if (manifest.input_hash !== inputHash) return false;
+  if (manifest.text.medium === undefined || manifest.text.substack === undefined) return false;
+  const textEntries: Array<[ArtifactManifestEntry | null, string, string]> = [
+    [manifest.text.linkedin, 'LinkedIn text', TEXT_ARTIFACT_PATH_BY_ROLE.linkedin],
+    [manifest.text.hackernews, 'Hacker News text', TEXT_ARTIFACT_PATH_BY_ROLE.hackernews],
+    [manifest.text.medium, 'Medium paste', TEXT_ARTIFACT_PATH_BY_ROLE.medium],
+    [manifest.text.substack, 'Substack paste', TEXT_ARTIFACT_PATH_BY_ROLE.substack],
+    [manifest.prompt, 'prompt', TEXT_ARTIFACT_PATH_BY_ROLE.prompt],
+  ];
+  const seenTextPaths = new Set<string>();
+  for (const [entry, label, expectedPath] of textEntries) {
+    if (!entry) continue;
+    try {
+      assertSafeTextManifestPath(slug, entry, label, expectedPath);
+      assertUniqueTextManifestPath(slug, seenTextPaths, entry, label);
+    } catch {
+      return false;
+    }
+  }
   if (!artifactMatches(kitDir, manifest.text.linkedin)) return false;
   if (!artifactMatches(kitDir, manifest.text.hackernews)) return false;
+  if (!artifactMatches(kitDir, manifest.text.medium)) return false;
+  if (!artifactMatches(kitDir, manifest.text.substack)) return false;
   if (!artifactMatches(kitDir, manifest.prompt)) return false;
+  if (!Array.isArray(manifest.tables)) return false;
   if (manifest.image) {
-    const path = join(draftAssetsDir, LINKEDIN_IMAGE_FILENAME);
-    if (!existsSync(path)) return false;
-    if (sha256(readFileSync(path)) !== manifest.image.sha256) return false;
+    if (manifest.image.path !== `assets/${LINKEDIN_IMAGE_FILENAME}`) return false;
+    if (!artifactMatches(kitDir, manifest.image)) return false;
+  }
+  for (const [index, table] of manifest.tables.entries()) {
+    try {
+      assertTableManifestPath(slug, table, `table ${index + 1}`);
+    } catch {
+      return false;
+    }
+    if (!artifactMatches(kitDir, table)) return false;
   }
   return true;
+}
+
+function resolveBundleMdxSource(
+  slug: string,
+  config: BlogConfig,
+  paths: DistributionKitPaths,
+  db: Database.Database,
+  sourceMode: DistributionKitSourceMode,
+): { path: string; mdx: string } {
+  const draftPath = join(paths.draftsDir, slug, 'index.mdx');
+  if (sourceMode === 'publish' || sourceMode === 'update') {
+    if (!existsSync(draftPath)) {
+      throw new Error(`Draft MDX not found for '${slug}': ${draftPath}`);
+    }
+    return { path: draftPath, mdx: readFileSync(draftPath, 'utf-8') };
+  }
+
+  const siteRepoPath = resolveSiteRepoPath(paths.configPath, config.site.repo_path);
+  const hubPath = join(siteRepoPath, config.site.content_dir, slug, 'index.mdx');
+  if (existsSync(hubPath)) {
+    return { path: hubPath, mdx: readFileSync(hubPath, 'utf-8') };
+  }
+
+  const post = db.prepare('SELECT phase FROM posts WHERE slug = ?').get(slug) as { phase: string } | undefined;
+  if (post?.phase !== 'published' && existsSync(draftPath)) {
+    return { path: draftPath, mdx: readFileSync(draftPath, 'utf-8') };
+  }
+  throw new Error(
+    `Hub-site MDX not found for published-post backfill '${slug}': ${hubPath}. ` +
+    `Run the site publish step first or restore content/posts/${slug}/index.mdx.`,
+  );
+}
+
+function mergeTables(...sets: PortableTableSource[][]): { tables: PortableTableSource[]; hashes: string[] } {
+  const byPath = new Map<string, PortableTableSource>();
+  for (const set of sets) {
+    for (const table of set) {
+      byPath.set(table.path, table);
+    }
+  }
+  const tables = [...byPath.values()].sort((a, b) => a.path.localeCompare(b.path));
+  return { tables, hashes: tables.map((table) => table.source_hash) };
 }
 
 function assertImagePreflight(imageConfig: LinkedInImageConfig, provider: ImageProvider | undefined): void {
@@ -527,48 +687,79 @@ export async function generateDistributionKit(
   db: Database.Database,
   options: GenerateDistributionKitOptions,
 ): Promise<GenerateDistributionKitResult> {
-  if (config.social.distribution_kit.enabled === false) {
-    throw new Error('Distribution kit generation is disabled in config (social.distribution_kit.enabled=false)');
+  if (!shouldGeneratePublicationBundle(config)) {
+    throw new Error(
+      'Publication bundle generation has no enabled artifacts: social distribution, Medium, and Substack are disabled',
+    );
   }
 
+  const includeSocial = socialArtifactsEnabled(config);
+  const includeMedium = mediumEnabled(config);
+  const includeSubstack = substackEnabled(config);
   const imageConfig = imageConfigWithOverride(config, options.imageMode);
-  assertImagePreflight(imageConfig, options.provider);
+  if (includeSocial) {
+    assertImagePreflight(imageConfig, options.provider);
+  }
 
   const kitDir = join(paths.socialDir, slug);
-  const draftAssetsDir = join(paths.draftsDir, slug, 'assets');
+  const tableAssetsDir = join(kitDir, 'assets');
   const linkedinPath = join(kitDir, 'linkedin.md');
   const hackerNewsPath = join(kitDir, 'hackernews.md');
-  const promptPath = imageConfig.mode === 'off' ? null : join(kitDir, 'linkedin-image-prompt.md');
+  const mediumPath = includeMedium ? join(kitDir, 'medium-paste.md') : null;
+  const substackPath = includeSubstack ? join(kitDir, 'substack-paste.md') : null;
+  const promptPath = includeSocial && imageConfig.mode !== 'off' ? join(kitDir, 'linkedin-image-prompt.md') : null;
   const imagePath =
-    imageConfig.mode === 'generate' || imageConfig.mode === 'required'
-      ? join(draftAssetsDir, LINKEDIN_IMAGE_FILENAME)
+    includeSocial && (imageConfig.mode === 'generate' || imageConfig.mode === 'required')
+      ? join(tableAssetsDir, LINKEDIN_IMAGE_FILENAME)
       : null;
   const manifestPath = join(kitDir, 'manifest.json');
 
   const metadata = resolveSocialMetadata(slug, config, paths, db, options.sourceMode);
-  const linkedinTemplate = readFileSync(join(paths.templatesDir, 'social', 'linkedin.md'), 'utf-8');
-  const hackerNewsTemplate = readFileSync(join(paths.templatesDir, 'social', 'hackernews.md'), 'utf-8');
+  const source = resolveBundleMdxSource(slug, config, paths, db, options.sourceMode);
+  const medium = includeMedium ? renderMediumPaste(slug, config, source.mdx) : null;
+  const substack = includeSubstack ? renderSubstackPaste(slug, config, source.mdx) : null;
+  const mergedTables = mergeTables(medium?.tables ?? [], substack?.tables ?? []);
+
+  const linkedinTemplate = includeSocial
+    ? readFileSync(join(paths.templatesDir, 'social', 'linkedin.md'), 'utf-8')
+    : '';
+  const hackerNewsTemplate = includeSocial
+    ? readFileSync(join(paths.templatesDir, 'social', 'hackernews.md'), 'utf-8')
+    : '';
   const promptTemplatePath = join(paths.templatesDir, 'social', 'linkedin-image-prompt.md');
-  const promptTemplate = imageConfig.mode === 'off' ? '' : readFileSync(promptTemplatePath, 'utf-8');
-  const prompt = imageConfig.mode === 'off' ? null : renderPrompt(promptTemplate, metadata, config);
+  const promptTemplate = promptPath ? readFileSync(promptTemplatePath, 'utf-8') : '';
+  const prompt = promptPath ? renderPrompt(promptTemplate, metadata, config) : null;
   const inputHash = computeInputHash({
     metadata,
+    sourcePath: source.path,
+    sourceMode: options.sourceMode,
+    sourceHash: sha256(source.mdx),
     linkedinTemplateHash: sha256(linkedinTemplate),
     hackerNewsTemplateHash: sha256(hackerNewsTemplate),
     promptTemplateHash: sha256(promptTemplate),
+    mediumPasteHash: medium ? sha256(medium.content) : null,
+    substackPasteHash: substack ? sha256(substack.content) : null,
+    tableSourceHashes: mergedTables.hashes,
+    publish: {
+      medium: includeMedium,
+      substack: includeSubstack,
+    },
+    socialDistributionEnabled: includeSocial,
     imageConfig,
-    sourceMode: options.sourceMode,
   });
 
   const existing = readManifest(manifestPath);
-  if (!options.force && existing && manifestStillValid(existing, inputHash, kitDir, draftAssetsDir)) {
+  if (!options.force && existing && manifestStillValid(slug, existing, inputHash, kitDir)) {
     return {
       slug,
       directory: kitDir,
-      linkedinPath,
-      hackerNewsPath,
+      linkedinPath: existing.text.linkedin ? linkedinPath : null,
+      hackerNewsPath: existing.text.hackernews ? hackerNewsPath : null,
+      mediumPath: existing.text.medium ? mediumPath : null,
+      substackPath: existing.text.substack ? substackPath : null,
       promptPath,
       imagePath,
+      tableImagePaths: (existing.tables ?? []).map((table) => join(kitDir, table.path)),
       manifestPath,
       manifest: existing,
       reused: true,
@@ -576,15 +767,28 @@ export async function generateDistributionKit(
   }
 
   mkdirSync(kitDir, { recursive: true });
-  mkdirSync(draftAssetsDir, { recursive: true });
+  if (imagePath) {
+    mkdirSync(tableAssetsDir, { recursive: true });
+  }
 
-  const linkedin = renderLinkedInText(linkedinTemplate, metadata, config, imageConfig.mode);
-  const hackerNews = renderHackerNewsText(hackerNewsTemplate, metadata, config);
-  writeFileSync(linkedinPath, linkedin, 'utf-8');
-  writeFileSync(hackerNewsPath, hackerNews, 'utf-8');
+  let linkedin: string | null = null;
+  let hackerNews: string | null = null;
+  if (includeSocial) {
+    linkedin = renderLinkedInText(linkedinTemplate, metadata, config, imageConfig.mode);
+    hackerNews = renderHackerNewsText(hackerNewsTemplate, metadata, config);
+    writeFileSync(linkedinPath, linkedin, 'utf-8');
+    writeFileSync(hackerNewsPath, hackerNews, 'utf-8');
+  }
+  if (medium && mediumPath) {
+    writeMediumPaste(slug, medium.content, { socialDir: paths.socialDir });
+  }
+  if (substack && substackPath) {
+    writeSubstackPaste(slug, substack.content, { socialDir: paths.socialDir });
+  }
   if (promptPath && prompt) {
     writeFileSync(promptPath, prompt, 'utf-8');
   }
+  const tableAssets = await writePortableTableAssets({ tables: mergedTables.tables }, tableAssetsDir);
 
   let image: ImageManifestEntry | null = null;
   if (imagePath && prompt) {
@@ -597,16 +801,32 @@ export async function generateDistributionKit(
     source_mode: options.sourceMode,
     input_hash: inputHash,
     generated_at: new Date().toISOString(),
-    platforms: config.social.platforms,
+    platforms: includeSocial ? config.social.platforms : [],
     text: {
-      linkedin: {
-        path: 'linkedin.md',
-        sha256: sha256(readFileSync(linkedinPath)),
-      },
-      hackernews: {
-        path: 'hackernews.md',
-        sha256: sha256(readFileSync(hackerNewsPath)),
-      },
+      linkedin: includeSocial && linkedin
+        ? {
+            path: 'linkedin.md',
+            sha256: sha256(readFileSync(linkedinPath)),
+          }
+        : null,
+      hackernews: includeSocial && hackerNews
+        ? {
+            path: 'hackernews.md',
+            sha256: sha256(readFileSync(hackerNewsPath)),
+          }
+        : null,
+      medium: mediumPath
+        ? {
+            path: 'medium-paste.md',
+            sha256: sha256(readFileSync(mediumPath)),
+          }
+        : null,
+      substack: substackPath
+        ? {
+            path: 'substack-paste.md',
+            sha256: sha256(readFileSync(substackPath)),
+          }
+        : null,
     },
     prompt: promptPath
       ? {
@@ -615,6 +835,17 @@ export async function generateDistributionKit(
         }
       : null,
     image,
+    tables: tableAssets.map((table): TableImageManifestEntry => ({
+      path: table.path,
+      sha256: table.sha256,
+      width: table.width,
+      height: table.height,
+      bytes: table.bytes,
+      alt: table.alt,
+      source_hash: table.source_hash,
+      row_count: table.row_count,
+      column_count: table.column_count,
+    })),
     image_provider: 'openai',
     image_model: imageConfig.model,
     image_size: imageConfig.size,
@@ -628,10 +859,13 @@ export async function generateDistributionKit(
   return {
     slug,
     directory: kitDir,
-    linkedinPath,
-    hackerNewsPath,
+    linkedinPath: includeSocial ? linkedinPath : null,
+    hackerNewsPath: includeSocial ? hackerNewsPath : null,
+    mediumPath,
+    substackPath,
     promptPath,
     imagePath,
+    tableImagePaths: tableAssets.map((table) => join(kitDir, table.path)),
     manifestPath,
     manifest,
     reused: false,
@@ -651,29 +885,86 @@ export function loadDistributionKit(
       `'blog publish distribution-kit ${slug}'.`,
     );
   }
-  assertManifestPath(slug, manifest.text.linkedin, 'linkedin.md', 'LinkedIn text');
-  assertManifestPath(slug, manifest.text.hackernews, 'hackernews.md', 'Hacker News text');
-  const linkedinPath = verifiedArtifactPath(slug, kitDir, manifest.text.linkedin, 'LinkedIn text');
-  const hackerNewsPath = verifiedArtifactPath(slug, kitDir, manifest.text.hackernews, 'Hacker News text');
+  if (manifest.text.medium === undefined || manifest.text.substack === undefined) {
+    throw new Error(
+      `Distribution kit manifest for '${slug}' predates complete publication bundles. ` +
+      `Regenerate it with 'blog publish distribution-kit ${slug}'.`,
+    );
+  }
+  if (!Array.isArray(manifest.tables)) {
+    throw new Error(
+      `Distribution kit manifest for '${slug}' is missing table asset provenance. ` +
+      `Regenerate it with 'blog publish distribution-kit ${slug}'.`,
+    );
+  }
+  const verifyText = (
+    entry: ArtifactManifestEntry | null,
+    label: string,
+    expectedPath: string,
+    seenPaths: Set<string>,
+  ): string | null => {
+    if (!entry) return null;
+    assertSafeTextManifestPath(slug, entry, label, expectedPath);
+    assertUniqueTextManifestPath(slug, seenPaths, entry, label);
+    return verifiedArtifactPath(slug, kitDir, entry, label);
+  };
+  const seenTextPaths = new Set<string>();
+  const linkedinPath = verifyText(
+    manifest.text.linkedin,
+    'LinkedIn text',
+    TEXT_ARTIFACT_PATH_BY_ROLE.linkedin,
+    seenTextPaths,
+  );
+  const hackerNewsPath = verifyText(
+    manifest.text.hackernews,
+    'Hacker News text',
+    TEXT_ARTIFACT_PATH_BY_ROLE.hackernews,
+    seenTextPaths,
+  );
+  const mediumPath = verifyText(
+    manifest.text.medium,
+    'Medium paste',
+    TEXT_ARTIFACT_PATH_BY_ROLE.medium,
+    seenTextPaths,
+  );
+  const substackPath = verifyText(
+    manifest.text.substack,
+    'Substack paste',
+    TEXT_ARTIFACT_PATH_BY_ROLE.substack,
+    seenTextPaths,
+  );
   if (manifest.prompt) {
-    assertManifestPath(slug, manifest.prompt, 'linkedin-image-prompt.md', 'prompt');
+    assertSafeTextManifestPath(slug, manifest.prompt, 'prompt', TEXT_ARTIFACT_PATH_BY_ROLE.prompt);
+    assertUniqueTextManifestPath(slug, seenTextPaths, manifest.prompt, 'prompt');
   }
   const promptPath = manifest.prompt
     ? verifiedArtifactPath(slug, kitDir, manifest.prompt, 'prompt')
     : null;
   if (manifest.image) {
-    assertManifestPath(slug, manifest.image, `assets/${LINKEDIN_IMAGE_FILENAME}`, 'image');
+    if (manifest.image.path !== `assets/${LINKEDIN_IMAGE_FILENAME}`) {
+      throw new Error(
+        `Distribution kit image artifact path mismatch for '${slug}': ` +
+        `manifest points to '${manifest.image.path}' but expected 'assets/${LINKEDIN_IMAGE_FILENAME}'`,
+      );
+    }
   }
   const imagePath = manifest.image
-    ? verifiedArtifactPath(slug, join(paths.draftsDir, slug), manifest.image, 'image')
+    ? verifiedArtifactPath(slug, kitDir, manifest.image, 'image')
     : null;
+  const tableImagePaths = manifest.tables.map((table, index) => {
+    assertTableManifestPath(slug, table, `table ${index + 1}`);
+    return verifiedArtifactPath(slug, kitDir, table, `table ${index + 1}`);
+  });
   return {
     slug,
     directory: kitDir,
     linkedinPath,
     hackerNewsPath,
+    mediumPath,
+    substackPath,
     promptPath,
     imagePath,
+    tableImagePaths,
     manifestPath,
     manifest,
     reused: true,

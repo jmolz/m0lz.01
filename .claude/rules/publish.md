@@ -45,13 +45,29 @@ Medium and Substack paste files are the copy surface. Do not rely on browser pre
 
 `mdxToMarkdown` must preserve image-backed visual components as Markdown image links with public hub asset URLs before JSX stripping. A visual component used in cross-posted content must either render as ordinary Markdown, or expose a string image asset reference such as `src="./assets/chart.png"` with usable alt text. Data-only interactive chart components require an exported image asset before publish, otherwise the visual disappears from `medium-paste.md` and `substack-paste.md`.
 
+Markdown pipe tables outside fenced code must be replaced in Medium/Substack paste output with manifest-tracked `assets/portable-table-<hash>.png` image links. Do not rewrite canonical MDX to satisfy paste portability. Fenced code, blockquotes, lists, and malformed tables stay textual.
+
 Substack subtitles are platform-specific. Generate a short paste subtitle from `description` instead of copying long frontmatter descriptions verbatim.
 
 Forensic anchors:
 - `src/core/publish/convert.ts` preserves image-backed JSX components before `removeJsxComponents`.
+- `src/core/publish/table-assets.ts` derives and renders portable Markdown table images for paste output.
 - `src/core/publish/substack.ts` truncates long subtitles for Substack paste output.
 - `tests/publish-convert.test.ts` covers portable image-backed chart conversion.
-- `tests/publish-crosspost.test.ts` covers Medium/Substack chart copyability and Substack subtitle truncation.
+- `tests/publish-table-assets.test.ts` covers table detection, fenced-table preservation, deterministic PNG writes, and stale generated cleanup.
+- `tests/publish-crosspost.test.ts` covers Medium/Substack chart copyability, table image links, and Substack subtitle truncation.
+
+## Complete publication bundle is reviewed before preview
+
+`site-pr` and `site-update` must copy the whole publication bundle into `content/posts/{slug}/` before preview: evaluated MDX, draft assets, social text, Medium/Substack paste files, manifest provenance, optional LinkedIn image, and generated portable table assets. Post-preview paste steps are read/verify-only and must load manifest-tracked artifacts instead of regenerating from preview content.
+
+Bundle persistence is fail-closed. `persistDistributionKitToSite` must reject path escapes, hash mismatches, conflicting reviewed site artifacts, unrelated dirty state, and unexpected ahead commits before staging.
+
+Forensic anchors:
+- `src/core/publish/site.ts` generates and copies the bundle before site checkout/mutation completes.
+- `src/core/publish/site-artifacts.ts` copies manifest-derived text/table/image artifacts and refuses conflicting reviewed bytes.
+- `src/core/publish/pipeline-registry.ts` loads verified Medium/Substack manifest artifacts in paste steps.
+- `tests/publish-site.test.ts`, `tests/update-publish-pipeline.test.ts`, and `tests/publish-distribution-kit.test.ts` cover pre-preview bundle copy and strict persistence.
 
 ## Image generation must be deterministic and config-derived
 
@@ -75,8 +91,8 @@ Forensic anchors:
 
 ## Persist-only artifact loaders verify manifest bytes
 
-Persist-only publish steps must not trust manifest presence alone. If a step loads existing local artifacts for site persistence, it must validate fixed manifest paths and recalculate every recorded SHA256 before copy, commit, or push. Existence checks without hash verification can commit tampered bytes beside stale provenance.
+Persist-only publish steps must not trust manifest presence alone. If a step loads existing local artifacts for site persistence or paste handoff, it must validate fixed manifest paths and recalculate every recorded SHA256 before copy, commit, push, or output. Existence checks without hash verification can commit tampered bytes beside stale provenance.
 
 Forensic anchors:
-- `src/core/publish/distribution-kit.ts` validates `linkedin.md`, `hackernews.md`, `linkedin-image-prompt.md`, and `assets/linkedin-feed.png` against `manifest.json` before returning a reusable kit.
-- `tests/distribution-kit.test.ts` proves `loadDistributionKit` refuses tampered text and image artifacts whose bytes no longer match the manifest.
+- `src/core/publish/distribution-kit.ts` validates `linkedin.md`, `hackernews.md`, `medium-paste.md`, `substack-paste.md`, `linkedin-image-prompt.md`, `assets/linkedin-feed.png`, and `assets/portable-table-*.png` against `manifest.json` before returning a reusable kit.
+- `tests/distribution-kit.test.ts` proves `loadDistributionKit` refuses tampered text, image, and table artifacts whose bytes no longer match the manifest.

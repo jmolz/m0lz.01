@@ -563,6 +563,20 @@ describe('runPublishDistributionKit', () => {
   it('generates local backfill artifacts for a published post without committing when config disables site persistence', async () => {
     const f = setup();
     seedPublishedPost(f.dbPath, 'kit');
+    const sitePostDir = join(f.tempDir, 'site', 'content', 'posts', 'kit');
+    mkdirSync(sitePostDir, { recursive: true });
+    writeFileSync(join(sitePostDir, 'index.mdx'), `---
+title: "Hub Kit Title"
+description: "Hub kit description."
+date: "2026-05-14"
+tags:
+  - Publishing
+published: true
+canonical: "https://m0lz.dev/writing/kit"
+---
+
+Hub body
+`, 'utf-8');
     const draftDir = join(f.draftsDir, 'kit');
     mkdirSync(draftDir, { recursive: true });
     writeFileSync(join(draftDir, 'index.mdx'), `---
@@ -585,7 +599,7 @@ Body
 
     expect(process.exitCode).toBe(0);
     expect(logs.join('\n')).toContain('distribution kit');
-    expect(readFileSync(join(f.socialDir, 'kit/linkedin.md'), 'utf-8')).toContain('Draft Kit Title');
+    expect(readFileSync(join(f.socialDir, 'kit/linkedin.md'), 'utf-8')).toContain('Hub Kit Title');
     expect(readFileSync(join(f.socialDir, 'kit/manifest.json'), 'utf-8')).toContain('gpt-image-2-2026-04-21');
   });
 });

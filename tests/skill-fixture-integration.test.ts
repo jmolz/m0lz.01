@@ -19,8 +19,8 @@ const CLI_ENTRY = resolve(PACKAGE_ROOT, 'dist', 'cli', 'index.js');
 
 // These tests drive the real built CLI through spawnSync many times. Full
 // suite parallelism can push individual subprocess-heavy cases over Vitest's
-// 5s default even when the behavior is healthy.
-vi.setConfig({ testTimeout: 20_000 });
+// default timeout even when the behavior is healthy.
+vi.setConfig({ testTimeout: 30_000 });
 
 interface SpawnResult {
   status: number;

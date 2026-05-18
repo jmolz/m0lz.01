@@ -8,7 +8,8 @@ vi.mock('node:child_process', () => ({
   execFileSync: vi.fn(),
 }));
 
-vi.mock('../src/core/publish/platform-images.js', () => ({
+vi.mock('../src/core/publish/platform-images.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../src/core/publish/platform-images.js')>()),
   ensurePlatformImages: vi.fn(async () => ({
     slug: 'alpha',
     draftPath: '',
@@ -40,6 +41,8 @@ import { ImageGenerationRequest, ImageProvider } from '../src/core/publish/opena
 import { PipelineContext } from '../src/core/publish/pipeline-types.js';
 // eslint-disable-next-line import/first
 import { BlogConfig } from '../src/core/config/types.js';
+// eslint-disable-next-line import/first
+import { runPublishDistributionKit } from '../src/cli/publish.js';
 
 const mockExec = execFileSync as unknown as ReturnType<typeof vi.fn>;
 
@@ -191,6 +194,7 @@ function mockSiteArtifactGit(options: {
   cachedHasChanges?: boolean;
   aheadLog?: string;
   showFiles?: string;
+  trackedPaths?: string[];
 } = {}): { addCalls: string[]; commits: string[]; pushes: string[] } {
   const calls = { addCalls: [] as string[], commits: [] as string[], pushes: [] as string[] };
   mockExec.mockImplementation((cmd: string, args: string[]) => {
@@ -203,6 +207,17 @@ function mockSiteArtifactGit(options: {
       return options.stagedNames ?? '';
     }
     if (cmd === 'git' && args.includes('status')) return options.dirtyStatus ?? '';
+    if (cmd === 'git' && args.includes('ls-files')) {
+      const target = args[args.length - 1];
+      if (target.includes('*')) {
+        const pattern = new RegExp(`^${target.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace('\\*', '.*')}$`);
+        return (options.trackedPaths ?? [])
+          .filter((path) => pattern.test(path))
+          .join('\n');
+      }
+      if (options.trackedPaths?.includes(target)) return `${target}\n`;
+      throw makeExecError(1);
+    }
     if (cmd === 'git' && args.includes('add')) {
       calls.addCalls.push(args[args.length - 1]);
       return '';
@@ -228,6 +243,63 @@ function mockSiteArtifactGit(options: {
     throw new Error(`Unexpected exec: ${cmd} ${args.join(' ')}`);
   });
   return calls;
+}
+
+function expectedDistributionSitePaths(
+  slug: string,
+  opts: { image?: boolean; tables?: string[]; extraDistributionPaths?: string[] } = {},
+): string[] {
+  return [
+    `content/posts/${slug}/distribution/linkedin.md`,
+    `content/posts/${slug}/distribution/hackernews.md`,
+    `content/posts/${slug}/distribution/medium-paste.md`,
+    `content/posts/${slug}/distribution/substack-paste.md`,
+    `content/posts/${slug}/distribution/linkedin-image-prompt.md`,
+    ...(opts.extraDistributionPaths ?? []),
+    `content/posts/${slug}/distribution/manifest.json`,
+    ...(opts.image ? [`content/posts/${slug}/assets/linkedin-feed.png`] : []),
+    ...(opts.tables ?? []).map((table) => `content/posts/${slug}/${table}`),
+  ];
+}
+
+function expectedMediumSubstackOnlySitePaths(
+  slug: string,
+  opts: { extraDistributionPaths?: string[] } = {},
+): string[] {
+  return [
+    `content/posts/${slug}/distribution/medium-paste.md`,
+    `content/posts/${slug}/distribution/substack-paste.md`,
+    ...(opts.extraDistributionPaths ?? []),
+    `content/posts/${slug}/distribution/manifest.json`,
+  ];
+}
+
+function writeCliConfig(f: Fixture): void {
+  writeFileSync(f.configPath, `site:
+  repo_path: "${f.siteRepoPath}"
+  base_url: "https://m0lz.dev"
+  content_dir: "content/posts"
+  research_dir: "content/research"
+author:
+  name: "Tester"
+  github: "jmolz"
+publish:
+  medium: true
+  substack: true
+social:
+  platforms:
+    - linkedin
+    - hackernews
+  distribution_kit:
+    enabled: true
+    persist_to_site: true
+    directory: "distribution"
+  linkedin_image:
+    mode: "prompt-only"
+    model: "gpt-image-2-2026-04-21"
+    size: "1200x1200"
+    quality: "high"
+`, 'utf-8');
 }
 
 beforeEach(() => {
@@ -305,15 +377,122 @@ describe('PIPELINE_STEPS social-text distribution-kit persistence', () => {
     expect(result.outcome).toBe('completed');
     expect(provider.calls.length).toBe(1);
     expect(fetchSpy).not.toHaveBeenCalled();
-    expect(calls.addCalls).toEqual([
-      'content/posts/pipeline-kit/distribution',
-      'content/posts/pipeline-kit/assets/linkedin-feed.png',
-    ]);
+    expect(calls.addCalls).toEqual(expectedDistributionSitePaths('pipeline-kit', { image: true }));
     expect(existsSync(join(f.siteRepoPath, 'content/posts/pipeline-kit/distribution/linkedin.md'))).toBe(true);
     expect(existsSync(join(f.siteRepoPath, 'content/posts/pipeline-kit/distribution/hackernews.md'))).toBe(true);
     expect(existsSync(join(f.siteRepoPath, 'content/posts/pipeline-kit/distribution/linkedin-image-prompt.md'))).toBe(true);
     expect(existsSync(join(f.siteRepoPath, 'content/posts/pipeline-kit/distribution/manifest.json'))).toBe(true);
     expect(existsSync(join(f.siteRepoPath, 'content/posts/pipeline-kit/assets/linkedin-feed.png'))).toBe(true);
+  });
+});
+
+describe('PIPELINE_STEPS paste verification', () => {
+  it('paste-medium fails on manifest hash mismatch without regenerating the artifact', async () => {
+    const f = setup();
+    seedPost(f, 'medium-verify');
+    const kit = await generateDistributionKit('medium-verify', f.config, f, f.db, {
+      sourceMode: 'publish',
+    });
+    writeFileSync(kit.mediumPath!, 'tampered medium paste\n', 'utf-8');
+    const tampered = readFileSync(kit.mediumPath!, 'utf-8');
+    const step = PIPELINE_STEPS.find((candidate) => candidate.name === 'paste-medium');
+    if (!step) throw new Error('paste-medium step missing');
+
+    const result = await step.execute(makePipelineContext(f, 'medium-verify'));
+
+    expect(result.outcome).toBe('failed');
+    expect(result.message).toMatch(/Medium paste verification failed/);
+    expect(result.message).toMatch(/hash mismatch/);
+    expect(readFileSync(kit.mediumPath!, 'utf-8')).toBe(tampered);
+  });
+
+  it('paste-substack fails on missing manifest artifact without regenerating it', async () => {
+    const f = setup();
+    seedPost(f, 'substack-verify');
+    const kit = await generateDistributionKit('substack-verify', f.config, f, f.db, {
+      sourceMode: 'publish',
+    });
+    rmSync(kit.substackPath!, { force: true });
+    const step = PIPELINE_STEPS.find((candidate) => candidate.name === 'paste-substack');
+    if (!step) throw new Error('paste-substack step missing');
+
+    const result = await step.execute(makePipelineContext(f, 'substack-verify'));
+
+    expect(result.outcome).toBe('failed');
+    expect(result.message).toMatch(/Substack paste verification failed/);
+    expect(result.message).toMatch(/artifact is missing/);
+    expect(existsSync(kit.substackPath!)).toBe(false);
+  });
+
+  it('paste-medium fails on tampered table assets without regenerating them', async () => {
+    const f = setup();
+    seedPost(f, 'medium-table-verify');
+    const draftPath = join(f.draftsDir, 'medium-table-verify', 'index.mdx');
+    writeFileSync(draftPath, readFileSync(draftPath, 'utf-8').replace('Body', [
+      '| Runtime | Median |',
+      '| --- | ---: |',
+      '| Node | 12ms |',
+    ].join('\n')), 'utf-8');
+    const kit = await generateDistributionKit('medium-table-verify', f.config, f, f.db, {
+      sourceMode: 'publish',
+    });
+    expect(kit.tableImagePaths).toHaveLength(1);
+    writeFileSync(kit.tableImagePaths[0], Buffer.from('tampered table'));
+    const tampered = readFileSync(kit.tableImagePaths[0]);
+    const step = PIPELINE_STEPS.find((candidate) => candidate.name === 'paste-medium');
+    if (!step) throw new Error('paste-medium step missing');
+
+    const result = await step.execute(makePipelineContext(f, 'medium-table-verify'));
+
+    expect(result.outcome).toBe('failed');
+    expect(result.message).toMatch(/Medium paste verification failed/);
+    expect(result.message).toMatch(/table 1 artifact hash mismatch/);
+    expect(readFileSync(kit.tableImagePaths[0]).equals(tampered)).toBe(true);
+  });
+
+  it('paste-substack fails on missing table assets without regenerating them', async () => {
+    const f = setup();
+    seedPost(f, 'substack-table-verify');
+    const draftPath = join(f.draftsDir, 'substack-table-verify', 'index.mdx');
+    writeFileSync(draftPath, readFileSync(draftPath, 'utf-8').replace('Body', [
+      '| Runtime | Median |',
+      '| --- | ---: |',
+      '| Node | 12ms |',
+    ].join('\n')), 'utf-8');
+    const kit = await generateDistributionKit('substack-table-verify', f.config, f, f.db, {
+      sourceMode: 'publish',
+    });
+    expect(kit.tableImagePaths).toHaveLength(1);
+    rmSync(kit.tableImagePaths[0], { force: true });
+    const step = PIPELINE_STEPS.find((candidate) => candidate.name === 'paste-substack');
+    if (!step) throw new Error('paste-substack step missing');
+
+    const result = await step.execute(makePipelineContext(f, 'substack-table-verify'));
+
+    expect(result.outcome).toBe('failed');
+    expect(result.message).toMatch(/Substack paste verification failed/);
+    expect(result.message).toMatch(/table 1 artifact is missing/);
+    expect(existsSync(kit.tableImagePaths[0])).toBe(false);
+  });
+
+  it('disabled Medium and Substack paste steps skip without requiring bundle artifacts', async () => {
+    const f = setup();
+    seedPost(f, 'disabled-paste-steps');
+    f.config.publish.medium = false;
+    f.config.publish.substack = false;
+    const medium = PIPELINE_STEPS.find((candidate) => candidate.name === 'paste-medium');
+    const substack = PIPELINE_STEPS.find((candidate) => candidate.name === 'paste-substack');
+    if (!medium || !substack) throw new Error('paste steps missing');
+
+    expect(await medium.execute(makePipelineContext(f, 'disabled-paste-steps'))).toMatchObject({
+      outcome: 'skipped',
+      message: 'Medium paste disabled by config',
+    });
+    expect(await substack.execute(makePipelineContext(f, 'disabled-paste-steps'))).toMatchObject({
+      outcome: 'skipped',
+      message: 'Substack paste disabled by config',
+    });
+    expect(existsSync(join(f.socialDir, 'disabled-paste-steps'))).toBe(false);
   });
 });
 
@@ -327,10 +506,143 @@ describe('persistDistributionKitToSite', () => {
 
     const result = persistDistributionKitToSite('alpha', f.config, { configPath: f.configPath }, kit);
     expect(result.updated).toBe(true);
-    expect(calls.addCalls).toEqual(['content/posts/alpha/distribution']);
+    expect(calls.addCalls).toEqual(expectedDistributionSitePaths('alpha'));
     expect(calls.commits).toEqual(['chore(distribution): alpha']);
     expect(existsSync(join(f.siteRepoPath, 'content/posts/alpha/distribution/linkedin.md'))).toBe(true);
+    expect(existsSync(join(f.siteRepoPath, 'content/posts/alpha/distribution/medium-paste.md'))).toBe(true);
+    expect(existsSync(join(f.siteRepoPath, 'content/posts/alpha/distribution/substack-paste.md'))).toBe(true);
     expect(existsSync(join(f.siteRepoPath, 'content/posts/alpha/distribution/manifest.json'))).toBe(true);
+  });
+
+  it('copies generated table assets and stages their exact site paths', async () => {
+    const f = setup();
+    seedPost(f, 'table-assets');
+    seedSitePost(f, 'table-assets');
+    const draftPath = join(f.draftsDir, 'table-assets', 'index.mdx');
+    writeFileSync(draftPath, readFileSync(draftPath, 'utf-8').replace('Body', [
+      '| Runtime | Median |',
+      '| --- | ---: |',
+      '| Node | 12ms |',
+    ].join('\n')), 'utf-8');
+    const kit = await generateDistributionKit('table-assets', f.config, f, f.db, { sourceMode: 'publish' });
+    const calls = mockSiteArtifactGit();
+
+    const result = persistDistributionKitToSite('table-assets', f.config, { configPath: f.configPath }, kit);
+
+    expect(result.updated).toBe(true);
+    expect(kit.manifest.tables).toHaveLength(1);
+    expect(calls.addCalls).toEqual(expectedDistributionSitePaths('table-assets', {
+      tables: [kit.manifest.tables[0].path],
+    }));
+    expect(existsSync(join(f.siteRepoPath, 'content/posts/table-assets', kit.manifest.tables[0].path))).toBe(true);
+  });
+
+  it('removes stale generated table assets and stages the tracked deletion exactly', async () => {
+    const f = setup();
+    seedPost(f, 'stale-table');
+    seedSitePost(f, 'stale-table');
+    const kit = await generateDistributionKit('stale-table', f.config, f, f.db, { sourceMode: 'publish' });
+    const staleTablePath = 'content/posts/stale-table/assets/portable-table-deadbeef1234.png';
+    mkdirSync(join(f.siteRepoPath, 'content/posts/stale-table/assets'), { recursive: true });
+    writeFileSync(join(f.siteRepoPath, staleTablePath), 'stale table image bytes');
+    const calls = mockSiteArtifactGit({ trackedPaths: [staleTablePath] });
+
+    const result = persistDistributionKitToSite('stale-table', f.config, { configPath: f.configPath }, kit);
+
+    expect(result.updated).toBe(true);
+    expect(calls.addCalls).toContain(staleTablePath);
+    expect(existsSync(join(f.siteRepoPath, staleTablePath))).toBe(false);
+  });
+
+  it('removes stale generated LinkedIn images when the current manifest omits them', async () => {
+    const f = setup();
+    seedPost(f, 'stale-linkedin-image');
+    seedSitePost(f, 'stale-linkedin-image');
+    const kit = await generateDistributionKit('stale-linkedin-image', f.config, f, f.db, { sourceMode: 'publish' });
+    const staleImagePath = 'content/posts/stale-linkedin-image/assets/linkedin-feed.png';
+    mkdirSync(join(f.siteRepoPath, 'content/posts/stale-linkedin-image/assets'), { recursive: true });
+    writeFileSync(join(f.siteRepoPath, staleImagePath), 'stale linkedin image bytes');
+    const calls = mockSiteArtifactGit({ trackedPaths: [staleImagePath] });
+
+    const result = persistDistributionKitToSite('stale-linkedin-image', f.config, { configPath: f.configPath }, kit);
+
+    expect(result.updated).toBe(true);
+    expect(kit.imagePath).toBeNull();
+    expect(calls.addCalls).toContain(staleImagePath);
+    expect(existsSync(join(f.siteRepoPath, staleImagePath))).toBe(false);
+  });
+
+  it('removes stale disabled Medium artifacts and stages the tracked deletion exactly', async () => {
+    const f = setup();
+    seedPost(f, 'medium-off');
+    seedSitePost(f, 'medium-off');
+    f.config.publish.medium = false;
+    const kit = await generateDistributionKit('medium-off', f.config, f, f.db, { sourceMode: 'publish' });
+    const staleMediumPath = 'content/posts/medium-off/distribution/medium-paste.md';
+    mkdirSync(join(f.siteRepoPath, 'content/posts/medium-off/distribution'), { recursive: true });
+    writeFileSync(join(f.siteRepoPath, staleMediumPath), 'stale medium paste\n');
+    const calls = mockSiteArtifactGit({ trackedPaths: [staleMediumPath] });
+
+    const result = persistDistributionKitToSite('medium-off', f.config, { configPath: f.configPath }, kit);
+
+    expect(result.updated).toBe(true);
+    expect(kit.mediumPath).toBeNull();
+    expect(kit.substackPath).not.toBeNull();
+    expect(calls.addCalls).toEqual([
+      'content/posts/medium-off/distribution/linkedin.md',
+      'content/posts/medium-off/distribution/hackernews.md',
+      'content/posts/medium-off/distribution/substack-paste.md',
+      'content/posts/medium-off/distribution/linkedin-image-prompt.md',
+      staleMediumPath,
+      'content/posts/medium-off/distribution/manifest.json',
+    ]);
+    expect(existsSync(join(f.siteRepoPath, staleMediumPath))).toBe(false);
+    expect(existsSync(join(f.siteRepoPath, 'content/posts/medium-off/distribution/substack-paste.md'))).toBe(true);
+  });
+
+  it('persists Medium/Substack when social distribution is disabled and removes stale social artifacts', async () => {
+    const f = setup();
+    seedPost(f, 'social-off');
+    seedSitePost(f, 'social-off');
+    f.config.social.distribution_kit.enabled = false;
+    const kit = await generateDistributionKit('social-off', f.config, f, f.db, { sourceMode: 'publish' });
+    const staleLinkedInPath = 'content/posts/social-off/distribution/linkedin.md';
+    const staleHackerNewsPath = 'content/posts/social-off/distribution/hackernews.md';
+    mkdirSync(join(f.siteRepoPath, 'content/posts/social-off/distribution'), { recursive: true });
+    writeFileSync(join(f.siteRepoPath, staleLinkedInPath), 'stale linkedin\n');
+    writeFileSync(join(f.siteRepoPath, staleHackerNewsPath), 'stale hacker news\n');
+    const calls = mockSiteArtifactGit({
+      trackedPaths: [staleLinkedInPath, staleHackerNewsPath],
+    });
+
+    const result = persistDistributionKitToSite('social-off', f.config, { configPath: f.configPath }, kit);
+
+    expect(result.updated).toBe(true);
+    expect(kit.linkedinPath).toBeNull();
+    expect(kit.hackerNewsPath).toBeNull();
+    expect(kit.manifest.text.linkedin).toBeNull();
+    expect(kit.manifest.text.hackernews).toBeNull();
+    expect(calls.addCalls).toEqual(expectedMediumSubstackOnlySitePaths('social-off', {
+      extraDistributionPaths: [staleLinkedInPath, staleHackerNewsPath],
+    }));
+    expect(existsSync(join(f.siteRepoPath, 'content/posts/social-off/distribution/medium-paste.md'))).toBe(true);
+    expect(existsSync(join(f.siteRepoPath, 'content/posts/social-off/distribution/substack-paste.md'))).toBe(true);
+    expect(existsSync(join(f.siteRepoPath, staleLinkedInPath))).toBe(false);
+    expect(existsSync(join(f.siteRepoPath, staleHackerNewsPath))).toBe(false);
+    expect(existsSync(join(f.siteRepoPath, 'content/posts/social-off/distribution/linkedin-image-prompt.md'))).toBe(false);
+  });
+
+  it('refuses to overwrite conflicting reviewed site artifacts', async () => {
+    const f = setup();
+    seedPost(f, 'conflict');
+    seedSitePost(f, 'conflict');
+    const kit = await generateDistributionKit('conflict', f.config, f, f.db, { sourceMode: 'publish' });
+    mkdirSync(join(f.siteRepoPath, 'content/posts/conflict/distribution'), { recursive: true });
+    writeFileSync(join(f.siteRepoPath, 'content/posts/conflict/distribution/medium-paste.md'), 'conflict\n');
+    mockSiteArtifactGit();
+
+    expect(() => persistDistributionKitToSite('conflict', f.config, { configPath: f.configPath }, kit))
+      .toThrow(/existing site Medium paste differs/);
   });
 
   it('refuses a site repo whose origin does not match the configured hub repo', async () => {
@@ -368,6 +680,20 @@ describe('persistDistributionKitToSite', () => {
     const calls = mockSiteArtifactGit({ dirtyStatus: ' M README.md\n' });
 
     expect(() => persistDistributionKitToSite('dirty', f.config, { configPath: f.configPath }, kit))
+      .toThrow(/uncommitted changes unrelated/);
+    expect(calls.addCalls).toEqual([]);
+  });
+
+  it('refuses unexpected dirty files inside the target distribution directory', async () => {
+    const f = setup();
+    seedPost(f, 'dirty-distribution');
+    seedSitePost(f, 'dirty-distribution');
+    const kit = await generateDistributionKit('dirty-distribution', f.config, f, f.db, { sourceMode: 'publish' });
+    const calls = mockSiteArtifactGit({
+      dirtyStatus: '?? content/posts/dirty-distribution/distribution/extra.md\n',
+    });
+
+    expect(() => persistDistributionKitToSite('dirty-distribution', f.config, { configPath: f.configPath }, kit))
       .toThrow(/uncommitted changes unrelated/);
     expect(calls.addCalls).toEqual([]);
   });
@@ -419,6 +745,8 @@ describe('persistDistributionKitToSite', () => {
       'content/posts/replay/distribution/linkedin-image-prompt.md',
       'content/posts/replay/distribution/linkedin.md',
       'content/posts/replay/distribution/manifest.json',
+      'content/posts/replay/distribution/medium-paste.md',
+      'content/posts/replay/distribution/substack-paste.md',
     ].join('\n');
     const calls = mockSiteArtifactGit({
       cachedHasChanges: false,
@@ -430,6 +758,61 @@ describe('persistDistributionKitToSite', () => {
 
     expect(result.updated).toBe(true);
     expect(result.reason).toBe('Pushed previously committed distribution-kit change');
+    expect(calls.commits).toEqual([]);
+    expect(calls.pushes).toEqual(['origin main']);
+  });
+
+  it('pushes crash-replay commits that already deleted stale disabled text artifacts', async () => {
+    const f = setup();
+    seedPost(f, 'medium-replay');
+    seedSitePost(f, 'medium-replay');
+    f.config.publish.medium = false;
+    const kit = await generateDistributionKit('medium-replay', f.config, f, f.db, { sourceMode: 'publish' });
+    const staleMediumPath = 'content/posts/medium-replay/distribution/medium-paste.md';
+    const replayFiles = [
+      'content/posts/medium-replay/distribution/hackernews.md',
+      'content/posts/medium-replay/distribution/linkedin-image-prompt.md',
+      'content/posts/medium-replay/distribution/linkedin.md',
+      'content/posts/medium-replay/distribution/manifest.json',
+      staleMediumPath,
+      'content/posts/medium-replay/distribution/substack-paste.md',
+    ].join('\n');
+    const calls = mockSiteArtifactGit({
+      cachedHasChanges: false,
+      aheadLog: 'abc123\tchore(distribution): medium-replay\n',
+      showFiles: `${replayFiles}\n`,
+    });
+
+    const result = persistDistributionKitToSite('medium-replay', f.config, { configPath: f.configPath }, kit);
+
+    expect(result.updated).toBe(true);
+    expect(result.reason).toBe('Pushed previously committed distribution-kit change');
+    expect(calls.addCalls).not.toContain(staleMediumPath);
+    expect(calls.commits).toEqual([]);
+    expect(calls.pushes).toEqual(['origin main']);
+  });
+
+  it('pushes crash-replay commits that already deleted stale generated LinkedIn images', async () => {
+    const f = setup();
+    seedPost(f, 'image-replay');
+    seedSitePost(f, 'image-replay');
+    const kit = await generateDistributionKit('image-replay', f.config, f, f.db, { sourceMode: 'publish' });
+    const staleImagePath = 'content/posts/image-replay/assets/linkedin-feed.png';
+    const replayFiles = [
+      ...expectedDistributionSitePaths('image-replay'),
+      staleImagePath,
+    ].join('\n');
+    const calls = mockSiteArtifactGit({
+      cachedHasChanges: false,
+      aheadLog: 'abc123\tchore(distribution): image-replay\n',
+      showFiles: `${replayFiles}\n`,
+    });
+
+    const result = persistDistributionKitToSite('image-replay', f.config, { configPath: f.configPath }, kit);
+
+    expect(result.updated).toBe(true);
+    expect(result.reason).toBe('Pushed previously committed distribution-kit change');
+    expect(calls.addCalls).not.toContain(staleImagePath);
     expect(calls.commits).toEqual([]);
     expect(calls.pushes).toEqual(['origin main']);
   });
@@ -455,5 +838,76 @@ describe('persistDistributionKitToSite', () => {
     });
     expect(() => persistDistributionKitToSite('wrong-ahead', f.config, { configPath: f.configPath }, kit))
       .toThrow(/touches/);
+  });
+});
+
+describe('runPublishDistributionKit --commit-site', () => {
+  it('backfills the complete generated bundle into the site repo with exact staging', async () => {
+    const f = setup();
+    writeCliConfig(f);
+    const dbPath = join(f.tempDir, 'cli-state.db');
+    const db = getDatabase(dbPath);
+    try {
+      initResearchPost(db, 'cli-kit', 'CLI distribution kit backfill.', 'directed', 'project-launch', 'm0lz.01');
+      advancePhase(db, 'cli-kit', 'benchmark');
+      advancePhase(db, 'cli-kit', 'draft');
+      advancePhase(db, 'cli-kit', 'evaluate');
+      db.prepare('UPDATE posts SET title = ?, evaluation_passed = 1 WHERE slug = ?')
+        .run('CLI Kit Title', 'cli-kit');
+      advancePhase(db, 'cli-kit', 'publish');
+      advancePhase(db, 'cli-kit', 'published');
+    } finally {
+      closeDatabase(db);
+    }
+    const postDir = join(f.siteRepoPath, 'content/posts/cli-kit');
+    mkdirSync(postDir, { recursive: true });
+    writeFileSync(join(postDir, 'index.mdx'), `---
+title: "CLI Kit Title"
+description: "CLI kit description."
+date: "2026-05-18"
+tags:
+  - Publishing
+published: true
+canonical: "https://m0lz.dev/writing/cli-kit"
+project: "m0lz.01"
+---
+
+| Runtime | Median |
+| --- | ---: |
+| Node | 12ms |
+`, 'utf-8');
+    const calls = mockSiteArtifactGit();
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const savedExitCode = process.exitCode;
+    process.exitCode = 0;
+    let exitCodeAfter: string | number | undefined;
+    try {
+      await runPublishDistributionKit('cli-kit', { imageMode: 'prompt-only', commitSite: true }, {
+        dbPath,
+        configPath: f.configPath,
+        draftsDir: f.draftsDir,
+        socialDir: f.socialDir,
+        templatesDir: f.templatesDir,
+      });
+      exitCodeAfter = process.exitCode;
+    } finally {
+      process.exitCode = savedExitCode;
+    }
+
+    const manifest = JSON.parse(readFileSync(join(f.socialDir, 'cli-kit/manifest.json'), 'utf-8'));
+    expect(exitCodeAfter).toBe(0);
+    expect(manifest.tables).toHaveLength(1);
+    expect(calls.addCalls).toEqual(expectedDistributionSitePaths('cli-kit', {
+      tables: [manifest.tables[0].path],
+    }));
+    expect(calls.commits).toEqual(['chore(distribution): cli-kit']);
+    expect(existsSync(join(postDir, 'distribution/linkedin.md'))).toBe(true);
+    expect(existsSync(join(postDir, 'distribution/hackernews.md'))).toBe(true);
+    expect(existsSync(join(postDir, 'distribution/medium-paste.md'))).toBe(true);
+    expect(existsSync(join(postDir, 'distribution/substack-paste.md'))).toBe(true);
+    expect(existsSync(join(postDir, 'distribution/manifest.json'))).toBe(true);
+    expect(existsSync(join(postDir, manifest.tables[0].path))).toBe(true);
+    expect(existsSync(join(f.draftsDir, 'cli-kit/assets'))).toBe(false);
   });
 });

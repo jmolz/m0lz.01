@@ -38,6 +38,8 @@ interface Fx {
   draftsDir: string;
   researchPagesDir: string;
   publishDir: string;
+  socialDir: string;
+  templatesDir: string;
   configPath: string;
   db: Database.Database;
   config: BlogConfig;
@@ -61,7 +63,17 @@ function mkConfig(siteRepoPath: string): BlogConfig {
     },
     benchmark: { capture_environment: true, methodology_template: true, preserve_raw_data: true, multiple_runs: 3 },
     publish: { devto: true, medium: true, substack: true, github_repos: true, social_drafts: true, research_pages: true },
-    social: { platforms: [], timing_recommendations: true },
+    social: {
+      platforms: [],
+      timing_recommendations: true,
+      distribution_kit: { enabled: true, persist_to_site: true, directory: 'distribution' },
+      linkedin_image: {
+        mode: 'prompt-only',
+        model: 'gpt-image-2-2026-04-21',
+        size: '1200x1200',
+        quality: 'high',
+      },
+    },
     evaluation: { require_pass: true, min_sources: 3, max_reading_level: 12, three_reviewer_panel: true, consensus_must_fix: true, majority_should_fix: true, single_advisory: true, verify_benchmark_claims: true, methodology_completeness: true },
     updates: { preserve_original_data: true, update_notice: true, update_crosspost: true, devto_update: true, refresh_paste_files: true, notice_template: 'Updated {DATE}: {SUMMARY}', require_summary: true, site_update_mode: 'pr' },
     unpublish: { devto: true, medium: true, substack: true, readme: true },
@@ -75,14 +87,21 @@ function setup(): Fx {
   const draftsDir = join(tempDir, 'drafts');
   const researchPagesDir = join(tempDir, 'research-pages');
   const publishDir = join(tempDir, 'publish');
+  const socialDir = join(tempDir, 'social');
+  const templatesDir = join(tempDir, 'templates');
   const configPath = join(tempDir, '.blogrc.yaml');
   mkdirSync(siteRepoPath, { recursive: true });
   mkdirSync(draftsDir, { recursive: true });
   mkdirSync(researchPagesDir, { recursive: true });
   mkdirSync(publishDir, { recursive: true });
+  mkdirSync(socialDir, { recursive: true });
+  mkdirSync(join(templatesDir, 'social'), { recursive: true });
+  writeFileSync(join(templatesDir, 'social/linkedin.md'), readFileSync(join(__dirname, '../templates/social/linkedin.md'), 'utf-8'));
+  writeFileSync(join(templatesDir, 'social/hackernews.md'), readFileSync(join(__dirname, '../templates/social/hackernews.md'), 'utf-8'));
+  writeFileSync(join(templatesDir, 'social/linkedin-image-prompt.md'), readFileSync(join(__dirname, '../templates/social/linkedin-image-prompt.md'), 'utf-8'));
   writeFileSync(configPath, '');
   const db = getDatabase(':memory:');
-  fx = { tempDir, siteRepoPath, draftsDir, researchPagesDir, publishDir, configPath, db, config: mkConfig(siteRepoPath) };
+  fx = { tempDir, siteRepoPath, draftsDir, researchPagesDir, publishDir, socialDir, templatesDir, configPath, db, config: mkConfig(siteRepoPath) };
   return fx;
 }
 
@@ -124,6 +143,9 @@ function installExec(matcher: ExecMatcher): void {
     }
     if (cmd === 'git' && args.includes('rev-list') && args.includes('--count')) {
       return '0\n';
+    }
+    if (cmd === 'git' && args.includes('ls-files')) {
+      return '';
     }
     const result = matcher(cmd, args);
     if (result instanceof Error) throw result;
@@ -212,6 +234,8 @@ describe('createSiteUpdate — update-branch commit carries body + frontmatter',
       researchPagesDir: f.researchPagesDir,
       publishDir: f.publishDir,
       configPath: f.configPath,
+      socialDir: f.socialDir,
+      templatesDir: f.templatesDir,
     }, f.db);
 
     expect(result.prNumber).toBe(99);
@@ -230,6 +254,8 @@ describe('createSiteUpdate — update-branch commit carries body + frontmatter',
     expect(landed).toContain('+18% under the new compiler toolchain');
     // Frontmatter preserved too.
     expect(landed).toMatch(/^---\n[\s\S]*?title: "Sample Title"[\s\S]*?---/);
+    expect(existsSync(join(f.siteRepoPath, 'content/posts/alpha/distribution/medium-paste.md'))).toBe(true);
+    expect(existsSync(join(f.siteRepoPath, 'content/posts/alpha/distribution/substack-paste.md'))).toBe(true);
   });
 
   it('throws when there is no open update cycle (operator/runner bug)', async () => {
@@ -243,6 +269,8 @@ describe('createSiteUpdate — update-branch commit carries body + frontmatter',
       researchPagesDir: f.researchPagesDir,
       publishDir: f.publishDir,
       configPath: f.configPath,
+      socialDir: f.socialDir,
+      templatesDir: f.templatesDir,
     }, f.db)).rejects.toThrow(/no open update cycle/);
   });
 });

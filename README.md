@@ -543,14 +543,39 @@ hub research index and post research panel render the same structure as
 hand-authored research pages.
 
 `blog publish start` and `blog update publish` also generate a durable
-distribution kit before the site repo is mutated. Local artifacts land in
+publication bundle before the site repo is mutated. Local artifacts land in
 `.blog-agent/social/<slug>/`: `linkedin.md`, `hackernews.md`,
-`linkedin-image-prompt.md`, and `manifest.json`; generated LinkedIn feed
-images use the fixed PNG path `.blog-agent/drafts/<slug>/assets/linkedin-feed.png`.
-The `social-text` pipeline step is now persist-only: after the preview gate and
-URL/README updates, it copies the already-generated kit to
-`content/posts/<slug>/distribution/` and the optional image to
-`content/posts/<slug>/assets/linkedin-feed.png`.
+`medium-paste.md`, `substack-paste.md`, `linkedin-image-prompt.md`, and
+`manifest.json`; generated LinkedIn feed images use the fixed PNG path
+`.blog-agent/social/<slug>/assets/linkedin-feed.png`. Medium/Substack paste
+rendering also converts Markdown pipe tables outside fenced code into stable PNG
+assets at `.blog-agent/social/<slug>/assets/portable-table-<hash>.png`. The
+canonical MDX remains unchanged; only the paste files receive image links.
+
+The site PR/update PR carries the complete reviewed bundle:
+
+```text
+content/posts/<slug>/
+  index.mdx
+  assets/
+    devto-cover.png
+    medium-featured.png
+    substack-preview.png
+    linkedin-feed.png
+    portable-table-<hash>.png
+  distribution/
+    linkedin.md
+    hackernews.md
+    medium-paste.md
+    substack-paste.md
+    linkedin-image-prompt.md
+    manifest.json
+```
+
+The `social-text` pipeline step is persist-only: after the preview gate and
+URL/README updates, it loads and hash-verifies the already-generated manifest
+before copying the same artifacts to the site repo. The paste steps load the
+manifest files rather than regenerating from post-preview content.
 
 Medium and Substack paste files are generated from the same evaluated MDX, but
 with platform-specific copy constraints. Substack receives a shortened subtitle

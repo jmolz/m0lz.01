@@ -33,6 +33,8 @@ interface Fixture {
   draftsDir: string;
   researchPagesDir: string;
   publishDir: string;
+  socialDir: string;
+  templatesDir: string;
   configPath: string;
   db: Database.Database;
   config: BlogConfig;
@@ -66,7 +68,17 @@ function makeConfig(siteRepoPath: string): BlogConfig {
     },
     benchmark: { capture_environment: true, methodology_template: true, preserve_raw_data: true, multiple_runs: 3 },
     publish: { devto: true, medium: true, substack: true, github_repos: true, social_drafts: true, research_pages: true },
-    social: { platforms: ['linkedin', 'hackernews'], timing_recommendations: true },
+    social: {
+      platforms: ['linkedin', 'hackernews'],
+      timing_recommendations: true,
+      distribution_kit: { enabled: true, persist_to_site: true, directory: 'distribution' },
+      linkedin_image: {
+        mode: 'prompt-only',
+        model: 'gpt-image-2-2026-04-21',
+        size: '1200x1200',
+        quality: 'high',
+      },
+    },
     evaluation: {
       require_pass: true, min_sources: 3, max_reading_level: 12, three_reviewer_panel: true,
       consensus_must_fix: true, majority_should_fix: true, single_advisory: true,
@@ -82,11 +94,18 @@ function setup(): Fixture {
   const draftsDir = join(tempDir, 'drafts');
   const researchPagesDir = join(tempDir, 'research-pages');
   const publishDir = join(tempDir, 'publish');
+  const socialDir = join(tempDir, 'social');
+  const templatesDir = join(tempDir, 'templates');
   const configPath = join(tempDir, '.blogrc.yaml');
   mkdirSync(siteRepoPath, { recursive: true });
   mkdirSync(draftsDir, { recursive: true });
   mkdirSync(researchPagesDir, { recursive: true });
   mkdirSync(publishDir, { recursive: true });
+  mkdirSync(socialDir, { recursive: true });
+  mkdirSync(join(templatesDir, 'social'), { recursive: true });
+  writeFileSync(join(templatesDir, 'social/linkedin.md'), readFileSync(join(__dirname, '../templates/social/linkedin.md'), 'utf-8'));
+  writeFileSync(join(templatesDir, 'social/hackernews.md'), readFileSync(join(__dirname, '../templates/social/hackernews.md'), 'utf-8'));
+  writeFileSync(join(templatesDir, 'social/linkedin-image-prompt.md'), readFileSync(join(__dirname, '../templates/social/linkedin-image-prompt.md'), 'utf-8'));
   // Touch configPath so resolveSiteRepoPath has a real anchor. createSitePR
   // doesn't read the file, but existsSync for the site repo needs to return
   // true for the non-mocked fs check.
@@ -94,8 +113,8 @@ function setup(): Fixture {
 
   const db = getDatabase(':memory:');
   const config = makeConfig(siteRepoPath);
-  const paths: SitePaths = { draftsDir, researchPagesDir, publishDir, configPath };
-  fixture = { tempDir, siteRepoPath, draftsDir, researchPagesDir, publishDir, configPath, db, config, paths };
+  const paths: SitePaths = { draftsDir, researchPagesDir, publishDir, configPath, socialDir, templatesDir };
+  fixture = { tempDir, siteRepoPath, draftsDir, researchPagesDir, publishDir, socialDir, templatesDir, configPath, db, config, paths };
   return fixture;
 }
 
@@ -155,7 +174,8 @@ type ExecMatcher = (cmd: string, args: string[]) => string | Error | null;
 
 function installExec(matcher: ExecMatcher): void {
   mockExec.mockImplementation((cmd: string, args: string[]) => {
-    // Common prelude: dirty-state check runs at the top of createSitePR.
+    // Common prelude: dirty-state check runs before createSitePR mutates the
+    // site repo.
     // Default to "clean repo" so tests not focused on dirty-state detection
     // don't need to add boilerplate. Tests that DO want to simulate a
     // dirty repo bypass this by calling mockExec.mockImplementation
@@ -178,6 +198,10 @@ function installExec(matcher: ExecMatcher): void {
     }
     if (cmd === 'git' && args.includes('rev-list') && args.includes('--count')) {
       return '0\n';
+    }
+    if (cmd === 'git' && args.includes('ls-files')) {
+      if (args.includes('--error-unmatch')) throw makeExecError(1);
+      return '';
     }
     const result = matcher(cmd, args);
     if (result instanceof Error) throw result;
@@ -254,6 +278,9 @@ describe('createSitePR — happy path', () => {
     const copiedPath = join(f.siteRepoPath, 'content/posts/alpha/index.mdx');
     expect(existsSync(copiedPath)).toBe(true);
     expect(readFileSync(copiedPath, 'utf-8')).toMatch(/published:\s*true/);
+    expect(existsSync(join(f.siteRepoPath, 'content/posts/alpha/distribution/medium-paste.md'))).toBe(true);
+    expect(existsSync(join(f.siteRepoPath, 'content/posts/alpha/distribution/substack-paste.md'))).toBe(true);
+    expect(existsSync(join(f.siteRepoPath, 'content/posts/alpha/distribution/manifest.json'))).toBe(true);
     expect(readFileSync(join(f.draftsDir, 'alpha', 'index.mdx'), 'utf-8')).toMatch(/published:\s*false/);
   });
 
@@ -538,19 +565,20 @@ describe('createSitePR — git remote parsing', () => {
 });
 
 describe('createSitePR — dirty-state guardrail (Codex Pass 4 regression)', () => {
-  it('throws when the site repo has uncommitted changes unrelated to this post', async () => {
+  it('throws when the site repo has uncommitted changes under unowned exact paths', async () => {
     const f = setup();
     seedPost(f.db, 'dirty');
     seedDraftMdx(f.draftsDir, 'dirty');
     await seedFreshPlatformImages(f, 'dirty');
 
     // Bypass installExec — we want full control of the status --porcelain
-    // response. The simulated dirty state includes an UNRELATED file that
-    // doesn't live under content/posts/dirty or content/research/dirty.
+    // response. The simulated dirty state lives under the post directory but
+    // is not one of the exact files the pipeline is about to write.
     mockExec.mockImplementation((cmd: string, args: string[]) => {
       if (cmd === 'git' && args.includes('status') && args.includes('--porcelain')) {
-        return ' M src/components/unrelated.tsx\n?? tmp/notes.md\n';
+        return '?? content/posts/dirty/distribution/extra.md\n';
       }
+      if (cmd === 'git' && args.includes('ls-files')) return '';
       throw new Error(`Unexpected exec call: ${cmd} ${args.join(' ')}`);
     });
 
@@ -558,18 +586,19 @@ describe('createSitePR — dirty-state guardrail (Codex Pass 4 regression)', () 
       .rejects.toThrow(/uncommitted changes unrelated to this post/);
   });
 
-  it('tolerates dirty state that is entirely under content/posts/<slug>/ (pipeline-owned)', async () => {
+  it('tolerates dirty state for exact files the pipeline is about to overwrite', async () => {
     const f = setup();
     seedPost(f.db, 'ownedonly');
     seedDraftMdx(f.draftsDir, 'ownedonly');
     await seedFreshPlatformImages(f, 'ownedonly');
 
-    // Dirty state touches ONLY pipeline-owned paths — this is allowed
-    // because the copy + add sequence will overwrite it deterministically.
+    // Dirty state touches an exact pipeline-owned path — this is allowed
+    // because the copy + exact add sequence overwrites it deterministically.
     mockExec.mockImplementation((cmd: string, args: string[]) => {
       if (cmd === 'git' && args.includes('status') && args.includes('--porcelain')) {
         return ' M content/posts/ownedonly/index.mdx\n';
       }
+      if (cmd === 'git' && args.includes('ls-files')) return '';
       if (cmd === 'git' && args.includes('remote') && args.includes('get-url')) {
         return 'git@github.com:jmolz/m0lz.00.git\n';
       }
@@ -610,6 +639,7 @@ describe('createSitePR — dirty-state guardrail (Codex Pass 4 regression)', () 
       if (cmd === 'git' && args.includes('status') && args.includes('--porcelain')) {
         return 'R  content/posts/renamed/foo.ts -> static/leaked.ts\n';
       }
+      if (cmd === 'git' && args.includes('ls-files')) return '';
       throw new Error(`Unexpected exec call: ${cmd} ${args.join(' ')}`);
     });
 
@@ -617,40 +647,24 @@ describe('createSitePR — dirty-state guardrail (Codex Pass 4 regression)', () 
       .rejects.toThrow(/uncommitted changes unrelated to this post/);
   });
 
-  it('tolerates rename/copy entries whose both sides live under owned prefixes', async () => {
+  it('rejects rename/copy entries under the post when a side is not an exact pipeline output', async () => {
     const f = setup();
     seedPost(f.db, 'owned-rename');
     seedDraftMdx(f.draftsDir, 'owned-rename');
     await seedFreshPlatformImages(f, 'owned-rename');
 
-    // Both source and destination under content/posts/owned-rename/ — a
-    // rename within the pipeline's own directory is tolerable.
+    // Both source and destination are under content/posts/owned-rename/, but
+    // the source is not an exact file the pipeline owns.
     mockExec.mockImplementation((cmd: string, args: string[]) => {
       if (cmd === 'git' && args.includes('status') && args.includes('--porcelain')) {
         return 'R  content/posts/owned-rename/old.mdx -> content/posts/owned-rename/index.mdx\n';
       }
-      if (cmd === 'git' && args.includes('remote') && args.includes('get-url')) {
-        return 'git@github.com:jmolz/m0lz.00.git\n';
-      }
-      if (cmd === 'git' && args.includes('config') && args.includes('--get')) {
-        return 'git@github.com:jmolz/m0lz.00.git\n';
-      }
-      if (cmd === 'git' && args.includes('fetch') && args.includes('origin')) return '';
-      if (cmd === 'git' && args.includes('rev-list') && args.includes('--count')) return '0\n';
-      if (cmd === 'git' && args.includes('branch') && args.includes('--list')) return '';
-      if (cmd === 'git' && args.includes('checkout') && args.includes('-b')) return '';
-      if (cmd === 'git' && args.includes('add')) return '';
-      if (cmd === 'git' && args.includes('diff') && args.includes('--cached')) {
-        throw makeExecError(1);
-      }
-      if (cmd === 'git' && args.includes('commit')) return '';
-      if (cmd === 'git' && args.includes('push')) return '';
-      if (cmd === 'gh' && args.includes('list')) return '[]';
-      if (cmd === 'gh' && args.includes('create')) return 'https://github.com/jmolz/m0lz.00/pull/201';
+      if (cmd === 'git' && args.includes('ls-files')) return '';
       throw new Error(`Unexpected exec call: ${cmd} ${args.join(' ')}`);
     });
 
-    await expect(createSitePR('owned-rename', f.config, f.paths, f.db)).resolves.toBeDefined();
+    await expect(createSitePR('owned-rename', f.config, f.paths, f.db))
+      .rejects.toThrow(/uncommitted changes unrelated to this post/);
   });
 
   it('stages only pipeline-owned paths — not `git add .`', async () => {
@@ -678,23 +692,128 @@ describe('createSitePR — dirty-state guardrail (Codex Pass 4 regression)', () 
 
     await createSitePR('scoped', f.config, f.paths, f.db);
 
-    // Critical: no `git add .` call — staging must be path-scoped.
+    // Critical: no `git add .` or broad directory add call — staging must be
+    // exact-file scoped.
     const addCalls = mockExec.mock.calls.filter(
       (call) => call[0] === 'git' && (call[1] as string[]).includes('add'),
     );
+    const expectedPaths = new Set([
+      'content/posts/scoped/index.mdx',
+      'content/posts/scoped/assets/devto-cover.png',
+      'content/posts/scoped/assets/medium-featured.png',
+      'content/posts/scoped/assets/substack-preview.png',
+      'content/posts/scoped/distribution/linkedin.md',
+      'content/posts/scoped/distribution/hackernews.md',
+      'content/posts/scoped/distribution/medium-paste.md',
+      'content/posts/scoped/distribution/substack-paste.md',
+      'content/posts/scoped/distribution/linkedin-image-prompt.md',
+      'content/posts/scoped/distribution/manifest.json',
+    ]);
     expect(addCalls.length).toBeGreaterThan(0);
     for (const call of addCalls) {
       const args = call[1] as string[];
       expect(args).not.toContain('.');
-      // The path arg must be the last element and match one of the owned
-      // prefixes. Research dir is optional (existsSync check); when present
-      // it's also owned. Accept either.
       const pathArg = args[args.length - 1];
-      expect(
-        pathArg === 'content/posts/scoped' ||
-        pathArg === 'content/research/scoped',
-      ).toBe(true);
+      expect(pathArg).not.toBe('content/posts/scoped');
+      expect(pathArg).not.toBe('content/research/scoped');
+      expect(expectedPaths.has(pathArg)).toBe(true);
     }
+  });
+
+  it('stages tracked deletions for stale owned distribution artifacts', async () => {
+    const f = setup();
+    seedPost(f.db, 'stale-owned');
+    seedDraftMdx(f.draftsDir, 'stale-owned');
+    await seedFreshPlatformImages(f, 'stale-owned');
+    f.config.publish.medium = false;
+    const staleMediumPath = 'content/posts/stale-owned/distribution/medium-paste.md';
+    mkdirSync(join(f.siteRepoPath, 'content/posts/stale-owned/distribution'), { recursive: true });
+    writeFileSync(join(f.siteRepoPath, staleMediumPath), 'stale medium paste\n');
+
+    mockExec.mockImplementation((cmd: string, args: string[]) => {
+      if (cmd === 'git' && args.includes('status') && args.includes('--porcelain')) return '';
+      if (cmd === 'git' && args.includes('ls-files')) {
+        const target = args[args.length - 1];
+        return target === staleMediumPath ? `${staleMediumPath}\n` : '';
+      }
+      if (cmd === 'git' && args.includes('remote') && args.includes('get-url')) {
+        return 'git@github.com:jmolz/m0lz.00.git\n';
+      }
+      if (cmd === 'git' && args.includes('config') && args.includes('--get')) {
+        return 'git@github.com:jmolz/m0lz.00.git\n';
+      }
+      if (cmd === 'git' && args.includes('fetch') && args.includes('origin')) return '';
+      if (cmd === 'git' && args.includes('rev-list') && args.includes('--count')) return '0\n';
+      if (cmd === 'git' && args.includes('branch') && args.includes('--list')) return '';
+      if (cmd === 'git' && args.includes('checkout') && args.includes('-b')) return '';
+      if (cmd === 'git' && args.includes('add')) return '';
+      if (cmd === 'git' && args.includes('diff') && args.includes('--cached')) {
+        throw makeExecError(1);
+      }
+      if (cmd === 'git' && args.includes('commit')) return '';
+      if (cmd === 'git' && args.includes('push')) return '';
+      if (cmd === 'gh' && args.includes('list')) return '[]';
+      if (cmd === 'gh' && args.includes('create')) return 'https://github.com/jmolz/m0lz.00/pull/314';
+      throw new Error(`Unexpected exec call: ${cmd} ${args.join(' ')}`);
+    });
+
+    await createSitePR('stale-owned', f.config, f.paths, f.db);
+
+    const addCalls = mockExec.mock.calls
+      .filter((call) => call[0] === 'git' && (call[1] as string[]).includes('add'))
+      .map((call) => (call[1] as string[]).at(-1));
+    expect(addCalls).toContain(staleMediumPath);
+    expect(existsSync(join(f.siteRepoPath, staleMediumPath))).toBe(false);
+  });
+
+  it('recomputes stale cleanup paths after reusing an existing branch', async () => {
+    const f = setup();
+    seedPost(f.db, 'branch-stale');
+    seedDraftMdx(f.draftsDir, 'branch-stale');
+    await seedFreshPlatformImages(f, 'branch-stale');
+    f.config.publish.medium = false;
+    const staleMediumPath = 'content/posts/branch-stale/distribution/medium-paste.md';
+    mkdirSync(join(f.siteRepoPath, 'content/posts/branch-stale/distribution'), { recursive: true });
+    writeFileSync(join(f.siteRepoPath, staleMediumPath), 'stale medium paste\n');
+    let checkedOut = false;
+
+    mockExec.mockImplementation((cmd: string, args: string[]) => {
+      if (cmd === 'git' && args.includes('status') && args.includes('--porcelain')) return '';
+      if (cmd === 'git' && args.includes('ls-files')) {
+        const target = args[args.length - 1];
+        return checkedOut && target === staleMediumPath ? `${staleMediumPath}\n` : '';
+      }
+      if (cmd === 'git' && args.includes('remote') && args.includes('get-url')) {
+        return 'git@github.com:jmolz/m0lz.00.git\n';
+      }
+      if (cmd === 'git' && args.includes('config') && args.includes('--get')) {
+        return 'git@github.com:jmolz/m0lz.00.git\n';
+      }
+      if (cmd === 'git' && args.includes('fetch') && args.includes('origin')) return '';
+      if (cmd === 'git' && args.includes('rev-list') && args.includes('--count')) return '0\n';
+      if (cmd === 'git' && args.includes('branch') && args.includes('--list')) return '  post/branch-stale\n';
+      if (cmd === 'git' && args.includes('checkout') && !args.includes('-b')) {
+        checkedOut = true;
+        return '';
+      }
+      if (cmd === 'git' && args.includes('add')) return '';
+      if (cmd === 'git' && args.includes('diff') && args.includes('--cached')) {
+        throw makeExecError(1);
+      }
+      if (cmd === 'git' && args.includes('commit')) return '';
+      if (cmd === 'git' && args.includes('push')) return '';
+      if (cmd === 'gh' && args.includes('list')) return '[]';
+      if (cmd === 'gh' && args.includes('create')) return 'https://github.com/jmolz/m0lz.00/pull/315';
+      throw new Error(`Unexpected exec call: ${cmd} ${args.join(' ')}`);
+    });
+
+    await createSitePR('branch-stale', f.config, f.paths, f.db);
+
+    const addCalls = mockExec.mock.calls
+      .filter((call) => call[0] === 'git' && (call[1] as string[]).includes('add'))
+      .map((call) => (call[1] as string[]).at(-1));
+    expect(addCalls).toContain(staleMediumPath);
+    expect(existsSync(join(f.siteRepoPath, staleMediumPath))).toBe(false);
   });
 });
 

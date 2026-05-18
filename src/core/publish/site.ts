@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 
 import Database from 'better-sqlite3';
@@ -7,10 +7,20 @@ import Database from 'better-sqlite3';
 import { BlogConfig, LinkedInImageMode } from '../config/types.js';
 import { parseFrontmatter, serializeFrontmatter } from '../draft/frontmatter.js';
 import { assertOriginInSync, expectedSiteCoords, requireOriginMatch } from './origin-guard.js';
-import { generateDistributionKit } from './distribution-kit.js';
+import {
+  generateDistributionKit,
+  GenerateDistributionKitResult,
+  shouldGeneratePublicationBundle,
+} from './distribution-kit.js';
 import { ensurePlatformImages } from './platform-images.js';
 import { PreviewUrls, computePreviewUrls } from './preview-urls.js';
 import { PostRow } from '../db/types.js';
+import {
+  cleanupCandidateSitePathsForKit,
+  copyDistributionKitToPostDir,
+  expectedSitePathsForKit,
+  trackedCleanupSitePathsForKit,
+} from './site-artifacts.js';
 
 // Steps 3 + 4 of the publish pipeline.
 //
@@ -68,6 +78,74 @@ interface RepoCoords {
 function resolveSiteRepoPath(configPath: string, repoPath: string): string {
   if (isAbsolute(repoPath)) return repoPath;
   return resolve(dirname(configPath), repoPath);
+}
+
+function uniquePaths(paths: string[]): string[] {
+  return [...new Set(paths)];
+}
+
+function listRelativeFiles(root: string, prefix = ''): string[] {
+  if (!existsSync(root)) return [];
+  const files: string[] = [];
+  for (const entry of readdirSync(join(root, prefix), { withFileTypes: true })) {
+    const relativePath = prefix.length > 0 ? `${prefix}/${entry.name}` : entry.name;
+    if (entry.isDirectory()) {
+      files.push(...listRelativeFiles(root, relativePath));
+    } else if (entry.isFile()) {
+      files.push(relativePath);
+    }
+  }
+  return files.sort();
+}
+
+function draftAssetSitePaths(slug: string, config: BlogConfig, sourceAssetsDir: string): string[] {
+  return listRelativeFiles(sourceAssetsDir)
+    .map((relativePath) => `${config.site.content_dir}/${slug}/assets/${relativePath}`);
+}
+
+function parsePorcelainPaths(line: string): string[] {
+  const status = line.slice(0, 2);
+  const pathPart = line.slice(3);
+  const isRenameOrCopy =
+    status[0] === 'R' || status[0] === 'C' ||
+    status[1] === 'R' || status[1] === 'C';
+  return isRenameOrCopy && pathPart.includes(' -> ')
+    ? pathPart.split(' -> ')
+    : [pathPart];
+}
+
+function assertNoUnrelatedDirtySitePaths(
+  siteRepoPath: string,
+  allowedPaths: string[],
+  slug: string,
+): void {
+  // Do NOT .trim() the output: `git status --porcelain` lines start with two
+  // status chars followed by a space, and trimming strips the leading space
+  // of the " M path" form.
+  const porcelain = execFileSync(
+    'git',
+    ['-C', siteRepoPath, 'status', '--porcelain'],
+    { encoding: 'utf-8' },
+  );
+  const porcelainLines = porcelain.split(/\r?\n/).filter((line) => line.length > 0);
+  if (porcelainLines.length === 0) return;
+
+  const allowed = new Set(allowedPaths);
+  const unrelated: string[] = [];
+  for (const line of porcelainLines) {
+    for (const p of parsePorcelainPaths(line)) {
+      if (!allowed.has(p)) {
+        unrelated.push(p);
+      }
+    }
+  }
+  if (unrelated.length > 0) {
+    throw new Error(
+      `Site repo at '${siteRepoPath}' has uncommitted changes unrelated to this post:\n` +
+      unrelated.map((p) => `  ${p}`).join('\n') + '\n' +
+      `Commit, stash, or discard them before running 'blog publish start ${slug}'.`,
+    );
+  }
 }
 
 // Parse a git remote URL into owner + repo. Accepts both SSH
@@ -169,65 +247,59 @@ export async function createSitePR(
   }
   const title = post.title ?? slug;
 
-  // Fail fast if the site repo has uncommitted state that isn't ours.
-  // Later in this function we stage ONLY pipeline-owned paths (content/
-  // posts/<slug>, content/research/<slug>) — but any pre-existing dirty
-  // state would still be in the working tree when the operator reviews
-  // the PR, and prior implementations used `git add .` which would have
-  // swept it into the commit outright. Failing closed here surfaces the
-  // issue before it reaches the PR instead of relying on visual review.
-  //
-  // Do NOT .trim() the output: `git status --porcelain` lines start with
-  // two status chars followed by a space, and trimming strips the leading
-  // space of the " M path" form — corrupting the subsequent slice(3).
-  // Split, drop empty trailing lines, then parse each line preserving its
-  // column alignment.
-  const porcelain = execFileSync(
-    'git',
-    ['-C', siteRepoPath, 'status', '--porcelain'],
-    { encoding: 'utf-8' },
-  );
-  const porcelainLines = porcelain.split(/\r?\n/).filter((line) => line.length > 0);
-  if (porcelainLines.length > 0) {
-    const ownedPrefixes = [
-      `${config.site.content_dir}/${slug}/`,
-      `${config.site.research_dir}/${slug}/`,
-    ];
-    const isOwned = (p: string): boolean =>
-      ownedPrefixes.some((prefix) => p.startsWith(prefix));
-    const unrelated: string[] = [];
-    for (const line of porcelainLines) {
-      // Porcelain format: XY<space>path — for renames (R) and copies (C)
-      // the path is encoded as "source -> destination" and BOTH sides
-      // must be owned for the guardrail to tolerate the entry. Without
-      // this split, a staged rename `content/posts/slug/foo -> static/
-      // unrelated.tsx` would slip through: the raw string starts with
-      // an owned prefix, but the destination is not owned and would
-      // still be in the index for the subsequent commit.
-      const status = line.slice(0, 2);
-      const pathPart = line.slice(3);
-      const isRenameOrCopy =
-        status[0] === 'R' || status[0] === 'C' ||
-        status[1] === 'R' || status[1] === 'C';
-      const paths = isRenameOrCopy && pathPart.includes(' -> ')
-        ? pathPart.split(' -> ')
-        : [pathPart];
-      for (const p of paths) {
-        if (!isOwned(p)) {
-          unrelated.push(p);
-        }
-      }
-    }
-    if (unrelated.length > 0) {
-      throw new Error(
-        `Site repo at '${siteRepoPath}' has uncommitted changes unrelated to this post:\n` +
-        unrelated.map((p) => `  ${p}`).join('\n') + '\n' +
-        `Commit, stash, or discard them before running 'blog publish start ${slug}'.`,
-      );
-    }
+  // Verify or generate platform images before mutating the site repo. In
+  // publish/update mode this must not rewrite the already-evaluated draft
+  // frontmatter; missing fields are fixed before evaluation via
+  // `blog draft platform-images`, or by reopening a pre-site-pr failure to
+  // draft and re-evaluating.
+  const sourceDraftMdx = join(paths.draftsDir, slug, 'index.mdx');
+  if (!existsSync(sourceDraftMdx)) {
+    throw new Error(`Draft MDX not found: ${sourceDraftMdx}`);
   }
+  await ensurePlatformImages(slug, config, {
+    draftsDir: paths.draftsDir,
+    updateFrontmatter: false,
+    writeReceipt: false,
+  });
 
-  // Origin trust-boundary check BEFORE any mutation. Expected coords
+  let kit: GenerateDistributionKitResult | null = null;
+  if (shouldGeneratePublicationBundle(config)) {
+    if (!paths.socialDir || !paths.templatesDir) {
+      throw new Error('Publication bundle generation requires socialDir and templatesDir paths');
+    }
+    kit = await generateDistributionKit(slug, config, {
+      socialDir: paths.socialDir,
+      templatesDir: paths.templatesDir,
+      draftsDir: paths.draftsDir,
+      configPath: paths.configPath,
+    }, db, {
+      sourceMode: overrides?.publishMode ?? 'publish',
+      imageMode: overrides?.distributionImageMode,
+    });
+  }
+  const sourceAssetsDir = join(paths.draftsDir, slug, 'assets');
+  const sourceResearchMdx = join(paths.researchPagesDir, slug, 'index.mdx');
+  const buildStagePaths = (cleanupStagePaths: string[]): string[] => uniquePaths([
+    `${config.site.content_dir}/${slug}/index.mdx`,
+    ...draftAssetSitePaths(slug, config, sourceAssetsDir),
+    ...(kit ? expectedSitePathsForKit(slug, config, kit) : []),
+    ...(existsSync(sourceResearchMdx) ? [`${config.site.research_dir}/${slug}/index.mdx`] : []),
+    ...cleanupStagePaths,
+  ]);
+
+  const preCheckoutCleanupAllowedPaths = kit
+    ? cleanupCandidateSitePathsForKit(slug, config, kit, siteRepoPath)
+    : [];
+  const preCheckoutStagePaths = buildStagePaths(
+    kit ? trackedCleanupSitePathsForKit(slug, config, kit, siteRepoPath) : [],
+  );
+  assertNoUnrelatedDirtySitePaths(
+    siteRepoPath,
+    uniquePaths([...preCheckoutStagePaths, ...preCheckoutCleanupAllowedPaths]),
+    slug,
+  );
+
+  // Origin trust-boundary check BEFORE any site-repo mutation. Expected coords
   // come from `config.site.github_repo` when set, else
   // `{author.github}/basename(repo_path)`. requireOriginMatch throws on
   // absent/mismatch/unparseable — so `gh pr create --repo <flag>` below
@@ -264,36 +336,6 @@ export async function createSitePR(
   const coords = parseRepoCoords(remoteUrl);
   const repoFlag = `${coords.owner}/${coords.name}`;
 
-  // Verify or generate platform images before mutating the site repo. In
-  // publish/update mode this must not rewrite the already-evaluated draft
-  // frontmatter; missing fields are fixed before evaluation via
-  // `blog draft platform-images`, or by reopening a pre-site-pr failure to
-  // draft and re-evaluating.
-  const sourceDraftMdx = join(paths.draftsDir, slug, 'index.mdx');
-  if (!existsSync(sourceDraftMdx)) {
-    throw new Error(`Draft MDX not found: ${sourceDraftMdx}`);
-  }
-  await ensurePlatformImages(slug, config, {
-    draftsDir: paths.draftsDir,
-    updateFrontmatter: false,
-    writeReceipt: false,
-  });
-
-  if (config.social?.distribution_kit?.enabled === true) {
-    if (!paths.socialDir || !paths.templatesDir) {
-      throw new Error('Distribution kit generation requires socialDir and templatesDir paths');
-    }
-    await generateDistributionKit(slug, config, {
-      socialDir: paths.socialDir,
-      templatesDir: paths.templatesDir,
-      draftsDir: paths.draftsDir,
-      configPath: paths.configPath,
-    }, db, {
-      sourceMode: overrides?.publishMode ?? 'publish',
-      imageMode: overrides?.distributionImageMode,
-    });
-  }
-
   const branchName = overrides?.branchName ?? `post/${slug}`;
 
   // Branch detection: `git branch --list` returns 0 whether the branch
@@ -313,6 +355,19 @@ export async function createSitePR(
     });
   }
 
+  const cleanupAllowedPaths = kit
+    ? cleanupCandidateSitePathsForKit(slug, config, kit, siteRepoPath)
+    : [];
+  const cleanupStagePaths = kit
+    ? trackedCleanupSitePathsForKit(slug, config, kit, siteRepoPath)
+    : [];
+  const stagePaths = buildStagePaths(cleanupStagePaths);
+  assertNoUnrelatedDirtySitePaths(
+    siteRepoPath,
+    uniquePaths([...stagePaths, ...cleanupAllowedPaths]),
+    slug,
+  );
+
   // Copy draft MDX into the site repo's content directory.
   const targetContentDir = join(siteRepoPath, config.site.content_dir, slug);
   mkdirSync(targetContentDir, { recursive: true });
@@ -326,31 +381,25 @@ export async function createSitePR(
   );
 
   // Copy assets directory if present.
-  const sourceAssetsDir = join(paths.draftsDir, slug, 'assets');
   if (existsSync(sourceAssetsDir)) {
     cpSync(sourceAssetsDir, join(targetContentDir, 'assets'), { recursive: true });
   }
 
+  if (kit) {
+    copyDistributionKitToPostDir(slug, config, kit, targetContentDir);
+  }
+
   // Copy research page (optional — skipped steps leave this absent).
-  const sourceResearchMdx = join(paths.researchPagesDir, slug, 'index.mdx');
   if (existsSync(sourceResearchMdx)) {
     const targetResearchDir = join(siteRepoPath, config.site.research_dir, slug);
     mkdirSync(targetResearchDir, { recursive: true });
     cpSync(sourceResearchMdx, join(targetResearchDir, 'index.mdx'));
   }
 
-  // Stage ONLY pipeline-owned paths. The dirty-state check at the top of
-  // this function rejects unrelated modifications, but path-scoped staging
-  // is a defense-in-depth: even if the check were bypassed (e.g., a new
-  // file landed between the check and the add), only our owned paths get
-  // committed.
-  const contentPath = `${config.site.content_dir}/${slug}`;
-  execFileSync('git', ['-C', siteRepoPath, 'add', contentPath], {
-    encoding: 'utf-8',
-  });
-  const researchPath = `${config.site.research_dir}/${slug}`;
-  if (existsSync(join(siteRepoPath, researchPath))) {
-    execFileSync('git', ['-C', siteRepoPath, 'add', researchPath], {
+  // Stage ONLY exact pipeline-owned output files. This avoids sweeping
+  // unrelated files that happen to live under content/posts/<slug>/.
+  for (const stagePath of stagePaths) {
+    execFileSync('git', ['-C', siteRepoPath, 'add', stagePath], {
       encoding: 'utf-8',
     });
   }

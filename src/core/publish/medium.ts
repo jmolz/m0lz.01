@@ -5,6 +5,7 @@ import { BlogConfig } from '../config/types.js';
 import { parseFrontmatter } from '../draft/frontmatter.js';
 import { mdxToMarkdown } from './convert.js';
 import { MEDIUM_FEATURED_IMAGE, resolvePlatformImageUrl } from './platform-images.js';
+import { derivePortableTables, PortableTableSource } from './table-assets.js';
 
 // Step 6 of the publish pipeline: generate a paste-ready Markdown file for
 // Medium. The Medium Integration Token API has been deprecated, so this step
@@ -19,6 +20,12 @@ export interface MediumPaths {
 
 export interface MediumResult {
   path: string;
+  tables: PortableTableSource[];
+}
+
+export interface RenderMediumPasteResult {
+  content: string;
+  tables: PortableTableSource[];
 }
 
 // Strip protocol + trailing slashes from a URL so it can be displayed inline
@@ -54,10 +61,25 @@ export function generateMediumPaste(
 ): MediumResult {
   const draftPath = join(paths.draftsDir, slug, 'index.mdx');
   const mdx = readFileSync(draftPath, 'utf-8');
+  const rendered = renderMediumPaste(slug, config, mdx);
+  const outputPath = writeMediumPaste(slug, rendered.content, paths);
 
+  return { path: outputPath, tables: rendered.tables };
+}
+
+export function renderMediumPaste(
+  slug: string,
+  config: BlogConfig,
+  mdx: string,
+): RenderMediumPasteResult {
   const fm = parseFrontmatter(mdx);
   const { body } = splitMdx(mdx);
   const markdownBody = mdxToMarkdown(body, slug, config.site.base_url);
+  const portable = derivePortableTables(markdownBody, {
+    slug,
+    baseUrl: config.site.base_url,
+    title: fm.title,
+  });
 
   const canonicalUrl = `${config.site.base_url.replace(/\/+$/, '')}/writing/${slug}`;
   const display = displayBaseUrl(config.site.base_url);
@@ -75,7 +97,7 @@ export function generateMediumPaste(
     '',
     `![${imageAlt(fm.title, MEDIUM_FEATURED_IMAGE.altSuffix)}](${imageUrl})`,
     '',
-    markdownBody.trim(),
+    portable.markdown.trim(),
     '',
     '---',
     '',
@@ -83,9 +105,16 @@ export function generateMediumPaste(
     '',
   ].join('\n');
 
+  return { content: paste, tables: portable.tables };
+}
+
+export function writeMediumPaste(
+  slug: string,
+  content: string,
+  paths: Pick<MediumPaths, 'socialDir'>,
+): string {
   const outputPath = join(paths.socialDir, slug, 'medium-paste.md');
   mkdirSync(dirname(outputPath), { recursive: true });
-  writeFileSync(outputPath, paste, 'utf-8');
-
-  return { path: outputPath };
+  writeFileSync(outputPath, content, 'utf-8');
+  return outputPath;
 }

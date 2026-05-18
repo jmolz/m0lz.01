@@ -536,7 +536,7 @@ export async function runPublishDistributionKit(
     );
 
     const shouldCommitSite =
-      opts.commitSite === true || config!.social.distribution_kit.persist_to_site === true;
+      opts.commitSite === true || config!.social?.distribution_kit?.persist_to_site === true;
     if (shouldCommitSite) {
       const persisted = persistDistributionKitToSite(slug, config!, { configPath }, kit);
       console.log(

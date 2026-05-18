@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -241,8 +241,12 @@ describe('generateDistributionKit', () => {
     expect(existsSync(result.hackerNewsPath)).toBe(true);
     expect(existsSync(result.promptPath!)).toBe(true);
     expect(result.imagePath).toBeNull();
+    expect(existsSync(result.mediumPath!)).toBe(true);
+    expect(existsSync(result.substackPath!)).toBe(true);
     expect(result.manifest.image_mode).toBe('prompt-only');
     expect(result.manifest.image).toBeNull();
+    expect(result.manifest.text.medium?.sha256).toBe(sha256(readFileSync(result.mediumPath!)));
+    expect(result.manifest.text.substack?.sha256).toBe(sha256(readFileSync(result.substackPath!)));
     const linkedin = readFileSync(result.linkedinPath, 'utf-8');
     expect(linkedin).toContain('Prompt Only Title');
     expect(linkedin).toContain('https://draft.example/writing/prompt-only');
@@ -280,12 +284,16 @@ describe('generateDistributionKit', () => {
     expect(first.manifest.prompt?.sha256).toBe(sha256(readFileSync(first.promptPath!)));
     expect(first.manifest.text.linkedin.sha256).toBe(sha256(readFileSync(first.linkedinPath)));
     expect(first.manifest.text.hackernews.sha256).toBe(sha256(readFileSync(first.hackerNewsPath)));
+    expect(first.manifest.text.medium?.sha256).toBe(sha256(readFileSync(first.mediumPath!)));
+    expect(first.manifest.text.substack?.sha256).toBe(sha256(readFileSync(first.substackPath!)));
     expect(first.manifest.image?.path).toBe('assets/linkedin-feed.png');
     expect(first.manifest.image?.width).toBe(1200);
     expect(first.manifest.image?.height).toBe(1200);
     expect(first.manifest.image?.bytes).toBe(readFileSync(first.imagePath!).length);
     expect(first.manifest.image?.sha256).toMatch(/^[a-f0-9]{64}$/);
     expect(first.manifest.image?.sha256).toBe(sha256(readFileSync(first.imagePath!)));
+    expect(first.imagePath).toBe(join(f.socialDir, 'generated', 'assets', 'linkedin-feed.png'));
+    expect(existsSync(join(f.draftsDir, 'generated', 'assets', 'linkedin-feed.png'))).toBe(false);
 
     const second = await generateDistributionKit('generated', f.config, f, f.db, {
       sourceMode: 'publish',
@@ -295,6 +303,27 @@ describe('generateDistributionKit', () => {
     expect(second.reused).toBe(true);
     expect(provider.calls.length).toBe(1);
     expect(readFileSync(second.manifestPath, 'utf-8')).toBe(manifestBytes);
+  });
+
+  it('writes portable table assets into the distribution kit, not evaluated draft assets', async () => {
+    const f = setup();
+    seedPost(f.db, 'table-location');
+    writeDraft(f, 'table-location', 'Table Location Title');
+    const draftPath = join(f.draftsDir, 'table-location', 'index.mdx');
+    writeFileSync(draftPath, readFileSync(draftPath, 'utf-8').replace('Body', [
+      '| Runtime | Median |',
+      '| --- | ---: |',
+      '| Node | 12ms |',
+    ].join('\n')), 'utf-8');
+
+    const result = await generateDistributionKit('table-location', f.config, f, f.db, {
+      sourceMode: 'publish',
+      imageMode: 'prompt-only',
+    });
+
+    expect(result.tableImagePaths).toHaveLength(1);
+    expect(result.tableImagePaths[0].startsWith(join(f.socialDir, 'table-location', 'assets'))).toBe(true);
+    expect(existsSync(join(f.draftsDir, 'table-location', 'assets'))).toBe(false);
   });
 
   it('loadDistributionKit refuses text artifacts that no longer match the manifest', async () => {
@@ -308,6 +337,245 @@ describe('generateDistributionKit', () => {
 
     expect(() => loadDistributionKit('tampered-text', f))
       .toThrow(/LinkedIn text artifact hash mismatch/);
+  });
+
+  it('loadDistributionKit refuses Medium paste and table assets that no longer match the manifest', async () => {
+    const f = setup();
+    seedPost(f.db, 'tampered-bundle');
+    writeDraft(f, 'tampered-bundle', 'Tampered Bundle Title');
+    const draftPath = join(f.draftsDir, 'tampered-bundle', 'index.mdx');
+    writeFileSync(draftPath, readFileSync(draftPath, 'utf-8').replace('Body', [
+      '| Runtime | Median |',
+      '| --- | ---: |',
+      '| Node | 12ms |',
+    ].join('\n')), 'utf-8');
+    const result = await generateDistributionKit('tampered-bundle', f.config, f, f.db, {
+      sourceMode: 'publish',
+    });
+    expect(result.manifest.tables).toHaveLength(1);
+
+    writeFileSync(result.mediumPath!, 'tampered medium paste\n', 'utf-8');
+    expect(() => loadDistributionKit('tampered-bundle', f))
+      .toThrow(/Medium paste artifact hash mismatch/);
+
+    await generateDistributionKit('tampered-bundle', f.config, f, f.db, {
+      sourceMode: 'publish',
+      force: true,
+    });
+    writeFileSync(result.tableImagePaths[0], Buffer.from('tampered table'));
+    expect(() => loadDistributionKit('tampered-bundle', f))
+      .toThrow(/table 1 artifact hash mismatch/);
+  });
+
+  it('loadDistributionKit refuses Hacker News and Substack artifacts that no longer match the manifest', async () => {
+    const f = setup();
+    seedPost(f.db, 'tampered-platforms');
+    writeDraft(f, 'tampered-platforms', 'Tampered Platforms Title');
+    const result = await generateDistributionKit('tampered-platforms', f.config, f, f.db, {
+      sourceMode: 'publish',
+    });
+
+    writeFileSync(result.hackerNewsPath!, 'tampered hacker news text\n', 'utf-8');
+    expect(() => loadDistributionKit('tampered-platforms', f))
+      .toThrow(/Hacker News text artifact hash mismatch/);
+
+    await generateDistributionKit('tampered-platforms', f.config, f, f.db, {
+      sourceMode: 'publish',
+      force: true,
+    });
+    writeFileSync(result.substackPath!, 'tampered substack paste\n', 'utf-8');
+    expect(() => loadDistributionKit('tampered-platforms', f))
+      .toThrow(/Substack paste artifact hash mismatch/);
+  });
+
+  it('backfill renders paste files from hub-site MDX before stale local draft MDX', async () => {
+    const f = setup();
+    seedPost(f.db, 'hub-source');
+    advancePhase(f.db, 'hub-source', 'published');
+    writeDraft(f, 'hub-source', 'Stale Draft Title');
+    writeHub(f, 'hub-source');
+
+    const result = await generateDistributionKit('hub-source', f.config, f, f.db, {
+      sourceMode: 'backfill',
+    });
+    const medium = readFileSync(result.mediumPath!, 'utf-8');
+    expect(medium).toContain('# Hub Title');
+    expect(medium).not.toContain('Stale Draft Title');
+  });
+
+  it('respects disabled Medium/Substack while still allowing social artifacts', async () => {
+    const f = setup();
+    seedPost(f.db, 'disabled-paste');
+    writeDraft(f, 'disabled-paste');
+    f.config.publish.medium = false;
+    f.config.publish.substack = false;
+
+    const result = await generateDistributionKit('disabled-paste', f.config, f, f.db, {
+      sourceMode: 'publish',
+    });
+    expect(result.mediumPath).toBeNull();
+    expect(result.substackPath).toBeNull();
+    expect(result.manifest.text.medium).toBeNull();
+    expect(result.manifest.text.substack).toBeNull();
+    expect(existsSync(result.linkedinPath!)).toBe(true);
+  });
+
+  it('respects individual Medium and Substack config toggles', async () => {
+    const f = setup();
+    seedPost(f.db, 'medium-disabled');
+    writeDraft(f, 'medium-disabled');
+    f.config.publish.medium = false;
+
+    const mediumDisabled = await generateDistributionKit('medium-disabled', f.config, f, f.db, {
+      sourceMode: 'publish',
+    });
+    expect(mediumDisabled.mediumPath).toBeNull();
+    expect(mediumDisabled.substackPath).not.toBeNull();
+    expect(mediumDisabled.manifest.text.medium).toBeNull();
+    expect(mediumDisabled.manifest.text.substack?.path).toBe('substack-paste.md');
+
+    f.config.publish.medium = true;
+    f.config.publish.substack = false;
+    seedPost(f.db, 'substack-disabled');
+    writeDraft(f, 'substack-disabled');
+
+    const substackDisabled = await generateDistributionKit('substack-disabled', f.config, f, f.db, {
+      sourceMode: 'publish',
+    });
+    expect(substackDisabled.mediumPath).not.toBeNull();
+    expect(substackDisabled.substackPath).toBeNull();
+    expect(substackDisabled.manifest.text.medium?.path).toBe('medium-paste.md');
+    expect(substackDisabled.manifest.text.substack).toBeNull();
+  });
+
+  it('keeps enabled Medium/Substack artifacts when social distribution is disabled', async () => {
+    const f = setup();
+    seedPost(f.db, 'social-disabled');
+    writeDraft(f, 'social-disabled');
+    f.config.social.distribution_kit.enabled = false;
+
+    const result = await generateDistributionKit('social-disabled', f.config, f, f.db, {
+      sourceMode: 'publish',
+    });
+    expect(result.linkedinPath).toBeNull();
+    expect(result.hackerNewsPath).toBeNull();
+    expect(result.manifest.text.linkedin).toBeNull();
+    expect(result.manifest.text.hackernews).toBeNull();
+    expect(existsSync(result.mediumPath!)).toBe(true);
+    expect(existsSync(result.substackPath!)).toBe(true);
+  });
+
+  it('rejects non-allowlisted manifest paths before returning local artifact paths', async () => {
+    const f = setup();
+    seedPost(f.db, 'unsafe-paths');
+    writeDraft(f, 'unsafe-paths');
+    const result = await generateDistributionKit('unsafe-paths', f.config, f, f.db, {
+      sourceMode: 'publish',
+    });
+    const manifest = JSON.parse(readFileSync(result.manifestPath, 'utf-8'));
+    manifest.text.medium.path = '../medium-paste.md';
+    writeFileSync(result.manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf-8');
+
+    expect(() => loadDistributionKit('unsafe-paths', f))
+      .toThrow(/unsafe or non-allowlisted path/);
+
+    const regenerated = await generateDistributionKit('unsafe-paths', f.config, f, f.db, {
+      sourceMode: 'publish',
+      force: true,
+    });
+    const roleSwappedManifest = JSON.parse(readFileSync(regenerated.manifestPath, 'utf-8'));
+    roleSwappedManifest.text.medium.path = 'linkedin.md';
+    roleSwappedManifest.text.medium.sha256 = roleSwappedManifest.text.linkedin.sha256;
+    writeFileSync(regenerated.manifestPath, `${JSON.stringify(roleSwappedManifest, null, 2)}\n`, 'utf-8');
+    expect(() => loadDistributionKit('unsafe-paths', f))
+      .toThrow(/expected 'medium-paste\.md'/);
+  });
+
+  it('rejects absolute, symlinked, and non-allowlisted table manifest paths', async () => {
+    const f = setup();
+    seedPost(f.db, 'unsafe-path-variants');
+    writeDraft(f, 'unsafe-path-variants');
+    const result = await generateDistributionKit('unsafe-path-variants', f.config, f, f.db, {
+      sourceMode: 'publish',
+    });
+
+    let manifest = JSON.parse(readFileSync(result.manifestPath, 'utf-8'));
+    manifest.text.medium.path = join(f.tempDir, 'absolute-medium-paste.md');
+    writeFileSync(result.manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf-8');
+    expect(() => loadDistributionKit('unsafe-path-variants', f))
+      .toThrow(/unsafe or non-allowlisted path/);
+
+    await generateDistributionKit('unsafe-path-variants', f.config, f, f.db, {
+      sourceMode: 'publish',
+      force: true,
+    });
+    const hackerNewsBytes = readFileSync(result.hackerNewsPath!);
+    const symlinkTarget = join(f.tempDir, 'hackernews-target.md');
+    writeFileSync(symlinkTarget, hackerNewsBytes);
+    rmSync(result.hackerNewsPath!, { force: true });
+    symlinkSync(symlinkTarget, result.hackerNewsPath!);
+    expect(() => loadDistributionKit('unsafe-path-variants', f))
+      .toThrow(/not a regular file/);
+
+    rmSync(result.hackerNewsPath!, { force: true });
+    await generateDistributionKit('unsafe-path-variants', f.config, f, f.db, {
+      sourceMode: 'publish',
+      force: true,
+    });
+    manifest = JSON.parse(readFileSync(result.manifestPath, 'utf-8'));
+    manifest.tables.push({
+      path: 'assets/../portable-table-bad.png',
+      sha256: '0'.repeat(64),
+      width: 1,
+      height: 1,
+      bytes: 1,
+      alt: 'bad table',
+      source_hash: '0'.repeat(64),
+      row_count: 1,
+      column_count: 1,
+    });
+    writeFileSync(result.manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf-8');
+    expect(() => loadDistributionKit('unsafe-path-variants', f))
+      .toThrow(/unsafe or non-allowlisted path/);
+  });
+
+  it('does not reuse an otherwise hash-matching manifest with an unsafe or wrong-role artifact path', async () => {
+    const f = setup();
+    seedPost(f.db, 'unsafe-reuse');
+    writeDraft(f, 'unsafe-reuse');
+    const result = await generateDistributionKit('unsafe-reuse', f.config, f, f.db, {
+      sourceMode: 'publish',
+    });
+    const manifest = JSON.parse(readFileSync(result.manifestPath, 'utf-8'));
+    manifest.text.medium.path = '../medium-paste.md';
+    writeFileSync(join(f.socialDir, 'medium-paste.md'), readFileSync(result.mediumPath!));
+    writeFileSync(result.manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf-8');
+
+    const regenerated = await generateDistributionKit('unsafe-reuse', f.config, f, f.db, {
+      sourceMode: 'publish',
+    });
+
+    expect(regenerated.reused).toBe(false);
+    expect(regenerated.manifest.text.medium?.path).toBe('medium-paste.md');
+    expect(() => loadDistributionKit('unsafe-reuse', f)).not.toThrow();
+
+    seedPost(f.db, 'wrong-role-reuse');
+    writeDraft(f, 'wrong-role-reuse');
+    const roleResult = await generateDistributionKit('wrong-role-reuse', f.config, f, f.db, {
+      sourceMode: 'publish',
+    });
+    const roleManifest = JSON.parse(readFileSync(roleResult.manifestPath, 'utf-8'));
+    roleManifest.text.medium.path = 'linkedin.md';
+    roleManifest.text.medium.sha256 = roleManifest.text.linkedin.sha256;
+    writeFileSync(roleResult.manifestPath, `${JSON.stringify(roleManifest, null, 2)}\n`, 'utf-8');
+
+    const roleRegenerated = await generateDistributionKit('wrong-role-reuse', f.config, f, f.db, {
+      sourceMode: 'publish',
+    });
+
+    expect(roleRegenerated.reused).toBe(false);
+    expect(roleRegenerated.manifest.text.medium?.path).toBe('medium-paste.md');
+    expect(() => loadDistributionKit('wrong-role-reuse', f)).not.toThrow();
   });
 
   it('loadDistributionKit refuses generated images that no longer match the manifest', async () => {

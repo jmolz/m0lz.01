@@ -9,6 +9,7 @@ import {
   SUBSTACK_PREVIEW_IMAGE,
   resolvePlatformImageUrl,
 } from './platform-images.js';
+import { derivePortableTables, PortableTableSource } from './table-assets.js';
 
 // Step 7 of the publish pipeline: generate a paste-ready Markdown file for
 // Substack. Substack has no official publishing API; the author pastes this
@@ -23,6 +24,12 @@ export interface SubstackPaths {
 
 export interface SubstackResult {
   path: string;
+  tables: PortableTableSource[];
+}
+
+export interface RenderSubstackPasteResult {
+  content: string;
+  tables: PortableTableSource[];
 }
 
 const SUBSTACK_SUBTITLE_MAX_CHARS = 120;
@@ -71,10 +78,25 @@ export function generateSubstackPaste(
 ): SubstackResult {
   const draftPath = join(paths.draftsDir, slug, 'index.mdx');
   const mdx = readFileSync(draftPath, 'utf-8');
+  const rendered = renderSubstackPaste(slug, config, mdx);
+  const outputPath = writeSubstackPaste(slug, rendered.content, paths);
 
+  return { path: outputPath, tables: rendered.tables };
+}
+
+export function renderSubstackPaste(
+  slug: string,
+  config: BlogConfig,
+  mdx: string,
+): RenderSubstackPasteResult {
   const fm = parseFrontmatter(mdx);
   const { body } = splitMdx(mdx);
   const markdownBody = mdxToMarkdown(body, slug, config.site.base_url);
+  const portable = derivePortableTables(markdownBody, {
+    slug,
+    baseUrl: config.site.base_url,
+    title: fm.title,
+  });
 
   const canonicalUrl = `${config.site.base_url.replace(/\/+$/, '')}/writing/${slug}`;
   const display = displayBaseUrl(config.site.base_url);
@@ -95,7 +117,7 @@ export function generateSubstackPaste(
     '',
     `![${imageAlt(fm.title, substackImage.spec.altSuffix)}](${imageUrl})`,
     '',
-    markdownBody.trim(),
+    portable.markdown.trim(),
     '',
     '---',
     '',
@@ -103,9 +125,16 @@ export function generateSubstackPaste(
     '',
   ].join('\n');
 
+  return { content: paste, tables: portable.tables };
+}
+
+export function writeSubstackPaste(
+  slug: string,
+  content: string,
+  paths: Pick<SubstackPaths, 'socialDir'>,
+): string {
   const outputPath = join(paths.socialDir, slug, 'substack-paste.md');
   mkdirSync(dirname(outputPath), { recursive: true });
-  writeFileSync(outputPath, paste, 'utf-8');
-
-  return { path: outputPath };
+  writeFileSync(outputPath, content, 'utf-8');
+  return outputPath;
 }
