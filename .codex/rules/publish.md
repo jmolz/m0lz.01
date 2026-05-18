@@ -39,6 +39,20 @@ Forensic anchors:
 - `tests/platform-images.test.ts` preserves explicit `https://...` platform image URLs without rewriting frontmatter.
 - `tests/platform-images.test.ts` rejects unsafe platform paths before writes, receipts, or frontmatter rewrites.
 
+## Cross-post paste output must stay portable
+
+Medium and Substack paste files are the copy surface. Do not rely on browser preview copy behavior for charts, figures, diagrams, or other visual MDX components.
+
+`mdxToMarkdown` must preserve image-backed visual components as Markdown image links with public hub asset URLs before JSX stripping. A visual component used in cross-posted content must either render as ordinary Markdown, or expose a string image asset reference such as `src="./assets/chart.png"` with usable alt text. Data-only interactive chart components require an exported image asset before publish, otherwise the visual disappears from `medium-paste.md` and `substack-paste.md`.
+
+Substack subtitles are platform-specific. Generate a short paste subtitle from `description` instead of copying long frontmatter descriptions verbatim.
+
+Forensic anchors:
+- `src/core/publish/convert.ts` preserves image-backed JSX components before `removeJsxComponents`.
+- `src/core/publish/substack.ts` truncates long subtitles for Substack paste output.
+- `tests/publish-convert.test.ts` covers portable image-backed chart conversion.
+- `tests/publish-crosspost.test.ts` covers Medium/Substack chart copyability and Substack subtitle truncation.
+
 ## Image generation must be deterministic and config-derived
 
 Publish must not call remote image APIs, browser automation, or platform upload APIs to create assets. Local Sharp transforms and fallback SVG rendering are acceptable because they run offline and produce stable filenames.

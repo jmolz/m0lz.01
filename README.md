@@ -552,6 +552,14 @@ URL/README updates, it copies the already-generated kit to
 `content/posts/<slug>/distribution/` and the optional image to
 `content/posts/<slug>/assets/linkedin-feed.png`.
 
+Medium and Substack paste files are generated from the same evaluated MDX, but
+with platform-specific copy constraints. Substack receives a shortened subtitle
+derived from `description` instead of the full SEO description. Image-backed MDX
+visual components, such as chart or figure components with
+`src="./assets/<file>"`, are converted to public Markdown image links before JSX
+is stripped so the visual remains copyable into Medium and Substack. Data-only
+interactive charts still need an exported image asset before publish.
+
 LinkedIn image generation is controlled by `.blogrc.yaml`:
 
 ```yaml
