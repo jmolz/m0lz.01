@@ -25,6 +25,8 @@ export interface SubstackResult {
   path: string;
 }
 
+const SUBSTACK_SUBTITLE_MAX_CHARS = 120;
+
 function displayBaseUrl(baseUrl: string): string {
   return baseUrl.replace(/^[a-z][a-z0-9+.-]*:\/\//i, '').replace(/\/+$/, '');
 }
@@ -42,6 +44,24 @@ function splitMdx(mdx: string): { frontmatter: string; body: string } {
 
 function imageAlt(title: string, suffix: string): string {
   return `${title} ${suffix}`.replace(/[\[\]]/g, '');
+}
+
+function truncateDescription(value: string, maxChars: number): string {
+  const normalized = value.replace(/\s+/g, ' ').trim();
+  if (normalized.length <= maxChars) return normalized;
+
+  const sentenceEnd = normalized.match(/^(.+?[.!?])(?:\s|$)/);
+  if (sentenceEnd && sentenceEnd[1].length <= maxChars) {
+    return sentenceEnd[1];
+  }
+
+  const limit = Math.max(0, maxChars - 3);
+  const clipped = normalized.slice(0, limit);
+  const lastSpace = clipped.lastIndexOf(' ');
+  const base = lastSpace >= Math.floor(limit * 0.7)
+    ? clipped.slice(0, lastSpace)
+    : clipped;
+  return `${base.trimEnd()}...`;
 }
 
 export function generateSubstackPaste(
@@ -71,7 +91,7 @@ export function generateSubstackPaste(
   const paste = [
     `# ${fm.title}`,
     '',
-    `## ${fm.description}`,
+    `## ${truncateDescription(fm.description, SUBSTACK_SUBTITLE_MAX_CHARS)}`,
     '',
     `![${imageAlt(fm.title, substackImage.spec.altSuffix)}](${imageUrl})`,
     '',

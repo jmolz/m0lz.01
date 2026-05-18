@@ -79,6 +79,27 @@ function mdxWithPlatformImage(
   );
 }
 
+function mdxWithDescription(description: string): string {
+  return SAMPLE_MDX.replace(
+    'description: "A one-line description"',
+    `description: "${description}"`,
+  );
+}
+
+function mdxWithImageChart(): string {
+  return SAMPLE_MDX.replace(
+    '<FancyComponent>gone</FancyComponent>',
+    [
+      '<BenchmarkChart',
+      '  src="./assets/parallel-cohort-speedup.png"',
+      '  alt="Parallel cohort speedup chart"',
+      '/>',
+      '',
+      '<FancyComponent>gone</FancyComponent>',
+    ].join('\n'),
+  );
+}
+
 interface Fixture {
   tempDir: string;
   draftsDir: string;
@@ -593,6 +614,19 @@ describe('generateMediumPaste', () => {
     // Label text must drop protocol + trailing slash.
     expect(content).toContain('[example.com](https://example.com/writing/proto)');
   });
+
+  it('keeps image-backed MDX charts copyable as Markdown image links', () => {
+    const f = setup('chart-medium', mdxWithImageChart());
+    generateMediumPaste('chart-medium', makeConfig(), {
+      draftsDir: f.draftsDir,
+      socialDir: f.socialDir,
+    });
+    const content = readFileSync(join(f.socialDir, 'chart-medium', 'medium-paste.md'), 'utf-8');
+    expect(content).toContain(
+      '![Parallel cohort speedup chart](https://m0lz.dev/writing/chart-medium/assets/parallel-cohort-speedup.png)',
+    );
+    expect(content).not.toContain('<BenchmarkChart');
+  });
 });
 
 describe('generateSubstackPaste', () => {
@@ -645,5 +679,36 @@ describe('generateSubstackPaste', () => {
     // Code fence preserved.
     expect(content).toContain('const x = 1;');
     expect(content).toContain('```ts');
+  });
+
+  it('truncates the subtitle so long descriptions fit Substack', () => {
+    const longDescription = [
+      'Stack Loops keeps infrastructure, deployment, and observability contracts in review even when the code diff looks like application work.',
+      'This second sentence should stay out of the Substack subtitle.',
+    ].join(' ');
+    const f = setup('long-subtitle', mdxWithDescription(longDescription));
+    generateSubstackPaste('long-subtitle', makeConfig(), {
+      draftsDir: f.draftsDir,
+      socialDir: f.socialDir,
+    });
+
+    const content = readFileSync(join(f.socialDir, 'long-subtitle', 'substack-paste.md'), 'utf-8');
+    const subtitle = content.match(/^## (.+)$/m)?.[1] ?? '';
+    expect(subtitle.length).toBeLessThanOrEqual(120);
+    expect(subtitle).toMatch(/\.\.\.$/);
+    expect(subtitle).not.toContain('second sentence');
+  });
+
+  it('keeps image-backed MDX charts copyable as Markdown image links', () => {
+    const f = setup('chart-substack', mdxWithImageChart());
+    generateSubstackPaste('chart-substack', makeConfig(), {
+      draftsDir: f.draftsDir,
+      socialDir: f.socialDir,
+    });
+    const content = readFileSync(join(f.socialDir, 'chart-substack', 'substack-paste.md'), 'utf-8');
+    expect(content).toContain(
+      '![Parallel cohort speedup chart](https://m0lz.dev/writing/chart-substack/assets/parallel-cohort-speedup.png)',
+    );
+    expect(content).not.toContain('<BenchmarkChart');
   });
 });

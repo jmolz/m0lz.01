@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 
 import {
   mdxToMarkdown,
+  preserveImageJsxComponents,
   removeImports,
   removeJsxComponents,
   resolveAssetUrls,
@@ -54,6 +55,20 @@ describe('removeJsxComponents', () => {
   });
 });
 
+describe('preserveImageJsxComponents', () => {
+  it('converts image-backed chart components to Markdown images', () => {
+    const input = '<BenchmarkChart src="./assets/speedup.png" alt="Parallel cohort speedup" />';
+    expect(preserveImageJsxComponents(input)).toBe(
+      '![Parallel cohort speedup](./assets/speedup.png)',
+    );
+  });
+
+  it('leaves non-image JSX components for the stripping pass', () => {
+    const input = '<MetricCard value={42} />';
+    expect(preserveImageJsxComponents(input)).toBe(input);
+  });
+});
+
 describe('resolveAssetUrls', () => {
   it('transforms ./assets/x.svg image references to an absolute hub URL', () => {
     const input = '![Arch](./assets/arch.svg)';
@@ -93,6 +108,23 @@ describe('mdxToMarkdown — end-to-end composition', () => {
     expect(out).not.toContain('<Callout');
     expect(out).toContain('Visual warning');
     expect(out).toContain('https://m0lz.dev/writing/example/assets/arch.svg');
+  });
+
+  it('keeps image-backed chart components as absolute Markdown images', () => {
+    const input = [
+      '# Benchmark Results',
+      '',
+      '<BenchmarkChart',
+      '  src="./assets/parallel-cohort-speedup.png"',
+      '  alt="Parallel cohort speedup chart"',
+      '/>',
+    ].join('\n');
+    const out = mdxToMarkdown(input, 'chart-post', 'https://m0lz.dev');
+
+    expect(out).toContain(
+      '![Parallel cohort speedup chart](https://m0lz.dev/writing/chart-post/assets/parallel-cohort-speedup.png)',
+    );
+    expect(out).not.toContain('<BenchmarkChart');
   });
 
   it('preserves content inside ``` fences verbatim — imports, JSX, and relative paths pass through', () => {

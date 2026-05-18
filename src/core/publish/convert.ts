@@ -76,6 +76,55 @@ export function removeImports(content: string): string {
   return keep.join('\n');
 }
 
+function unquoteAttributeValue(value: string): string {
+  const trimmed = value.trim();
+  const quote = trimmed[0];
+  if ((quote === '"' || quote === "'") && trimmed[trimmed.length - 1] === quote) {
+    return trimmed.slice(1, -1);
+  }
+  return trimmed;
+}
+
+function readStringAttribute(attrs: string, name: string): string | null {
+  const attrPattern = new RegExp(`\\b${name}\\s*=\\s*("[^"]*"|'[^']*'|\\{\\s*["'][^"']*["']\\s*\\})`);
+  const match = attrs.match(attrPattern);
+  if (!match) return null;
+  const raw = match[1].replace(/^\{\s*/, '').replace(/\s*\}$/, '');
+  return unquoteAttributeValue(raw);
+}
+
+function imageAltFrom(componentName: string, attrs: string): string {
+  const explicit =
+    readStringAttribute(attrs, 'alt') ??
+    readStringAttribute(attrs, 'title') ??
+    readStringAttribute(attrs, 'caption');
+  if (explicit && explicit.trim().length > 0) {
+    return explicit.replace(/[\[\]\n\r]/g, ' ').replace(/\s+/g, ' ').trim();
+  }
+  return componentName
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replace(/[\[\]]/g, '')
+    .trim();
+}
+
+function isImageLikeAsset(src: string): boolean {
+  return /\.(?:png|jpe?g|webp|gif|svg)(?:[?#].*)?$/i.test(src);
+}
+
+// Preserve image-backed MDX components as portable Markdown images. This
+// catches chart/diagram/figure components that render fine on the hub but
+// otherwise disappear from Medium/Substack paste output when JSX is stripped.
+export function preserveImageJsxComponents(content: string): string {
+  return content.replace(
+    /<([A-Z][A-Za-z0-9]*)\b([^<>]*?)\/>/g,
+    (match, componentName: string, attrs: string) => {
+      const src = readStringAttribute(attrs, 'src');
+      if (!src || !isImageLikeAsset(src)) return match;
+      return `![${imageAltFrom(componentName, attrs)}](${src})`;
+    },
+  );
+}
+
 // Strip JSX / MDX components from prose. Handles three cases in order:
 //   1. Self-closing tags:       <Component ... />      → ""
 //   2. Inline open/close pairs: <Tag>text</Tag>        → "text"
@@ -215,7 +264,8 @@ export function mdxToMarkdown(
     if (seg.inside) return seg.lines.join('\n');
     const joined = seg.lines.join('\n');
     const imported = removeImports(joined);
-    const dejsx = removeJsxComponents(imported);
+    const imageComponents = preserveImageJsxComponents(imported);
+    const dejsx = removeJsxComponents(imageComponents);
     const withUrls = resolveAssetUrls(dejsx, slug, baseUrl);
     return withUrls;
   });
