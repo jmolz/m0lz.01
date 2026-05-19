@@ -66,13 +66,18 @@ const STRIPE_FILL = '#f7f7f7';
 const TEXT_FILL = '#171717';
 const HEADER_TEXT_FILL = '#ffffff';
 const FONT_FAMILY = 'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif';
-const HEADER_FONT_SIZE = 17;
-const BODY_FONT_SIZE = 16;
-const LINE_HEIGHT = 22;
-const CELL_PADDING_X = 18;
-const CELL_PADDING_Y = 16;
-const MIN_BODY_ROW_HEIGHT = 56;
-const MIN_HEADER_ROW_HEIGHT = 60;
+const BODY_FONT_SIZE = 20;
+const LINE_HEIGHT = 30;
+const CARD_MARGIN_X = 36;
+const CARD_MARGIN_Y = 28;
+const CARD_PADDING_X = 28;
+const CARD_PADDING_Y = 24;
+const CARD_GAP = 18;
+const FIELD_GAP = 18;
+const TABLE_TITLE_FONT_SIZE = 28;
+const TABLE_TITLE_LINE_HEIGHT = 36;
+const FIELD_LABEL_FONT_SIZE = 13;
+const FIELD_LABEL_LINE_HEIGHT = 18;
 
 function sha256(value: string | Buffer): string {
   return createHash('sha256').update(value).digest('hex');
@@ -236,8 +241,8 @@ function normalizeDisplayText(value: string): string {
     .replace(/`([^`]+)`/g, '$1')
     .replace(/\*\*([^*]+)\*\*/g, '$1')
     .replace(/\*([^*]+)\*/g, '$1')
-    .replace(/__([^_]+)__/g, '$1')
-    .replace(/_([^_]+)_/g, '$1')
+    .replace(/(^|\W)__([^_\s][^_]*?[^_\s])__(?=\W|$)/g, '$1$2')
+    .replace(/(^|\W)_([^_\s][^_]*?[^_\s])_(?=\W|$)/g, '$1$2')
     .replace(/\[([^\]]+)]\([^)]+\)/g, '$1')
     .replace(/\\\|/g, '|')
     .replace(/\s+/g, ' ')
@@ -296,38 +301,6 @@ function wrapText(value: string, maxWidth: number, fontSize: number): string[] {
   return lines.length > 0 ? lines : [''];
 }
 
-function headerWeight(value: string): number {
-  const normalized = normalizeDisplayText(value).toLowerCase();
-  if (/\b(evidence|boundary|rationale|notes?|result|finding|constraint)\b/.test(normalized)) return 2.2;
-  if (/\b(check|id|status|type)\b/.test(normalized)) return 0.75;
-  return 1;
-}
-
-function baseMinimumWidth(columnCount: number): number {
-  if (columnCount <= 4) return 150;
-  if (columnCount <= 8) return 108;
-  return 84;
-}
-
-function computeColumnWidths(table: ParsedTable): number[] {
-  const columnCount = table.header.length;
-  const minWidth = Math.min(baseMinimumWidth(columnCount), Math.floor(TABLE_WIDTH / columnCount));
-  const reserved = minWidth * columnCount;
-  const remaining = Math.max(0, TABLE_WIDTH - reserved);
-  const rows = [table.header, ...table.rows];
-  const rawWeights = table.header.map((header, index) => {
-    const maxText = Math.max(
-      ...rows.map((row) => measureText(normalizeDisplayText(row[index] ?? ''), BODY_FONT_SIZE)),
-    );
-    return Math.max(1, Math.sqrt(maxText)) * headerWeight(header);
-  });
-  const totalWeight = rawWeights.reduce((sum, value) => sum + value, 0) || 1;
-  const widths = rawWeights.map((weight) => minWidth + Math.floor((remaining * weight) / totalWeight));
-  const correction = TABLE_WIDTH - widths.reduce((sum, value) => sum + value, 0);
-  widths[widths.length - 1] += correction;
-  return widths;
-}
-
 function renderTooManyColumnsSvg(table: ParsedTable): string {
   const message = `Table has ${table.header.length} columns; use the canonical article for the semantic table.`;
   const height = 168;
@@ -343,70 +316,112 @@ function renderTooManyColumnsSvg(table: ParsedTable): string {
   ].join('');
 }
 
+function tableTitle(table: ParsedTable): string {
+  return table.alt.replace(/^Table:\s*/, '').trim() || 'Table';
+}
+
+function renderLineTspans(
+  lines: string[],
+  x: number,
+  y: number,
+  options: {
+    fontSize: number;
+    lineHeight: number;
+    cellX: number;
+    cellWidth: number;
+    rowY: number;
+    rowHeight: number;
+    paddingX: number;
+  },
+): string {
+  return lines.map((line, lineIndex) => {
+    const lineY = y + (lineIndex + 1) * options.lineHeight - Math.round(options.lineHeight * 0.24);
+    const lineWidth = measureText(line, options.fontSize);
+    return `<tspan x="${x}" y="${lineY}" data-cell-x="${options.cellX}" data-cell-width="${options.cellWidth}" ` +
+      `data-line-width="${lineWidth}" data-row-y="${options.rowY}" data-row-height="${options.rowHeight}" ` +
+      `data-padding-x="${options.paddingX}">${escapeXml(line)}</tspan>`;
+  }).join('');
+}
+
+function renderCardSvg(table: ParsedTable): string {
+  const contentX = CARD_MARGIN_X;
+  const contentWidth = TABLE_WIDTH - CARD_MARGIN_X * 2;
+  const fieldX = contentX + CARD_PADDING_X;
+  const fieldWidth = contentWidth - CARD_PADDING_X * 2;
+  const titleLines = wrapText(tableTitle(table), contentWidth, TABLE_TITLE_FONT_SIZE);
+  const titleHeight = titleLines.length * TABLE_TITLE_LINE_HEIGHT;
+  const cardModels = table.rows.map((row) => {
+    const fields = table.header.map((header, index) => {
+      const label = normalizeDisplayText(header).toUpperCase();
+      const lines = wrapText(row[index] ?? '', fieldWidth, BODY_FONT_SIZE);
+      const height = FIELD_LABEL_LINE_HEIGHT + 6 + lines.length * LINE_HEIGHT;
+      return { label, lines, height };
+    });
+    const fieldsHeight = fields.reduce((sum, field) => sum + field.height, 0) + FIELD_GAP * Math.max(0, fields.length - 1);
+    return {
+      fields,
+      height: CARD_PADDING_Y * 2 + fieldsHeight,
+    };
+  });
+  const headerHeight = CARD_MARGIN_Y + titleHeight + 18;
+  const cardsHeight = cardModels.reduce((sum, card) => sum + card.height, 0) + CARD_GAP * Math.max(0, cardModels.length - 1);
+  const height = headerHeight + cardsHeight + CARD_MARGIN_Y;
+
+  const titleTspans = renderLineTspans(titleLines, contentX, CARD_MARGIN_Y, {
+    fontSize: TABLE_TITLE_FONT_SIZE,
+    lineHeight: TABLE_TITLE_LINE_HEIGHT,
+    cellX: contentX,
+    cellWidth: contentWidth,
+    rowY: 0,
+    rowHeight: headerHeight,
+    paddingX: 0,
+  });
+
+  const parts: string[] = [
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${TABLE_WIDTH}" height="${height}" viewBox="0 0 ${TABLE_WIDTH} ${height}" data-portable-table-layout="cards">`,
+    '<rect width="100%" height="100%" fill="#ffffff"/>',
+    `<text font-family="${FONT_FAMILY}" font-size="${TABLE_TITLE_FONT_SIZE}" font-weight="760" fill="${TEXT_FILL}">${titleTspans}</text>`,
+  ];
+
+  let y = headerHeight;
+  cardModels.forEach((card, cardIndex) => {
+    parts.push(
+      `<rect x="${contentX}" y="${y}" width="${contentWidth}" height="${card.height}" rx="10" ` +
+      `fill="${cardIndex % 2 === 0 ? BODY_FILL : STRIPE_FILL}" stroke="${CELL_BORDER}" stroke-width="1.5"/>`,
+    );
+    let fieldY = y + CARD_PADDING_Y;
+    for (const field of card.fields) {
+      parts.push(
+        `<text x="${fieldX}" y="${fieldY + FIELD_LABEL_LINE_HEIGHT - 4}" font-family="${FONT_FAMILY}" ` +
+        `font-size="${FIELD_LABEL_FONT_SIZE}" font-weight="760" letter-spacing="0.6" fill="#5f6368">${escapeXml(field.label)}</text>`,
+      );
+      const bodyY = fieldY + FIELD_LABEL_LINE_HEIGHT + 6;
+      const tspans = renderLineTspans(field.lines, fieldX, bodyY, {
+        fontSize: BODY_FONT_SIZE,
+        lineHeight: LINE_HEIGHT,
+        cellX: contentX,
+        cellWidth: contentWidth,
+        rowY: y,
+        rowHeight: card.height,
+        paddingX: CARD_PADDING_X,
+      });
+      parts.push(
+        `<text font-family="${FONT_FAMILY}" font-size="${BODY_FONT_SIZE}" font-weight="420" fill="${TEXT_FILL}">${tspans}</text>`,
+      );
+      fieldY += field.height + FIELD_GAP;
+    }
+    y += card.height + CARD_GAP;
+  });
+
+  parts.push('</svg>');
+  return parts.join('');
+}
+
 function renderSvg(table: ParsedTable): string {
   if (table.header.length > MAX_RENDERED_COLUMNS) {
     return renderTooManyColumnsSvg(table);
   }
-
-  const rows = [table.header, ...table.rows];
-  const columnWidths = computeColumnWidths(table);
-  const xStarts = columnWidths.reduce<number[]>((acc, value, index) => {
-    acc.push(index === 0 ? 0 : acc[index - 1] + columnWidths[index - 1]);
-    return acc;
-  }, []);
-  const wrapped = rows.map((row, rowIndex) =>
-    row.map((cell, colIndex) => {
-      const fontSize = rowIndex === 0 ? HEADER_FONT_SIZE : BODY_FONT_SIZE;
-      return wrapText(cell, columnWidths[colIndex] - CELL_PADDING_X * 2, fontSize);
-    }),
-  );
-  const rowHeights = wrapped.map((row, rowIndex) => {
-    const lineCount = Math.max(...row.map((lines) => lines.length));
-    const computed = CELL_PADDING_Y * 2 + lineCount * LINE_HEIGHT;
-    return Math.max(rowIndex === 0 ? MIN_HEADER_ROW_HEIGHT : MIN_BODY_ROW_HEIGHT, computed);
-  });
-  const yStarts = rowHeights.reduce<number[]>((acc, value, index) => {
-    acc.push(index === 0 ? 0 : acc[index - 1] + rowHeights[index - 1]);
-    return acc;
-  }, []);
-  const height = rowHeights.reduce((sum, value) => sum + value, 0);
-
-  const rects: string[] = [];
-  const texts: string[] = [];
-  for (let rowIndex = 0; rowIndex < rows.length; rowIndex += 1) {
-    for (let colIndex = 0; colIndex < columnWidths.length; colIndex += 1) {
-      const x = xStarts[colIndex];
-      const y = yStarts[rowIndex];
-      const fontSize = rowIndex === 0 ? HEADER_FONT_SIZE : BODY_FONT_SIZE;
-      const lines = wrapped[rowIndex][colIndex];
-      rects.push(
-        `<rect x="${x}" y="${y}" width="${columnWidths[colIndex]}" height="${rowHeights[rowIndex]}" ` +
-        `fill="${rowIndex === 0 ? '#171717' : rowIndex % 2 === 0 ? '#f6f6f6' : '#ffffff'}" ` +
-        `stroke="${CELL_BORDER}" stroke-width="1"/>`,
-      );
-      const tspans = lines.map((line, lineIndex) => {
-        const lineX = x + CELL_PADDING_X;
-        const lineY = y + CELL_PADDING_Y + (lineIndex + 1) * LINE_HEIGHT - 4;
-        const lineWidth = measureText(line, fontSize);
-        return `<tspan x="${lineX}" y="${lineY}" data-cell-x="${x}" data-cell-width="${columnWidths[colIndex]}" ` +
-          `data-line-width="${lineWidth}" data-row-y="${y}" data-row-height="${rowHeights[rowIndex]}" ` +
-          `data-padding-x="${CELL_PADDING_X}">${escapeXml(line)}</tspan>`;
-      }).join('');
-      texts.push(
-        `<text font-family="${FONT_FAMILY}" font-size="${fontSize}" font-weight="${rowIndex === 0 ? 700 : 400}" ` +
-        `fill="${rowIndex === 0 ? HEADER_TEXT_FILL : TEXT_FILL}">${tspans}</text>`,
-      );
-    }
-  }
-
-  return [
-    `<svg xmlns="http://www.w3.org/2000/svg" width="${TABLE_WIDTH}" height="${height}" viewBox="0 0 ${TABLE_WIDTH} ${height}">`,
-    '<rect width="100%" height="100%" fill="#ffffff"/>',
-    `<rect x="0" y="0" width="${TABLE_WIDTH}" height="${height}" fill="none" stroke="${OUTER_BORDER}" stroke-width="2"/>`,
-    ...rects,
-    ...texts,
-    '</svg>',
-  ].join('');
+  return renderCardSvg(table);
 }
 
 function publicTableUrl(options: Pick<DerivePortableTablesOptions, 'baseUrl' | 'slug'>, path: string): string {

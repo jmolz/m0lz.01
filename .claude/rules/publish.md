@@ -54,7 +54,7 @@ Forensic anchors:
 - `src/core/publish/table-assets.ts` derives and renders portable Markdown table images for paste output and platform-specific table reference policies.
 - `src/core/publish/substack.ts` truncates long subtitles for Substack paste output.
 - `tests/publish-convert.test.ts` covers portable image-backed chart conversion.
-- `tests/publish-table-assets.test.ts` covers table detection, fenced-table preservation, wrapped table-image rendering, deterministic PNG writes, and stale generated cleanup.
+- `tests/publish-table-assets.test.ts` covers table detection, fenced-table preservation, readable row-card table-image rendering, snake_case preservation, deterministic PNG writes, and stale generated cleanup.
 - `tests/publish-crosspost.test.ts` covers Medium/Substack chart copyability, generated table upload/checklist handoff, and Substack subtitle truncation.
 
 ## Complete publication bundle is reviewed before preview

@@ -172,7 +172,7 @@ describe('portable table assets', () => {
     });
     expect(derived.tables).toHaveLength(1);
     const svg = derived.tables[0].svg;
-    expect(svg.match(/<tspan/g)?.length ?? 0).toBeGreaterThan(8);
+    expect(svg.match(/<tspan/g)?.length ?? 0).toBeGreaterThan(6);
     expect(svg).not.toContain(evidence);
     expect(svg).not.toContain(boundary);
     expectLinesInsideCells(svg);
@@ -182,6 +182,38 @@ describe('portable table assets', () => {
     const metadata = await sharp(readFileSync(pngPath)).metadata();
     expect(metadata.width).toBeGreaterThanOrEqual(1192);
     expect(metadata.height).toBeGreaterThan(42 * (derived.tables[0].row_count + 1));
+  });
+
+  it('renders table rows as readable cards and preserves snake_case tokens', () => {
+    const markdown = [
+      '## Benchmark Results',
+      '',
+      '| Check | Result | Evidence | Boundary |',
+      '| --- | --- | --- | --- |',
+      '| Phase 8 reference projects | passed | Seven distinct `layer_runs` rows and `evaluate_status: passed`. | Reference-fixture mechanics, not external project coverage. |',
+      '| Infrastructure review gate | passed | `gate_decisions: 1`, `audit_id: 1`, approval, and resumed to `passed`. | Demonstrates gate plumbing and auditability. |',
+      '| Infrastructure contract tier | recorded | Each fixture reported `infrastructure_contract_tier: 3`. | Tier three used the configured agent-team evaluation contract. |',
+    ].join('\n');
+
+    const derived = derivePortableTables(markdown, {
+      slug: 'snake-case',
+      baseUrl: 'https://m0lz.dev',
+      title: 'Snake Case',
+    });
+
+    const svg = derived.tables[0].svg;
+    expect(svg).toContain('data-portable-table-layout="cards"');
+    expect(svg).toContain('layer_runs');
+    expect(svg).toContain('evaluate_status');
+    expect(svg).toContain('gate_decisions');
+    expect(svg).toContain('audit_id');
+    expect(svg).toContain('infrastructure_contract_tier');
+    expect(svg).not.toContain('layerruns');
+    expect(svg).not.toContain('evaluatestatus');
+    expect(svg).not.toContain('gatedecisions');
+    expect(svg).not.toContain('auditid');
+    expect(svg).not.toContain('infrastructurecontracttier');
+    expectLinesInsideCells(svg);
   });
 
   it('hard-wraps long tokens and keeps many-column layouts inside bounds', () => {
