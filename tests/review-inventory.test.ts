@@ -18,6 +18,7 @@ function mentionedTestFiles(path: string): string[] {
 describe('review regression inventory', () => {
   for (const path of [
     '.agents/skills/source-command-review/SKILL.md',
+    '.claude/commands/review.md',
     '.windsurf/workflows/review.md',
   ]) {
     it(`${path} lists every test file`, () => {
