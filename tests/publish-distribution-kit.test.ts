@@ -253,7 +253,9 @@ function expectedDistributionSitePaths(
     `content/posts/${slug}/distribution/linkedin.md`,
     `content/posts/${slug}/distribution/hackernews.md`,
     `content/posts/${slug}/distribution/medium-paste.md`,
+    `content/posts/${slug}/distribution/medium-upload-checklist.md`,
     `content/posts/${slug}/distribution/substack-paste.md`,
+    `content/posts/${slug}/distribution/substack-upload-checklist.md`,
     `content/posts/${slug}/distribution/linkedin-image-prompt.md`,
     ...(opts.extraDistributionPaths ?? []),
     `content/posts/${slug}/distribution/manifest.json`,
@@ -268,7 +270,9 @@ function expectedMediumSubstackOnlySitePaths(
 ): string[] {
   return [
     `content/posts/${slug}/distribution/medium-paste.md`,
+    `content/posts/${slug}/distribution/medium-upload-checklist.md`,
     `content/posts/${slug}/distribution/substack-paste.md`,
+    `content/posts/${slug}/distribution/substack-upload-checklist.md`,
     ...(opts.extraDistributionPaths ?? []),
     `content/posts/${slug}/distribution/manifest.json`,
   ];
@@ -510,7 +514,9 @@ describe('persistDistributionKitToSite', () => {
     expect(calls.commits).toEqual(['chore(distribution): alpha']);
     expect(existsSync(join(f.siteRepoPath, 'content/posts/alpha/distribution/linkedin.md'))).toBe(true);
     expect(existsSync(join(f.siteRepoPath, 'content/posts/alpha/distribution/medium-paste.md'))).toBe(true);
+    expect(existsSync(join(f.siteRepoPath, 'content/posts/alpha/distribution/medium-upload-checklist.md'))).toBe(true);
     expect(existsSync(join(f.siteRepoPath, 'content/posts/alpha/distribution/substack-paste.md'))).toBe(true);
+    expect(existsSync(join(f.siteRepoPath, 'content/posts/alpha/distribution/substack-upload-checklist.md'))).toBe(true);
     expect(existsSync(join(f.siteRepoPath, 'content/posts/alpha/distribution/manifest.json'))).toBe(true);
   });
 
@@ -592,12 +598,14 @@ describe('persistDistributionKitToSite', () => {
       'content/posts/medium-off/distribution/linkedin.md',
       'content/posts/medium-off/distribution/hackernews.md',
       'content/posts/medium-off/distribution/substack-paste.md',
+      'content/posts/medium-off/distribution/substack-upload-checklist.md',
       'content/posts/medium-off/distribution/linkedin-image-prompt.md',
       staleMediumPath,
       'content/posts/medium-off/distribution/manifest.json',
     ]);
     expect(existsSync(join(f.siteRepoPath, staleMediumPath))).toBe(false);
     expect(existsSync(join(f.siteRepoPath, 'content/posts/medium-off/distribution/substack-paste.md'))).toBe(true);
+    expect(existsSync(join(f.siteRepoPath, 'content/posts/medium-off/distribution/substack-upload-checklist.md'))).toBe(true);
   });
 
   it('persists Medium/Substack when social distribution is disabled and removes stale social artifacts', async () => {
@@ -626,7 +634,9 @@ describe('persistDistributionKitToSite', () => {
       extraDistributionPaths: [staleLinkedInPath, staleHackerNewsPath],
     }));
     expect(existsSync(join(f.siteRepoPath, 'content/posts/social-off/distribution/medium-paste.md'))).toBe(true);
+    expect(existsSync(join(f.siteRepoPath, 'content/posts/social-off/distribution/medium-upload-checklist.md'))).toBe(true);
     expect(existsSync(join(f.siteRepoPath, 'content/posts/social-off/distribution/substack-paste.md'))).toBe(true);
+    expect(existsSync(join(f.siteRepoPath, 'content/posts/social-off/distribution/substack-upload-checklist.md'))).toBe(true);
     expect(existsSync(join(f.siteRepoPath, staleLinkedInPath))).toBe(false);
     expect(existsSync(join(f.siteRepoPath, staleHackerNewsPath))).toBe(false);
     expect(existsSync(join(f.siteRepoPath, 'content/posts/social-off/distribution/linkedin-image-prompt.md'))).toBe(false);
@@ -746,7 +756,9 @@ describe('persistDistributionKitToSite', () => {
       'content/posts/replay/distribution/linkedin.md',
       'content/posts/replay/distribution/manifest.json',
       'content/posts/replay/distribution/medium-paste.md',
+      'content/posts/replay/distribution/medium-upload-checklist.md',
       'content/posts/replay/distribution/substack-paste.md',
+      'content/posts/replay/distribution/substack-upload-checklist.md',
     ].join('\n');
     const calls = mockSiteArtifactGit({
       cachedHasChanges: false,
@@ -776,6 +788,7 @@ describe('persistDistributionKitToSite', () => {
       'content/posts/medium-replay/distribution/manifest.json',
       staleMediumPath,
       'content/posts/medium-replay/distribution/substack-paste.md',
+      'content/posts/medium-replay/distribution/substack-upload-checklist.md',
     ].join('\n');
     const calls = mockSiteArtifactGit({
       cachedHasChanges: false,
@@ -905,7 +918,9 @@ project: "m0lz.01"
     expect(existsSync(join(postDir, 'distribution/linkedin.md'))).toBe(true);
     expect(existsSync(join(postDir, 'distribution/hackernews.md'))).toBe(true);
     expect(existsSync(join(postDir, 'distribution/medium-paste.md'))).toBe(true);
+    expect(existsSync(join(postDir, 'distribution/medium-upload-checklist.md'))).toBe(true);
     expect(existsSync(join(postDir, 'distribution/substack-paste.md'))).toBe(true);
+    expect(existsSync(join(postDir, 'distribution/substack-upload-checklist.md'))).toBe(true);
     expect(existsSync(join(postDir, 'distribution/manifest.json'))).toBe(true);
     expect(existsSync(join(postDir, manifest.tables[0].path))).toBe(true);
     expect(existsSync(join(f.draftsDir, 'cli-kit/assets'))).toBe(false);

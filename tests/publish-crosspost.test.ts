@@ -648,16 +648,27 @@ describe('generateMediumPaste', () => {
     expect(content).not.toContain('<BenchmarkChart');
   });
 
-  it('replaces Markdown pipe tables with portable table image links outside code fences', () => {
+  it('replaces Markdown pipe tables with upload checklist placeholders outside code fences', () => {
     const f = setup('table-medium', mdxWithMarkdownTable());
-    generateMediumPaste('table-medium', makeConfig(), {
+    const result = generateMediumPaste('table-medium', makeConfig(), {
       draftsDir: f.draftsDir,
       socialDir: f.socialDir,
     });
     const content = readFileSync(join(f.socialDir, 'table-medium', 'medium-paste.md'), 'utf-8');
-    expect(content).toMatch(/!\[Table: Heading\]\(https:\/\/m0lz\.dev\/writing\/table-medium\/assets\/portable-table-[0-9a-f]{12}\.png\)/);
+    expect(content).toContain('Table image upload required for Medium');
+    expect(content).toContain('medium-upload-checklist.md');
+    expect(content).not.toMatch(/https:\/\/m0lz\.dev\/writing\/table-medium\/assets\/portable-table-[0-9a-f]{12}\.png/);
     expect(content).not.toContain('| Runtime | Median |');
     expect(content).toContain('| Keep | Raw |');
+
+    expect(result.uploadChecklistPath).toBe(join(f.socialDir, 'table-medium', 'medium-upload-checklist.md'));
+    const checklist = readFileSync(result.uploadChecklistPath, 'utf-8');
+    expect(checklist).toContain('Import the canonical article URL in Medium: https://m0lz.dev/writing/table-medium');
+    expect(checklist).toMatch(/Local file: `\.\/assets\/portable-table-[0-9a-f]{12}\.png`/);
+    expect(checklist).toMatch(/Public reference only: https:\/\/m0lz\.dev\/writing\/table-medium\/assets\/portable-table-[0-9a-f]{12}\.png/);
+    expect(checklist).toContain('Alt text: Table: Heading');
+    expect(checklist).toContain('Caption: Table 1: Heading. Full-fidelity semantic table: https://m0lz.dev/writing/table-medium.');
+    expect(checklist).toContain('Medium embeds are provider-gated');
   });
 });
 
@@ -744,15 +755,28 @@ describe('generateSubstackPaste', () => {
     expect(content).not.toContain('<BenchmarkChart');
   });
 
-  it('replaces Markdown pipe tables with portable table image links outside code fences', () => {
+  it('replaces Markdown pipe tables with local upload checklist guidance outside code fences', () => {
     const f = setup('table-substack', mdxWithMarkdownTable());
-    generateSubstackPaste('table-substack', makeConfig(), {
+    const result = generateSubstackPaste('table-substack', makeConfig(), {
       draftsDir: f.draftsDir,
       socialDir: f.socialDir,
     });
     const content = readFileSync(join(f.socialDir, 'table-substack', 'substack-paste.md'), 'utf-8');
-    expect(content).toMatch(/!\[Table: Heading\]\(https:\/\/m0lz\.dev\/writing\/table-substack\/assets\/portable-table-[0-9a-f]{12}\.png\)/);
+    expect(content).toContain('Table image upload required for Substack');
+    expect(content).toContain('substack-upload-checklist.md');
+    expect(content).not.toMatch(/https:\/\/m0lz\.dev\/writing\/table-substack\/assets\/portable-table-[0-9a-f]{12}\.png/);
     expect(content).not.toContain('| Runtime | Median |');
+    expect(content).not.toContain('<table');
     expect(content).toContain('| Keep | Raw |');
+
+    expect(result.uploadChecklistPath).toBe(join(f.socialDir, 'table-substack', 'substack-upload-checklist.md'));
+    const checklist = readFileSync(result.uploadChecklistPath, 'utf-8');
+    expect(checklist).toContain('Substack post editing does not support Markdown table syntax');
+    expect(checklist).toContain('custom HTML/CSS tables');
+    expect(checklist).toContain('image upload or drag/drop');
+    expect(checklist).toContain('Canonical source URL: https://m0lz.dev/writing/table-substack');
+    expect(checklist).toMatch(/Local file: `\.\/assets\/portable-table-[0-9a-f]{12}\.png`/);
+    expect(checklist).toMatch(/Public reference only: https:\/\/m0lz\.dev\/writing\/table-substack\/assets\/portable-table-[0-9a-f]{12}\.png/);
+    expect(checklist).toContain('Alt text: Table: Heading');
   });
 });

@@ -279,7 +279,9 @@ describe('createSitePR — happy path', () => {
     expect(existsSync(copiedPath)).toBe(true);
     expect(readFileSync(copiedPath, 'utf-8')).toMatch(/published:\s*true/);
     expect(existsSync(join(f.siteRepoPath, 'content/posts/alpha/distribution/medium-paste.md'))).toBe(true);
+    expect(existsSync(join(f.siteRepoPath, 'content/posts/alpha/distribution/medium-upload-checklist.md'))).toBe(true);
     expect(existsSync(join(f.siteRepoPath, 'content/posts/alpha/distribution/substack-paste.md'))).toBe(true);
+    expect(existsSync(join(f.siteRepoPath, 'content/posts/alpha/distribution/substack-upload-checklist.md'))).toBe(true);
     expect(existsSync(join(f.siteRepoPath, 'content/posts/alpha/distribution/manifest.json'))).toBe(true);
     expect(readFileSync(join(f.draftsDir, 'alpha', 'index.mdx'), 'utf-8')).toMatch(/published:\s*false/);
   });
@@ -705,7 +707,9 @@ describe('createSitePR — dirty-state guardrail (Codex Pass 4 regression)', () 
       'content/posts/scoped/distribution/linkedin.md',
       'content/posts/scoped/distribution/hackernews.md',
       'content/posts/scoped/distribution/medium-paste.md',
+      'content/posts/scoped/distribution/medium-upload-checklist.md',
       'content/posts/scoped/distribution/substack-paste.md',
+      'content/posts/scoped/distribution/substack-upload-checklist.md',
       'content/posts/scoped/distribution/linkedin-image-prompt.md',
       'content/posts/scoped/distribution/manifest.json',
     ]);

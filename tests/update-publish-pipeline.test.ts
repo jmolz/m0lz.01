@@ -255,7 +255,9 @@ describe('createSiteUpdate — update-branch commit carries body + frontmatter',
     // Frontmatter preserved too.
     expect(landed).toMatch(/^---\n[\s\S]*?title: "Sample Title"[\s\S]*?---/);
     expect(existsSync(join(f.siteRepoPath, 'content/posts/alpha/distribution/medium-paste.md'))).toBe(true);
+    expect(existsSync(join(f.siteRepoPath, 'content/posts/alpha/distribution/medium-upload-checklist.md'))).toBe(true);
     expect(existsSync(join(f.siteRepoPath, 'content/posts/alpha/distribution/substack-paste.md'))).toBe(true);
+    expect(existsSync(join(f.siteRepoPath, 'content/posts/alpha/distribution/substack-upload-checklist.md'))).toBe(true);
   });
 
   it('throws when there is no open update cycle (operator/runner bug)', async () => {

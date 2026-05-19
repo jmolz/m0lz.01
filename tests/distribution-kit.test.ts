@@ -242,11 +242,17 @@ describe('generateDistributionKit', () => {
     expect(existsSync(result.promptPath!)).toBe(true);
     expect(result.imagePath).toBeNull();
     expect(existsSync(result.mediumPath!)).toBe(true);
+    expect(existsSync(result.mediumUploadChecklistPath!)).toBe(true);
     expect(existsSync(result.substackPath!)).toBe(true);
+    expect(existsSync(result.substackUploadChecklistPath!)).toBe(true);
     expect(result.manifest.image_mode).toBe('prompt-only');
     expect(result.manifest.image).toBeNull();
     expect(result.manifest.text.medium?.sha256).toBe(sha256(readFileSync(result.mediumPath!)));
+    expect(result.manifest.text.medium_upload_checklist?.sha256)
+      .toBe(sha256(readFileSync(result.mediumUploadChecklistPath!)));
     expect(result.manifest.text.substack?.sha256).toBe(sha256(readFileSync(result.substackPath!)));
+    expect(result.manifest.text.substack_upload_checklist?.sha256)
+      .toBe(sha256(readFileSync(result.substackUploadChecklistPath!)));
     const linkedin = readFileSync(result.linkedinPath, 'utf-8');
     expect(linkedin).toContain('Prompt Only Title');
     expect(linkedin).toContain('https://draft.example/writing/prompt-only');
@@ -285,7 +291,11 @@ describe('generateDistributionKit', () => {
     expect(first.manifest.text.linkedin.sha256).toBe(sha256(readFileSync(first.linkedinPath)));
     expect(first.manifest.text.hackernews.sha256).toBe(sha256(readFileSync(first.hackerNewsPath)));
     expect(first.manifest.text.medium?.sha256).toBe(sha256(readFileSync(first.mediumPath!)));
+    expect(first.manifest.text.medium_upload_checklist?.sha256)
+      .toBe(sha256(readFileSync(first.mediumUploadChecklistPath!)));
     expect(first.manifest.text.substack?.sha256).toBe(sha256(readFileSync(first.substackPath!)));
+    expect(first.manifest.text.substack_upload_checklist?.sha256)
+      .toBe(sha256(readFileSync(first.substackUploadChecklistPath!)));
     expect(first.manifest.image?.path).toBe('assets/linkedin-feed.png');
     expect(first.manifest.image?.width).toBe(1200);
     expect(first.manifest.image?.height).toBe(1200);
@@ -339,7 +349,7 @@ describe('generateDistributionKit', () => {
       .toThrow(/LinkedIn text artifact hash mismatch/);
   });
 
-  it('loadDistributionKit refuses Medium paste and table assets that no longer match the manifest', async () => {
+  it('loadDistributionKit refuses Medium paste, checklist, and table assets that no longer match the manifest', async () => {
     const f = setup();
     seedPost(f.db, 'tampered-bundle');
     writeDraft(f, 'tampered-bundle', 'Tampered Bundle Title');
@@ -362,12 +372,20 @@ describe('generateDistributionKit', () => {
       sourceMode: 'publish',
       force: true,
     });
+    writeFileSync(result.mediumUploadChecklistPath!, 'tampered medium checklist\n', 'utf-8');
+    expect(() => loadDistributionKit('tampered-bundle', f))
+      .toThrow(/Medium upload checklist artifact hash mismatch/);
+
+    await generateDistributionKit('tampered-bundle', f.config, f, f.db, {
+      sourceMode: 'publish',
+      force: true,
+    });
     writeFileSync(result.tableImagePaths[0], Buffer.from('tampered table'));
     expect(() => loadDistributionKit('tampered-bundle', f))
       .toThrow(/table 1 artifact hash mismatch/);
   });
 
-  it('loadDistributionKit refuses Hacker News and Substack artifacts that no longer match the manifest', async () => {
+  it('loadDistributionKit refuses Hacker News, Substack paste, and Substack checklist artifacts that no longer match the manifest', async () => {
     const f = setup();
     seedPost(f.db, 'tampered-platforms');
     writeDraft(f, 'tampered-platforms', 'Tampered Platforms Title');
@@ -386,6 +404,14 @@ describe('generateDistributionKit', () => {
     writeFileSync(result.substackPath!, 'tampered substack paste\n', 'utf-8');
     expect(() => loadDistributionKit('tampered-platforms', f))
       .toThrow(/Substack paste artifact hash mismatch/);
+
+    await generateDistributionKit('tampered-platforms', f.config, f, f.db, {
+      sourceMode: 'publish',
+      force: true,
+    });
+    writeFileSync(result.substackUploadChecklistPath!, 'tampered substack checklist\n', 'utf-8');
+    expect(() => loadDistributionKit('tampered-platforms', f))
+      .toThrow(/Substack upload checklist artifact hash mismatch/);
   });
 
   it('backfill renders paste files from hub-site MDX before stale local draft MDX', async () => {
@@ -430,9 +456,12 @@ describe('generateDistributionKit', () => {
       sourceMode: 'publish',
     });
     expect(mediumDisabled.mediumPath).toBeNull();
+    expect(mediumDisabled.mediumUploadChecklistPath).toBeNull();
     expect(mediumDisabled.substackPath).not.toBeNull();
     expect(mediumDisabled.manifest.text.medium).toBeNull();
+    expect(mediumDisabled.manifest.text.medium_upload_checklist).toBeNull();
     expect(mediumDisabled.manifest.text.substack?.path).toBe('substack-paste.md');
+    expect(mediumDisabled.manifest.text.substack_upload_checklist?.path).toBe('substack-upload-checklist.md');
 
     f.config.publish.medium = true;
     f.config.publish.substack = false;
@@ -444,8 +473,11 @@ describe('generateDistributionKit', () => {
     });
     expect(substackDisabled.mediumPath).not.toBeNull();
     expect(substackDisabled.substackPath).toBeNull();
+    expect(substackDisabled.substackUploadChecklistPath).toBeNull();
     expect(substackDisabled.manifest.text.medium?.path).toBe('medium-paste.md');
+    expect(substackDisabled.manifest.text.medium_upload_checklist?.path).toBe('medium-upload-checklist.md');
     expect(substackDisabled.manifest.text.substack).toBeNull();
+    expect(substackDisabled.manifest.text.substack_upload_checklist).toBeNull();
   });
 
   it('keeps enabled Medium/Substack artifacts when social distribution is disabled', async () => {

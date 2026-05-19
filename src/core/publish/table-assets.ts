@@ -31,6 +31,17 @@ export interface DerivedPortableTables {
   tables: PortableTableSource[];
 }
 
+export type PortableTableReferenceMode = 'public-url' | 'local-upload' | 'placeholder';
+
+export interface DerivePortableTablesOptions {
+  slug: string;
+  baseUrl: string;
+  title: string;
+  referenceMode?: PortableTableReferenceMode;
+  platformName?: string;
+  checklistPath?: string;
+}
+
 interface ParsedTable {
   startLine: number;
   endLine: number;
@@ -44,6 +55,24 @@ interface FenceState {
   marker: '`' | '~';
   length: number;
 }
+
+const TABLE_WIDTH = 1192;
+const MAX_RENDERED_COLUMNS = 10;
+const OUTER_BORDER = '#cfcfcf';
+const CELL_BORDER = '#d8d8d8';
+const HEADER_FILL = '#171717';
+const BODY_FILL = '#ffffff';
+const STRIPE_FILL = '#f7f7f7';
+const TEXT_FILL = '#171717';
+const HEADER_TEXT_FILL = '#ffffff';
+const FONT_FAMILY = 'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif';
+const HEADER_FONT_SIZE = 17;
+const BODY_FONT_SIZE = 16;
+const LINE_HEIGHT = 22;
+const CELL_PADDING_X = 18;
+const CELL_PADDING_Y = 16;
+const MIN_BODY_ROW_HEIGHT = 56;
+const MIN_HEADER_ROW_HEIGHT = 60;
 
 function sha256(value: string | Buffer): string {
   return createHash('sha256').update(value).digest('hex');
@@ -202,56 +231,211 @@ function escapeXml(value: string): string {
     .replace(/"/g, '&quot;');
 }
 
-function textWidth(value: string): number {
-  const plain = value.replace(/`([^`]+)`/g, '$1');
-  return Math.min(280, Math.max(110, plain.length * 7 + 32));
+function normalizeDisplayText(value: string): string {
+  return value
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/\*([^*]+)\*/g, '$1')
+    .replace(/__([^_]+)__/g, '$1')
+    .replace(/_([^_]+)_/g, '$1')
+    .replace(/\[([^\]]+)]\([^)]+\)/g, '$1')
+    .replace(/\\\|/g, '|')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function measureText(value: string, fontSize: number): number {
+  let total = 0;
+  for (const char of value) {
+    if (/[A-Z0-9]/.test(char)) total += fontSize * 0.61;
+    else if (/[il.,:;|!]/.test(char)) total += fontSize * 0.31;
+    else if (/\s/.test(char)) total += fontSize * 0.34;
+    else total += fontSize * 0.55;
+  }
+  return Math.ceil(total);
+}
+
+function hardWrapToken(token: string, maxWidth: number, fontSize: number): string[] {
+  const chunks: string[] = [];
+  let current = '';
+  for (const char of token) {
+    const candidate = `${current}${char}`;
+    if (current && measureText(candidate, fontSize) > maxWidth) {
+      chunks.push(current);
+      current = char;
+    } else {
+      current = candidate;
+    }
+  }
+  if (current) chunks.push(current);
+  return chunks.length > 0 ? chunks : [''];
+}
+
+function wrapText(value: string, maxWidth: number, fontSize: number): string[] {
+  const normalized = normalizeDisplayText(value);
+  if (!normalized) return [''];
+  const words = normalized.split(/\s+/);
+  const lines: string[] = [];
+  let current = '';
+
+  for (const word of words) {
+    const pieces = measureText(word, fontSize) > maxWidth
+      ? hardWrapToken(word, maxWidth, fontSize)
+      : [word];
+    for (const piece of pieces) {
+      const candidate = current ? `${current} ${piece}` : piece;
+      if (current && measureText(candidate, fontSize) > maxWidth) {
+        lines.push(current);
+        current = piece;
+      } else {
+        current = candidate;
+      }
+    }
+  }
+  if (current) lines.push(current);
+  return lines.length > 0 ? lines : [''];
+}
+
+function headerWeight(value: string): number {
+  const normalized = normalizeDisplayText(value).toLowerCase();
+  if (/\b(evidence|boundary|rationale|notes?|result|finding|constraint)\b/.test(normalized)) return 2.2;
+  if (/\b(check|id|status|type)\b/.test(normalized)) return 0.75;
+  return 1;
+}
+
+function baseMinimumWidth(columnCount: number): number {
+  if (columnCount <= 4) return 150;
+  if (columnCount <= 8) return 108;
+  return 84;
+}
+
+function computeColumnWidths(table: ParsedTable): number[] {
+  const columnCount = table.header.length;
+  const minWidth = Math.min(baseMinimumWidth(columnCount), Math.floor(TABLE_WIDTH / columnCount));
+  const reserved = minWidth * columnCount;
+  const remaining = Math.max(0, TABLE_WIDTH - reserved);
+  const rows = [table.header, ...table.rows];
+  const rawWeights = table.header.map((header, index) => {
+    const maxText = Math.max(
+      ...rows.map((row) => measureText(normalizeDisplayText(row[index] ?? ''), BODY_FONT_SIZE)),
+    );
+    return Math.max(1, Math.sqrt(maxText)) * headerWeight(header);
+  });
+  const totalWeight = rawWeights.reduce((sum, value) => sum + value, 0) || 1;
+  const widths = rawWeights.map((weight) => minWidth + Math.floor((remaining * weight) / totalWeight));
+  const correction = TABLE_WIDTH - widths.reduce((sum, value) => sum + value, 0);
+  widths[widths.length - 1] += correction;
+  return widths;
+}
+
+function renderTooManyColumnsSvg(table: ParsedTable): string {
+  const message = `Table has ${table.header.length} columns; use the canonical article for the semantic table.`;
+  const height = 168;
+  return [
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${TABLE_WIDTH}" height="${height}" viewBox="0 0 ${TABLE_WIDTH} ${height}" data-portable-table-warning="too-many-columns">`,
+    '<rect width="100%" height="100%" fill="#ffffff"/>',
+    `<rect x="0" y="0" width="${TABLE_WIDTH}" height="${height}" fill="#ffffff" stroke="${OUTER_BORDER}" stroke-width="2"/>`,
+    `<rect x="0" y="0" width="${TABLE_WIDTH}" height="58" fill="${HEADER_FILL}"/>`,
+    `<text x="24" y="37" font-family="${FONT_FAMILY}" font-size="18" font-weight="700" fill="${HEADER_TEXT_FILL}">Portable table upload notice</text>`,
+    `<text x="24" y="94" font-family="${FONT_FAMILY}" font-size="16" fill="${TEXT_FILL}">${escapeXml(message)}</text>`,
+    `<text x="24" y="124" font-family="${FONT_FAMILY}" font-size="15" fill="#525252">Column limit: ${MAX_RENDERED_COLUMNS}. Source columns: ${escapeXml(table.header.join(', '))}</text>`,
+    '</svg>',
+  ].join('');
 }
 
 function renderSvg(table: ParsedTable): string {
+  if (table.header.length > MAX_RENDERED_COLUMNS) {
+    return renderTooManyColumnsSvg(table);
+  }
+
   const rows = [table.header, ...table.rows];
-  const columnWidths = table.header.map((_, index) =>
-    Math.max(...rows.map((row) => textWidth(row[index] ?? ''))),
-  );
-  const rowHeight = 42;
-  const width = columnWidths.reduce((sum, value) => sum + value, 0);
-  const height = rowHeight * rows.length;
+  const columnWidths = computeColumnWidths(table);
   const xStarts = columnWidths.reduce<number[]>((acc, value, index) => {
     acc.push(index === 0 ? 0 : acc[index - 1] + columnWidths[index - 1]);
     return acc;
   }, []);
+  const wrapped = rows.map((row, rowIndex) =>
+    row.map((cell, colIndex) => {
+      const fontSize = rowIndex === 0 ? HEADER_FONT_SIZE : BODY_FONT_SIZE;
+      return wrapText(cell, columnWidths[colIndex] - CELL_PADDING_X * 2, fontSize);
+    }),
+  );
+  const rowHeights = wrapped.map((row, rowIndex) => {
+    const lineCount = Math.max(...row.map((lines) => lines.length));
+    const computed = CELL_PADDING_Y * 2 + lineCount * LINE_HEIGHT;
+    return Math.max(rowIndex === 0 ? MIN_HEADER_ROW_HEIGHT : MIN_BODY_ROW_HEIGHT, computed);
+  });
+  const yStarts = rowHeights.reduce<number[]>((acc, value, index) => {
+    acc.push(index === 0 ? 0 : acc[index - 1] + rowHeights[index - 1]);
+    return acc;
+  }, []);
+  const height = rowHeights.reduce((sum, value) => sum + value, 0);
 
   const rects: string[] = [];
   const texts: string[] = [];
   for (let rowIndex = 0; rowIndex < rows.length; rowIndex += 1) {
-    const row = rows[rowIndex];
     for (let colIndex = 0; colIndex < columnWidths.length; colIndex += 1) {
       const x = xStarts[colIndex];
-      const y = rowIndex * rowHeight;
+      const y = yStarts[rowIndex];
+      const fontSize = rowIndex === 0 ? HEADER_FONT_SIZE : BODY_FONT_SIZE;
+      const lines = wrapped[rowIndex][colIndex];
       rects.push(
-        `<rect x="${x}" y="${y}" width="${columnWidths[colIndex]}" height="${rowHeight}" ` +
+        `<rect x="${x}" y="${y}" width="${columnWidths[colIndex]}" height="${rowHeights[rowIndex]}" ` +
         `fill="${rowIndex === 0 ? '#171717' : rowIndex % 2 === 0 ? '#f6f6f6' : '#ffffff'}" ` +
-        `stroke="#d4d4d4" stroke-width="1"/>`,
+        `stroke="${CELL_BORDER}" stroke-width="1"/>`,
       );
+      const tspans = lines.map((line, lineIndex) => {
+        const lineX = x + CELL_PADDING_X;
+        const lineY = y + CELL_PADDING_Y + (lineIndex + 1) * LINE_HEIGHT - 4;
+        const lineWidth = measureText(line, fontSize);
+        return `<tspan x="${lineX}" y="${lineY}" data-cell-x="${x}" data-cell-width="${columnWidths[colIndex]}" ` +
+          `data-line-width="${lineWidth}" data-row-y="${y}" data-row-height="${rowHeights[rowIndex]}" ` +
+          `data-padding-x="${CELL_PADDING_X}">${escapeXml(line)}</tspan>`;
+      }).join('');
       texts.push(
-        `<text x="${x + 14}" y="${y + 26}" font-family="Inter, ui-sans-serif, system-ui, sans-serif" ` +
-        `font-size="14" font-weight="${rowIndex === 0 ? 700 : 400}" ` +
-        `fill="${rowIndex === 0 ? '#ffffff' : '#171717'}">${escapeXml(row[colIndex] ?? '')}</text>`,
+        `<text font-family="${FONT_FAMILY}" font-size="${fontSize}" font-weight="${rowIndex === 0 ? 700 : 400}" ` +
+        `fill="${rowIndex === 0 ? HEADER_TEXT_FILL : TEXT_FILL}">${tspans}</text>`,
       );
     }
   }
 
   return [
-    `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">`,
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${TABLE_WIDTH}" height="${height}" viewBox="0 0 ${TABLE_WIDTH} ${height}">`,
     '<rect width="100%" height="100%" fill="#ffffff"/>',
+    `<rect x="0" y="0" width="${TABLE_WIDTH}" height="${height}" fill="none" stroke="${OUTER_BORDER}" stroke-width="2"/>`,
     ...rects,
     ...texts,
     '</svg>',
   ].join('');
 }
 
+function publicTableUrl(options: Pick<DerivePortableTablesOptions, 'baseUrl' | 'slug'>, path: string): string {
+  return `${options.baseUrl.replace(/\/+$/, '')}/writing/${options.slug}/${path}`;
+}
+
+function renderTableReference(
+  table: ParsedTable,
+  path: string,
+  options: DerivePortableTablesOptions,
+): string {
+  const mode = options.referenceMode ?? 'public-url';
+  if (mode === 'public-url') {
+    return `![${table.alt}](${publicTableUrl(options, path)})`;
+  }
+  if (mode === 'local-upload') {
+    return `![${table.alt}](./${path})`;
+  }
+  const platform = options.platformName ?? 'platform';
+  const checklist = options.checklistPath ?? 'upload-checklist.md';
+  return [
+    `> Table image upload required for ${platform}: \`${path}\`.`,
+    `> See \`${checklist}\` for alt text, caption, canonical URL, and upload instructions.`,
+  ].join('\n');
+}
+
 export function derivePortableTables(
   markdown: string,
-  options: { slug: string; baseUrl: string; title: string },
+  options: DerivePortableTablesOptions,
 ): DerivedPortableTables {
   const lines = markdown.split(/\r?\n/);
   const out: string[] = [];
@@ -295,7 +479,7 @@ export function derivePortableTables(
       column_count: parsed.header.length,
       svg,
     });
-    out.push(`![${parsed.alt}](${options.baseUrl.replace(/\/+$/, '')}/writing/${options.slug}/${path})`);
+    out.push(renderTableReference(parsed, path, options));
     i = parsed.endLine;
   }
 

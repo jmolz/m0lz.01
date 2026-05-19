@@ -20,11 +20,13 @@ export interface MediumPaths {
 
 export interface MediumResult {
   path: string;
+  uploadChecklistPath: string;
   tables: PortableTableSource[];
 }
 
 export interface RenderMediumPasteResult {
   content: string;
+  uploadChecklist: string;
   tables: PortableTableSource[];
 }
 
@@ -54,6 +56,62 @@ function imageAlt(title: string, suffix: string): string {
   return `${title} ${suffix}`.replace(/[\[\]]/g, '');
 }
 
+function canonicalUrl(slug: string, config: BlogConfig): string {
+  return `${config.site.base_url.replace(/\/+$/, '')}/writing/${slug}`;
+}
+
+function publicTableUrl(slug: string, config: BlogConfig, path: string): string {
+  return `${canonicalUrl(slug, config)}/${path}`;
+}
+
+function tableCaption(table: PortableTableSource, index: number, canonical: string): string {
+  return `Table ${index + 1}: ${table.alt.replace(/^Table:\s*/, '')}. Full-fidelity semantic table: ${canonical}.`;
+}
+
+export function renderMediumUploadChecklist(
+  slug: string,
+  config: BlogConfig,
+  tables: PortableTableSource[],
+): string {
+  const canonical = canonicalUrl(slug, config);
+  const lines = [
+    `# Medium upload checklist: ${slug}`,
+    '',
+    '## Preferred workflow',
+    '',
+    `1. Import the canonical article URL in Medium: ${canonical}`,
+    '2. Verify Medium preserved the canonical link after import.',
+    '3. If import or paste loses table fidelity, upload or drag in the local table PNGs below.',
+    '',
+    '## Manual paste fallback',
+    '',
+    `- Set or verify the canonical link manually: ${canonical}`,
+    '- Medium embeds are provider-gated; do not depend on arbitrary portable-table PNG URLs becoming inline image blocks.',
+    '- Use the public URLs only as reference links. Upload the local PNG files for table images.',
+    '',
+    '## Table uploads',
+    '',
+  ];
+
+  if (tables.length === 0) {
+    lines.push('- No generated table images for this article.');
+  } else {
+    for (const [index, table] of tables.entries()) {
+      lines.push(
+        `### Table ${index + 1}`,
+        '',
+        `- Local file: \`./${table.path}\``,
+        `- Public reference only: ${publicTableUrl(slug, config, table.path)}`,
+        `- Alt text: ${table.alt}`,
+        `- Caption: ${tableCaption(table, index, canonical)}`,
+        '',
+      );
+    }
+  }
+
+  return `${lines.join('\n').trimEnd()}\n`;
+}
+
 export function generateMediumPaste(
   slug: string,
   config: BlogConfig,
@@ -63,8 +121,9 @@ export function generateMediumPaste(
   const mdx = readFileSync(draftPath, 'utf-8');
   const rendered = renderMediumPaste(slug, config, mdx);
   const outputPath = writeMediumPaste(slug, rendered.content, paths);
+  const uploadChecklistPath = writeMediumUploadChecklist(slug, rendered.uploadChecklist, paths);
 
-  return { path: outputPath, tables: rendered.tables };
+  return { path: outputPath, uploadChecklistPath, tables: rendered.tables };
 }
 
 export function renderMediumPaste(
@@ -79,9 +138,12 @@ export function renderMediumPaste(
     slug,
     baseUrl: config.site.base_url,
     title: fm.title,
+    referenceMode: 'placeholder',
+    platformName: 'Medium',
+    checklistPath: 'medium-upload-checklist.md',
   });
 
-  const canonicalUrl = `${config.site.base_url.replace(/\/+$/, '')}/writing/${slug}`;
+  const canonical = canonicalUrl(slug, config);
   const display = displayBaseUrl(config.site.base_url);
   const imageUrl = resolvePlatformImageUrl(
     fm.medium_featured_image,
@@ -101,11 +163,15 @@ export function renderMediumPaste(
     '',
     '---',
     '',
-    `*Originally published at [${display}](${canonicalUrl})*`,
+    `*Originally published at [${display}](${canonical})*`,
     '',
   ].join('\n');
 
-  return { content: paste, tables: portable.tables };
+  return {
+    content: paste,
+    uploadChecklist: renderMediumUploadChecklist(slug, config, portable.tables),
+    tables: portable.tables,
+  };
 }
 
 export function writeMediumPaste(
@@ -114,6 +180,17 @@ export function writeMediumPaste(
   paths: Pick<MediumPaths, 'socialDir'>,
 ): string {
   const outputPath = join(paths.socialDir, slug, 'medium-paste.md');
+  mkdirSync(dirname(outputPath), { recursive: true });
+  writeFileSync(outputPath, content, 'utf-8');
+  return outputPath;
+}
+
+export function writeMediumUploadChecklist(
+  slug: string,
+  content: string,
+  paths: Pick<MediumPaths, 'socialDir'>,
+): string {
+  const outputPath = join(paths.socialDir, slug, 'medium-upload-checklist.md');
   mkdirSync(dirname(outputPath), { recursive: true });
   writeFileSync(outputPath, content, 'utf-8');
   return outputPath;

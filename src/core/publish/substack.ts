@@ -24,11 +24,13 @@ export interface SubstackPaths {
 
 export interface SubstackResult {
   path: string;
+  uploadChecklistPath: string;
   tables: PortableTableSource[];
 }
 
 export interface RenderSubstackPasteResult {
   content: string;
+  uploadChecklist: string;
   tables: PortableTableSource[];
 }
 
@@ -51,6 +53,59 @@ function splitMdx(mdx: string): { frontmatter: string; body: string } {
 
 function imageAlt(title: string, suffix: string): string {
   return `${title} ${suffix}`.replace(/[\[\]]/g, '');
+}
+
+function canonicalUrl(slug: string, config: BlogConfig): string {
+  return `${config.site.base_url.replace(/\/+$/, '')}/writing/${slug}`;
+}
+
+function publicTableUrl(slug: string, config: BlogConfig, path: string): string {
+  return `${canonicalUrl(slug, config)}/${path}`;
+}
+
+function tableCaption(table: PortableTableSource, index: number, canonical: string): string {
+  return `Table ${index + 1}: ${table.alt.replace(/^Table:\s*/, '')}. Full-fidelity semantic table: ${canonical}.`;
+}
+
+export function renderSubstackUploadChecklist(
+  slug: string,
+  config: BlogConfig,
+  tables: PortableTableSource[],
+): string {
+  const canonical = canonicalUrl(slug, config);
+  const lines = [
+    `# Substack upload checklist: ${slug}`,
+    '',
+    '## Editor constraints',
+    '',
+    '- Substack post editing does not support Markdown table syntax as the durable insertion path.',
+    '- Substack does not support custom HTML/CSS tables in the post editor.',
+    '- Use image upload or drag/drop for generated table PNGs.',
+    '- Public portable-table URLs are reference-only, not the primary insertion path.',
+    '',
+    `Canonical source URL: ${canonical}`,
+    '',
+    '## Table uploads',
+    '',
+  ];
+
+  if (tables.length === 0) {
+    lines.push('- No generated table images for this article.');
+  } else {
+    for (const [index, table] of tables.entries()) {
+      lines.push(
+        `### Table ${index + 1}`,
+        '',
+        `- Local file: \`./${table.path}\``,
+        `- Public reference only: ${publicTableUrl(slug, config, table.path)}`,
+        `- Alt text: ${table.alt}`,
+        `- Caption: ${tableCaption(table, index, canonical)}`,
+        '',
+      );
+    }
+  }
+
+  return `${lines.join('\n').trimEnd()}\n`;
 }
 
 function truncateDescription(value: string, maxChars: number): string {
@@ -80,8 +135,9 @@ export function generateSubstackPaste(
   const mdx = readFileSync(draftPath, 'utf-8');
   const rendered = renderSubstackPaste(slug, config, mdx);
   const outputPath = writeSubstackPaste(slug, rendered.content, paths);
+  const uploadChecklistPath = writeSubstackUploadChecklist(slug, rendered.uploadChecklist, paths);
 
-  return { path: outputPath, tables: rendered.tables };
+  return { path: outputPath, uploadChecklistPath, tables: rendered.tables };
 }
 
 export function renderSubstackPaste(
@@ -96,9 +152,12 @@ export function renderSubstackPaste(
     slug,
     baseUrl: config.site.base_url,
     title: fm.title,
+    referenceMode: 'placeholder',
+    platformName: 'Substack',
+    checklistPath: 'substack-upload-checklist.md',
   });
 
-  const canonicalUrl = `${config.site.base_url.replace(/\/+$/, '')}/writing/${slug}`;
+  const canonical = canonicalUrl(slug, config);
   const display = displayBaseUrl(config.site.base_url);
   const substackImage = fm.substack_preview_image !== undefined
     ? { rawValue: fm.substack_preview_image, spec: SUBSTACK_PREVIEW_IMAGE }
@@ -121,11 +180,15 @@ export function renderSubstackPaste(
     '',
     '---',
     '',
-    `*Originally published at [${display}](${canonicalUrl})*`,
+    `*Originally published at [${display}](${canonical})*`,
     '',
   ].join('\n');
 
-  return { content: paste, tables: portable.tables };
+  return {
+    content: paste,
+    uploadChecklist: renderSubstackUploadChecklist(slug, config, portable.tables),
+    tables: portable.tables,
+  };
 }
 
 export function writeSubstackPaste(
@@ -134,6 +197,17 @@ export function writeSubstackPaste(
   paths: Pick<SubstackPaths, 'socialDir'>,
 ): string {
   const outputPath = join(paths.socialDir, slug, 'substack-paste.md');
+  mkdirSync(dirname(outputPath), { recursive: true });
+  writeFileSync(outputPath, content, 'utf-8');
+  return outputPath;
+}
+
+export function writeSubstackUploadChecklist(
+  slug: string,
+  content: string,
+  paths: Pick<SubstackPaths, 'socialDir'>,
+): string {
+  const outputPath = join(paths.socialDir, slug, 'substack-upload-checklist.md');
   mkdirSync(dirname(outputPath), { recursive: true });
   writeFileSync(outputPath, content, 'utf-8');
   return outputPath;

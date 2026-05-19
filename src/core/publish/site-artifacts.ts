@@ -34,7 +34,9 @@ const OWNED_TEXT_ARTIFACT_FILENAMES = [
   'linkedin.md',
   'hackernews.md',
   'medium-paste.md',
+  'medium-upload-checklist.md',
   'substack-paste.md',
+  'substack-upload-checklist.md',
   'linkedin-image-prompt.md',
 ];
 
@@ -149,7 +151,13 @@ function kitTextEntries(kit: GenerateDistributionKitResult): Array<{ path: strin
     kit.manifest.text.linkedin ? { path: kit.manifest.text.linkedin.path, label: 'LinkedIn text' } : null,
     kit.manifest.text.hackernews ? { path: kit.manifest.text.hackernews.path, label: 'Hacker News text' } : null,
     kit.manifest.text.medium ? { path: kit.manifest.text.medium.path, label: 'Medium paste' } : null,
+    kit.manifest.text.medium_upload_checklist
+      ? { path: kit.manifest.text.medium_upload_checklist.path, label: 'Medium upload checklist' }
+      : null,
     kit.manifest.text.substack ? { path: kit.manifest.text.substack.path, label: 'Substack paste' } : null,
+    kit.manifest.text.substack_upload_checklist
+      ? { path: kit.manifest.text.substack_upload_checklist.path, label: 'Substack upload checklist' }
+      : null,
     kit.manifest.prompt ? { path: kit.manifest.prompt.path, label: 'prompt' } : null,
   ].filter((entry): entry is { path: string; label: string } => entry !== null);
 }

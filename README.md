@@ -545,12 +545,15 @@ hand-authored research pages.
 `blog publish start` and `blog update publish` also generate a durable
 publication bundle before the site repo is mutated. Local artifacts land in
 `.blog-agent/social/<slug>/`: `linkedin.md`, `hackernews.md`,
-`medium-paste.md`, `substack-paste.md`, `linkedin-image-prompt.md`, and
-`manifest.json`; generated LinkedIn feed images use the fixed PNG path
+`medium-paste.md`, `medium-upload-checklist.md`, `substack-paste.md`,
+`substack-upload-checklist.md`, `linkedin-image-prompt.md`, and `manifest.json`;
+generated LinkedIn feed images use the fixed PNG path
 `.blog-agent/social/<slug>/assets/linkedin-feed.png`. Medium/Substack paste
 rendering also converts Markdown pipe tables outside fenced code into stable PNG
 assets at `.blog-agent/social/<slug>/assets/portable-table-<hash>.png`. The
-canonical MDX remains unchanged; only the paste files receive image links.
+canonical MDX remains unchanged and stays semantic. Medium and Substack receive
+local upload/checklist guidance for generated tables instead of depending on
+arbitrary public PNG URLs as editor embeds.
 
 The site PR/update PR carries the complete reviewed bundle:
 
@@ -567,7 +570,9 @@ content/posts/<slug>/
     linkedin.md
     hackernews.md
     medium-paste.md
+    medium-upload-checklist.md
     substack-paste.md
+    substack-upload-checklist.md
     linkedin-image-prompt.md
     manifest.json
 ```
@@ -578,7 +583,11 @@ before copying the same artifacts to the site repo. The paste steps load the
 manifest files rather than regenerating from post-preview content.
 
 Medium and Substack paste files are generated from the same evaluated MDX, but
-with platform-specific copy constraints. Substack receives a shortened subtitle
+with platform-specific copy constraints. Medium table handoff recommends
+importing the canonical URL first, then uploading local generated table PNGs
+when import or manual paste loses table fidelity. Substack receives local
+upload/drag-drop table guidance because the post editor is not a durable
+Markdown-table or custom-HTML target. Substack also receives a shortened subtitle
 derived from `description` instead of the full SEO description. Image-backed MDX
 visual components, such as chart or figure components with
 `src="./assets/<file>"`, are converted to public Markdown image links before JSX

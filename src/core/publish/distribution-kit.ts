@@ -9,9 +9,9 @@ import { BlogConfig, LinkedInImageConfig, LinkedInImageMode } from '../config/ty
 import { ContentType, PostRow, UpdateCycleRow } from '../db/types.js';
 import { parseFrontmatter, PostFrontmatter } from '../draft/frontmatter.js';
 import { getOpenUpdateCycle } from '../update/cycles.js';
-import { renderMediumPaste, writeMediumPaste } from './medium.js';
+import { renderMediumPaste, writeMediumPaste, writeMediumUploadChecklist } from './medium.js';
 import { ImageProvider, OpenAIImageProvider } from './openai-image.js';
-import { renderSubstackPaste, writeSubstackPaste } from './substack.js';
+import { renderSubstackPaste, writeSubstackPaste, writeSubstackUploadChecklist } from './substack.js';
 import { PortableTableAsset, PortableTableSource, writePortableTableAssets } from './table-assets.js';
 
 export const LINKEDIN_IMAGE_FILENAME = 'linkedin-feed.png';
@@ -72,7 +72,9 @@ export interface DistributionKitManifest {
     linkedin: ArtifactManifestEntry | null;
     hackernews: ArtifactManifestEntry | null;
     medium: ArtifactManifestEntry | null;
+    medium_upload_checklist: ArtifactManifestEntry | null;
     substack: ArtifactManifestEntry | null;
+    substack_upload_checklist: ArtifactManifestEntry | null;
   };
   prompt: ArtifactManifestEntry | null;
   image: ImageManifestEntry | null;
@@ -99,7 +101,9 @@ export interface GenerateDistributionKitResult {
   linkedinPath: string | null;
   hackerNewsPath: string | null;
   mediumPath: string | null;
+  mediumUploadChecklistPath: string | null;
   substackPath: string | null;
+  substackUploadChecklistPath: string | null;
   promptPath: string | null;
   imagePath: string | null;
   tableImagePaths: string[];
@@ -130,7 +134,9 @@ const TEXT_ARTIFACT_PATH_BY_ROLE = {
   linkedin: 'linkedin.md',
   hackernews: 'hackernews.md',
   medium: 'medium-paste.md',
+  mediumChecklist: 'medium-upload-checklist.md',
   substack: 'substack-paste.md',
+  substackChecklist: 'substack-upload-checklist.md',
   prompt: 'linkedin-image-prompt.md',
 } as const;
 const TEXT_ARTIFACT_PATHS: ReadonlySet<string> = new Set(Object.values(TEXT_ARTIFACT_PATH_BY_ROLE));
@@ -566,11 +572,27 @@ function manifestStillValid(
 ): boolean {
   if (manifest.input_hash !== inputHash) return false;
   if (manifest.text.medium === undefined || manifest.text.substack === undefined) return false;
+  if (
+    manifest.text.medium_upload_checklist === undefined ||
+    manifest.text.substack_upload_checklist === undefined
+  ) {
+    return false;
+  }
   const textEntries: Array<[ArtifactManifestEntry | null, string, string]> = [
     [manifest.text.linkedin, 'LinkedIn text', TEXT_ARTIFACT_PATH_BY_ROLE.linkedin],
     [manifest.text.hackernews, 'Hacker News text', TEXT_ARTIFACT_PATH_BY_ROLE.hackernews],
     [manifest.text.medium, 'Medium paste', TEXT_ARTIFACT_PATH_BY_ROLE.medium],
+    [
+      manifest.text.medium_upload_checklist,
+      'Medium upload checklist',
+      TEXT_ARTIFACT_PATH_BY_ROLE.mediumChecklist,
+    ],
     [manifest.text.substack, 'Substack paste', TEXT_ARTIFACT_PATH_BY_ROLE.substack],
+    [
+      manifest.text.substack_upload_checklist,
+      'Substack upload checklist',
+      TEXT_ARTIFACT_PATH_BY_ROLE.substackChecklist,
+    ],
     [manifest.prompt, 'prompt', TEXT_ARTIFACT_PATH_BY_ROLE.prompt],
   ];
   const seenTextPaths = new Set<string>();
@@ -586,7 +608,9 @@ function manifestStillValid(
   if (!artifactMatches(kitDir, manifest.text.linkedin)) return false;
   if (!artifactMatches(kitDir, manifest.text.hackernews)) return false;
   if (!artifactMatches(kitDir, manifest.text.medium)) return false;
+  if (!artifactMatches(kitDir, manifest.text.medium_upload_checklist)) return false;
   if (!artifactMatches(kitDir, manifest.text.substack)) return false;
+  if (!artifactMatches(kitDir, manifest.text.substack_upload_checklist)) return false;
   if (!artifactMatches(kitDir, manifest.prompt)) return false;
   if (!Array.isArray(manifest.tables)) return false;
   if (manifest.image) {
@@ -706,7 +730,9 @@ export async function generateDistributionKit(
   const linkedinPath = join(kitDir, 'linkedin.md');
   const hackerNewsPath = join(kitDir, 'hackernews.md');
   const mediumPath = includeMedium ? join(kitDir, 'medium-paste.md') : null;
+  const mediumUploadChecklistPath = includeMedium ? join(kitDir, 'medium-upload-checklist.md') : null;
   const substackPath = includeSubstack ? join(kitDir, 'substack-paste.md') : null;
+  const substackUploadChecklistPath = includeSubstack ? join(kitDir, 'substack-upload-checklist.md') : null;
   const promptPath = includeSocial && imageConfig.mode !== 'off' ? join(kitDir, 'linkedin-image-prompt.md') : null;
   const imagePath =
     includeSocial && (imageConfig.mode === 'generate' || imageConfig.mode === 'required')
@@ -738,7 +764,9 @@ export async function generateDistributionKit(
     hackerNewsTemplateHash: sha256(hackerNewsTemplate),
     promptTemplateHash: sha256(promptTemplate),
     mediumPasteHash: medium ? sha256(medium.content) : null,
+    mediumUploadChecklistHash: medium ? sha256(medium.uploadChecklist) : null,
     substackPasteHash: substack ? sha256(substack.content) : null,
+    substackUploadChecklistHash: substack ? sha256(substack.uploadChecklist) : null,
     tableSourceHashes: mergedTables.hashes,
     publish: {
       medium: includeMedium,
@@ -756,7 +784,9 @@ export async function generateDistributionKit(
       linkedinPath: existing.text.linkedin ? linkedinPath : null,
       hackerNewsPath: existing.text.hackernews ? hackerNewsPath : null,
       mediumPath: existing.text.medium ? mediumPath : null,
+      mediumUploadChecklistPath: existing.text.medium_upload_checklist ? mediumUploadChecklistPath : null,
       substackPath: existing.text.substack ? substackPath : null,
+      substackUploadChecklistPath: existing.text.substack_upload_checklist ? substackUploadChecklistPath : null,
       promptPath,
       imagePath,
       tableImagePaths: (existing.tables ?? []).map((table) => join(kitDir, table.path)),
@@ -782,8 +812,14 @@ export async function generateDistributionKit(
   if (medium && mediumPath) {
     writeMediumPaste(slug, medium.content, { socialDir: paths.socialDir });
   }
+  if (medium && mediumUploadChecklistPath) {
+    writeMediumUploadChecklist(slug, medium.uploadChecklist, { socialDir: paths.socialDir });
+  }
   if (substack && substackPath) {
     writeSubstackPaste(slug, substack.content, { socialDir: paths.socialDir });
+  }
+  if (substack && substackUploadChecklistPath) {
+    writeSubstackUploadChecklist(slug, substack.uploadChecklist, { socialDir: paths.socialDir });
   }
   if (promptPath && prompt) {
     writeFileSync(promptPath, prompt, 'utf-8');
@@ -821,10 +857,22 @@ export async function generateDistributionKit(
             sha256: sha256(readFileSync(mediumPath)),
           }
         : null,
+      medium_upload_checklist: mediumUploadChecklistPath
+        ? {
+            path: 'medium-upload-checklist.md',
+            sha256: sha256(readFileSync(mediumUploadChecklistPath)),
+          }
+        : null,
       substack: substackPath
         ? {
             path: 'substack-paste.md',
             sha256: sha256(readFileSync(substackPath)),
+          }
+        : null,
+      substack_upload_checklist: substackUploadChecklistPath
+        ? {
+            path: 'substack-upload-checklist.md',
+            sha256: sha256(readFileSync(substackUploadChecklistPath)),
           }
         : null,
     },
@@ -862,7 +910,9 @@ export async function generateDistributionKit(
     linkedinPath: includeSocial ? linkedinPath : null,
     hackerNewsPath: includeSocial ? hackerNewsPath : null,
     mediumPath,
+    mediumUploadChecklistPath,
     substackPath,
+    substackUploadChecklistPath,
     promptPath,
     imagePath,
     tableImagePaths: tableAssets.map((table) => join(kitDir, table.path)),
@@ -888,6 +938,15 @@ export function loadDistributionKit(
   if (manifest.text.medium === undefined || manifest.text.substack === undefined) {
     throw new Error(
       `Distribution kit manifest for '${slug}' predates complete publication bundles. ` +
+      `Regenerate it with 'blog publish distribution-kit ${slug}'.`,
+    );
+  }
+  if (
+    manifest.text.medium_upload_checklist === undefined ||
+    manifest.text.substack_upload_checklist === undefined
+  ) {
+    throw new Error(
+      `Distribution kit manifest for '${slug}' predates platform upload checklists. ` +
       `Regenerate it with 'blog publish distribution-kit ${slug}'.`,
     );
   }
@@ -927,10 +986,22 @@ export function loadDistributionKit(
     TEXT_ARTIFACT_PATH_BY_ROLE.medium,
     seenTextPaths,
   );
+  const mediumUploadChecklistPath = verifyText(
+    manifest.text.medium_upload_checklist,
+    'Medium upload checklist',
+    TEXT_ARTIFACT_PATH_BY_ROLE.mediumChecklist,
+    seenTextPaths,
+  );
   const substackPath = verifyText(
     manifest.text.substack,
     'Substack paste',
     TEXT_ARTIFACT_PATH_BY_ROLE.substack,
+    seenTextPaths,
+  );
+  const substackUploadChecklistPath = verifyText(
+    manifest.text.substack_upload_checklist,
+    'Substack upload checklist',
+    TEXT_ARTIFACT_PATH_BY_ROLE.substackChecklist,
     seenTextPaths,
   );
   if (manifest.prompt) {
@@ -961,7 +1032,9 @@ export function loadDistributionKit(
     linkedinPath,
     hackerNewsPath,
     mediumPath,
+    mediumUploadChecklistPath,
     substackPath,
+    substackUploadChecklistPath,
     promptPath,
     imagePath,
     tableImagePaths,
