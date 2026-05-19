@@ -30,7 +30,7 @@ const DEFAULT_SOCIAL: BlogConfig['social'] = {
     directory: 'distribution',
   },
   linkedin_image: {
-    mode: 'prompt-only',
+    mode: 'local-card',
     model: 'gpt-image-2-2026-04-21',
     size: '1200x1200',
     quality: 'high',
@@ -157,9 +157,9 @@ export function validateConfig(raw: unknown): BlogConfig {
       ...(rawSocial.linkedin_image as Partial<BlogConfig['social']['linkedin_image']> | undefined),
     },
   };
-  if (!['off', 'prompt-only', 'generate', 'required'].includes(social.linkedin_image.mode)) {
+  if (!['off', 'local-card', 'prompt-only', 'generate', 'required'].includes(social.linkedin_image.mode)) {
     throw new Error(
-      `Config field social.linkedin_image.mode must be one of off, prompt-only, generate, required. Got: ${JSON.stringify(social.linkedin_image.mode)}`,
+      `Config field social.linkedin_image.mode must be one of off, local-card, prompt-only, generate, required. Got: ${JSON.stringify(social.linkedin_image.mode)}`,
     );
   }
   if (!/^\d+x\d+$/.test(social.linkedin_image.size)) {

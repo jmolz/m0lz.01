@@ -13,9 +13,11 @@ import { openUpdateCycle } from '../src/core/update/cycles.js';
 import {
   generateDistributionKit,
   loadDistributionKit,
+  LINKEDIN_IMAGE_FILENAME,
   resolveSocialMetadata,
   extractLeadSentence,
 } from '../src/core/publish/distribution-kit.js';
+import { renderLinkedInLocalCardSvg } from '../src/core/publish/platform-images.js';
 import {
   ImageProvider,
   ImageGenerationRequest,
@@ -67,7 +69,7 @@ function makeConfig(siteRepoPath: string): BlogConfig {
       timing_recommendations: true,
       distribution_kit: { enabled: true, persist_to_site: true, directory: 'distribution' },
       linkedin_image: {
-        mode: 'prompt-only',
+        mode: 'local-card',
         model: 'gpt-image-2-2026-04-21',
         size: '1200x1200',
         quality: 'high',
@@ -233,6 +235,7 @@ describe('generateDistributionKit', () => {
 
     const result = await generateDistributionKit('prompt-only', f.config, f, f.db, {
       sourceMode: 'publish',
+      imageMode: 'prompt-only',
       provider,
     });
 
@@ -246,6 +249,7 @@ describe('generateDistributionKit', () => {
     expect(existsSync(result.substackPath!)).toBe(true);
     expect(existsSync(result.substackUploadChecklistPath!)).toBe(true);
     expect(result.manifest.image_mode).toBe('prompt-only');
+    expect(result.manifest.image_provider).toBeNull();
     expect(result.manifest.image).toBeNull();
     expect(result.manifest.text.medium?.sha256).toBe(sha256(readFileSync(result.mediumPath!)));
     expect(result.manifest.text.medium_upload_checklist?.sha256)
@@ -256,12 +260,150 @@ describe('generateDistributionKit', () => {
     const linkedin = readFileSync(result.linkedinPath, 'utf-8');
     expect(linkedin).toContain('Prompt Only Title');
     expect(linkedin).toContain('https://draft.example/writing/prompt-only');
-    expect(linkedin).toContain('Image prompt: ./distribution/linkedin-image-prompt.md');
-    expect(linkedin).toContain('Alt text:');
+    expect(linkedin).not.toContain('Image prompt:');
+    expect(linkedin).not.toContain('Alt text:');
+    expect(linkedin).not.toContain('./distribution/');
+    expect(linkedin).not.toContain('./assets/');
+    expect(linkedin).not.toContain('durable distribution kit');
     expect(linkedin).toContain('#TypeScript');
+    expect(linkedin.length).toBeLessThanOrEqual(3000);
     expect(linkedin).not.toContain('{{');
     expect(linkedin).not.toMatch(/\bn\/a\b/i);
-    expect(linkedin).not.toContain('Key takeaway: m0lz.');
+    expect(linkedin).not.toMatch(/\.\.\.$/m);
+  });
+
+  it('loads legacy prompt-only manifests that recorded an OpenAI provider with no image', async () => {
+    const f = setup();
+    seedPost(f.db, 'legacy-manifest');
+    writeDraft(f, 'legacy-manifest', 'Legacy Manifest Title');
+
+    const result = await generateDistributionKit('legacy-manifest', f.config, f, f.db, {
+      sourceMode: 'publish',
+      imageMode: 'prompt-only',
+    });
+    const manifest = JSON.parse(readFileSync(result.manifestPath, 'utf-8'));
+    manifest.image_provider = 'openai';
+    manifest.image = null;
+    writeFileSync(result.manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf-8');
+
+    const loaded = loadDistributionKit('legacy-manifest', f);
+
+    expect(loaded.manifest.image_provider).toBe('openai');
+    expect(loaded.manifest.image).toBeNull();
+    expect(loaded.imagePath).toBeNull();
+    expect(loaded.promptPath).toBe(result.promptPath);
+  });
+
+  it('local-card mode writes a deterministic 1200x1200 image without calling a provider', async () => {
+    const f = setup();
+    seedPost(f.db, 'local-card');
+    writeDraft(f, 'local-card', 'Local Card Title');
+    const png = await sharp({ create: { width: 1200, height: 1200, channels: 4, background: '#111111' } }).png().toBuffer();
+    const provider = new FakeProvider(png);
+
+    const result = await generateDistributionKit('local-card', f.config, f, f.db, {
+      sourceMode: 'publish',
+      provider,
+    });
+
+    expect(provider.calls.length).toBe(0);
+    expect(result.promptPath).toBeNull();
+    expect(existsSync(join(f.socialDir, 'local-card', 'linkedin-image-prompt.md'))).toBe(false);
+    expect(result.imagePath).toBe(join(f.socialDir, 'local-card', 'assets', 'linkedin-feed.png'));
+    expect(existsSync(result.imagePath!)).toBe(true);
+    const metadata = await sharp(result.imagePath!).metadata();
+    expect(metadata.width).toBe(1200);
+    expect(metadata.height).toBe(1200);
+    expect(result.manifest.image_mode).toBe('local-card');
+    expect(result.manifest.prompt).toBeNull();
+    expect(result.manifest.image_provider).toBe('local-card');
+    expect(result.manifest.image?.sha256).toBe(sha256(readFileSync(result.imagePath!)));
+    const { data, info } = await sharp(result.imagePath!).raw().toBuffer({ resolveWithObject: true });
+    let nonBlackPixels = 0;
+    const samples = new Set<string>();
+    for (let offset = 0; offset < data.length; offset += info.channels * 997) {
+      const r = data[offset];
+      const g = data[offset + 1];
+      const b = data[offset + 2];
+      if (r > 20 || g > 20 || b > 20) nonBlackPixels += 1;
+      samples.add(`${r},${g},${b}`);
+    }
+    expect(nonBlackPixels).toBeGreaterThan(100);
+    expect(samples.size).toBeGreaterThan(3);
+  });
+
+  it('local-card manifest records the actual fixed image size even when config size differs', async () => {
+    const f = setup();
+    seedPost(f.db, 'local-card-size');
+    writeDraft(f, 'local-card-size', 'Local Card Size Title');
+    const provider = new FakeProvider(Buffer.from('unused'));
+    f.config.social.linkedin_image.size = '1024x1024';
+
+    const result = await generateDistributionKit('local-card-size', f.config, f, f.db, {
+      sourceMode: 'publish',
+      provider,
+    });
+
+    expect(provider.calls.length).toBe(0);
+    expect(result.manifest.image?.width).toBe(1200);
+    expect(result.manifest.image?.height).toBe(1200);
+    expect(result.manifest.image_size).toBe('1200x1200');
+  });
+
+  it('local-card mode refuses a symlinked image output path before writing', async () => {
+    const f = setup();
+    seedPost(f.db, 'symlink-card');
+    writeDraft(f, 'symlink-card', 'Symlink Card Title');
+    const assetsDir = join(f.socialDir, 'symlink-card', 'assets');
+    mkdirSync(assetsDir, { recursive: true });
+    const outsideTarget = join(f.tempDir, 'outside-linkedin.png');
+    writeFileSync(outsideTarget, 'do not overwrite', 'utf-8');
+    symlinkSync(outsideTarget, join(assetsDir, LINKEDIN_IMAGE_FILENAME));
+
+    await expect(generateDistributionKit('symlink-card', f.config, f, f.db, {
+      sourceMode: 'publish',
+    })).rejects.toThrow(/symlink path/);
+    expect(readFileSync(outsideTarget, 'utf-8')).toBe('do not overwrite');
+  });
+
+  it('local-card SVG escapes text and avoids banned workspace motifs', () => {
+    const svg = renderLinkedInLocalCardSvg({
+      title: 'A <Title> & "Quoted"',
+      project: 'm0lz.02',
+      tags: ['Architecture', 'Review Gates'],
+      baseUrl: 'https://m0lz.dev',
+    });
+
+    expect(svg).toContain('m0lz.02');
+    expect(svg).toContain('Research');
+    expect(svg).toContain('Draft');
+    expect(svg).toContain('Evaluate');
+    expect(svg).toContain('Publish');
+    expect(svg).toContain('layered contracts / review gates');
+    expect(svg).toContain('A &lt;Title&gt;');
+    expect(svg).not.toMatch(/desk|notes|terminal windows|laptop|workspace scene/i);
+  });
+
+  it('local-card SVG bounds long unbroken text tokens', () => {
+    const longToken = 'X'.repeat(96);
+    const svg = renderLinkedInLocalCardSvg({
+      title: longToken,
+      project: longToken,
+      tags: [longToken],
+      baseUrl: 'https://m0lz.dev',
+    });
+
+    expect(svg).not.toContain(longToken);
+    expect(svg).toContain('X'.repeat(22));
+    for (const match of svg.matchAll(/<text[^>]*>([^<]+)<\/text>/g)) {
+      if (/^X+$/.test(match[1])) {
+        expect(match[1].length).toBeLessThanOrEqual(48);
+      }
+    }
+    expect(svg.match(/textLength="620"/g)).toHaveLength(3);
+    expect(svg).toContain('textLength="460"');
+    expect(svg).toContain('textLength="520"');
+    expect(svg).toContain('lengthAdjust="spacingAndGlyphs"');
   });
 
   it('generated mode is content-addressed and does not rewrite a valid manifest on the second run', async () => {
@@ -285,6 +427,7 @@ describe('generateDistributionKit', () => {
     expect(first.manifest.image_quality).toBe('high');
     expect(first.manifest.image_format).toBe('png');
     expect(first.manifest.image_mode).toBe('generate');
+    expect(first.manifest.image_provider).toBe('openai');
     expect(first.manifest.input_hash).toMatch(/^[a-f0-9]{64}$/);
     expect(first.manifest.prompt?.path).toBe('linkedin-image-prompt.md');
     expect(first.manifest.prompt?.sha256).toBe(sha256(readFileSync(first.promptPath!)));
@@ -304,6 +447,12 @@ describe('generateDistributionKit', () => {
     expect(first.manifest.image?.sha256).toBe(sha256(readFileSync(first.imagePath!)));
     expect(first.imagePath).toBe(join(f.socialDir, 'generated', 'assets', 'linkedin-feed.png'));
     expect(existsSync(join(f.draftsDir, 'generated', 'assets', 'linkedin-feed.png'))).toBe(false);
+    const prompt = readFileSync(first.promptPath!, 'utf-8');
+    expect(prompt).toMatch(/architecture/i);
+    expect(prompt).toMatch(/layered/i);
+    expect(prompt).toMatch(/product/i);
+    expect(prompt).toMatch(/editorial/i);
+    expect(prompt).not.toMatch(/desk|notes|terminal windows|laptop|workspace scene/i);
 
     const second = await generateDistributionKit('generated', f.config, f, f.db, {
       sourceMode: 'publish',
@@ -313,6 +462,39 @@ describe('generateDistributionKit', () => {
     expect(second.reused).toBe(true);
     expect(provider.calls.length).toBe(1);
     expect(readFileSync(second.manifestPath, 'utf-8')).toBe(manifestBytes);
+  });
+
+  it('generated prompt sanitizes banned visual terms from metadata and URLs instead of rejecting valid posts', async () => {
+    const f = setup();
+    seedPost(f.db, 'desk-notes-laptop');
+    const dir = join(f.draftsDir, 'desk-notes-laptop');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'index.mdx'), `---
+title: "Release notes for laptop reviewers"
+description: "${'A'.repeat(260)} without a sentence boundary"
+date: "2026-05-14"
+tags:
+  - TypeScript
+published: false
+canonical: "https://draft.example/writing/desk-notes-laptop"
+project: "desk notes"
+---
+
+Body
+`, 'utf-8');
+    const png = await sharp({ create: { width: 1200, height: 1200, channels: 4, background: '#222222' } }).png().toBuffer();
+    const provider = new FakeProvider(png);
+
+    const result = await generateDistributionKit('desk-notes-laptop', f.config, f, f.db, {
+      sourceMode: 'publish',
+      imageMode: 'generate',
+      provider,
+    });
+
+    const prompt = readFileSync(result.promptPath!, 'utf-8');
+    expect(prompt).toContain('Release evidence');
+    expect(prompt).not.toMatch(/desk|notes|terminal windows|laptop|workspace scene/i);
+    expect(provider.calls.length).toBe(1);
   });
 
   it('writes portable table assets into the distribution kit, not evaluated draft assets', async () => {
@@ -347,6 +529,28 @@ describe('generateDistributionKit', () => {
 
     expect(() => loadDistributionKit('tampered-text', f))
       .toThrow(/LinkedIn text artifact hash mismatch/);
+  });
+
+  it('does not reuse a text artifact when the manifest hash was rewritten to match tampered bytes', async () => {
+    const f = setup();
+    seedPost(f.db, 'tampered-manifest-reuse');
+    writeDraft(f, 'tampered-manifest-reuse', 'Tampered Manifest Reuse Title');
+    const result = await generateDistributionKit('tampered-manifest-reuse', f.config, f, f.db, {
+      sourceMode: 'publish',
+    });
+    const originalLinkedIn = readFileSync(result.linkedinPath, 'utf-8');
+    const tamperedLinkedIn = 'tampered linkedin copy with a matching manifest hash\n';
+    writeFileSync(result.linkedinPath, tamperedLinkedIn, 'utf-8');
+    const manifest = JSON.parse(readFileSync(result.manifestPath, 'utf-8'));
+    manifest.text.linkedin.sha256 = sha256(tamperedLinkedIn);
+    writeFileSync(result.manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf-8');
+
+    const regenerated = await generateDistributionKit('tampered-manifest-reuse', f.config, f, f.db, {
+      sourceMode: 'publish',
+    });
+
+    expect(regenerated.reused).toBe(false);
+    expect(readFileSync(regenerated.linkedinPath, 'utf-8')).toBe(originalLinkedIn);
   });
 
   it('loadDistributionKit refuses Medium paste, checklist, and table assets that no longer match the manifest', async () => {
@@ -645,6 +849,11 @@ describe('text helpers', () => {
   it('does not split product IDs or decimal-like names as sentence boundaries', () => {
     expect(extractLeadSentence('m0lz.01 ships distribution artifacts. Second sentence.', 160))
       .toBe('m0lz.01 ships distribution artifacts.');
+  });
+
+  it('throws instead of hard-clipping when no natural lead sentence fits', () => {
+    expect(() => extractLeadSentence(`${'A'.repeat(90)} without punctuation ${'B'.repeat(90)}`, 80))
+      .toThrow(/could not be fit within 80 characters without clipping/);
   });
 });
 

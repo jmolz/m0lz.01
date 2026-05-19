@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { existsSync, lstatSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 
 import Database from 'better-sqlite3';
@@ -11,6 +11,18 @@ import { parseFrontmatter, PostFrontmatter } from '../draft/frontmatter.js';
 import { getOpenUpdateCycle } from '../update/cycles.js';
 import { renderMediumPaste, writeMediumPaste, writeMediumUploadChecklist } from './medium.js';
 import { ImageProvider, OpenAIImageProvider } from './openai-image.js';
+import {
+  fitNaturalCopy,
+  hasAbruptEllipsis,
+  LINKEDIN_BODY_MAX_CHARS,
+  LINKEDIN_POST_MAX_CHARS,
+  normalizePlatformCopy,
+} from './platform-copy.js';
+import {
+  LINKEDIN_LOCAL_CARD_TEMPLATE_VERSION,
+  renderLinkedInLocalCardImageBuffer,
+  writeLinkedInLocalCardImage,
+} from './platform-images.js';
 import { renderSubstackPaste, writeSubstackPaste, writeSubstackUploadChecklist } from './substack.js';
 import { PortableTableAsset, PortableTableSource, writePortableTableAssets } from './table-assets.js';
 
@@ -79,7 +91,7 @@ export interface DistributionKitManifest {
   prompt: ArtifactManifestEntry | null;
   image: ImageManifestEntry | null;
   tables: TableImageManifestEntry[];
-  image_provider: 'openai';
+  image_provider: 'local-card' | 'openai' | null;
   image_model: string;
   image_size: string;
   image_quality: string;
@@ -112,12 +124,7 @@ export interface GenerateDistributionKitResult {
   reused: boolean;
 }
 
-const REQUIRED_PROMPT_TERMS = [
-  'technical founder',
-  'local workflow',
-  'inspectable',
-  'real workspace',
-];
+const REQUIRED_PROMPT_TERMS = ['architecture', 'layered', 'product', 'editorial'];
 
 const BANNED_PROMPT_TERMS = [
   'AI glow',
@@ -125,8 +132,27 @@ const BANNED_PROMPT_TERMS = [
   'orb',
   'bokeh',
   'corporate handshake',
+  'desk',
+  'notes',
+  'terminal windows',
+  'laptop',
+  'workspace scene',
   'fake UI text',
   'unreadable text',
+];
+const PROMPT_CONTEXT_REPLACEMENTS: ReadonlyArray<[RegExp, string]> = [
+  [/\bAI glow\b/gi, 'high contrast'],
+  [/\brobot\b/gi, 'system'],
+  [/\borb\b/gi, 'node'],
+  [/\bbokeh\b/gi, 'depth'],
+  [/\bcorporate handshake\b/gi, 'collaboration'],
+  [/desk/gi, 'surface'],
+  [/notes/gi, 'evidence'],
+  [/terminal windows/gi, 'command layers'],
+  [/laptop/gi, 'device'],
+  [/workspace scene/gi, 'architecture view'],
+  [/\bfake UI text\b/gi, 'abstract interface marks'],
+  [/unreadable text/gi, 'abstract labels'],
 ];
 
 const EMOJI_PATTERN = /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u;
@@ -142,7 +168,7 @@ const TEXT_ARTIFACT_PATH_BY_ROLE = {
 const TEXT_ARTIFACT_PATHS: ReadonlySet<string> = new Set(Object.values(TEXT_ARTIFACT_PATH_BY_ROLE));
 
 const DEFAULT_LINKEDIN_IMAGE_CONFIG: LinkedInImageConfig = {
-  mode: 'prompt-only',
+  mode: 'local-card',
   model: 'gpt-image-2-2026-04-21',
   size: '1200x1200',
   quality: 'high',
@@ -308,7 +334,7 @@ export function resolveSocialMetadata(
 }
 
 export function extractLeadSentence(description: string, maxLen: number): string {
-  const trimmed = description.replace(/\s+/g, ' ').trim();
+  const trimmed = normalizePlatformCopy(description);
   for (let i = 0; i < trimmed.length; i += 1) {
     const char = trimmed[i];
     if (char !== '.' && char !== '!' && char !== '?') continue;
@@ -320,10 +346,14 @@ export function extractLeadSentence(description: string, maxLen: number): string
     if (next === '' || /\s/.test(next)) {
       const sentence = trimmed.slice(0, i + 1);
       if (sentence.length <= maxLen) return sentence;
+      break;
     }
   }
   if (trimmed.length <= maxLen) return trimmed;
-  return `${trimmed.slice(0, maxLen - 3).trimEnd()}...`;
+  throw new Error(
+    `Lead sentence could not be fit within ${maxLen} characters without clipping. ` +
+    'Shorten the draft frontmatter description, then re-run draft/evaluate before publishing.',
+  );
 }
 
 function hashtags(tags: string[]): string {
@@ -359,46 +389,91 @@ function assertCleanRenderedText(kind: string, content: string): void {
   }
 }
 
-function imageReferenceFor(mode: LinkedInImageMode, distributionDirectory: string): string {
-  if (mode === 'generate' || mode === 'required') {
-    return `Image: ./assets/${LINKEDIN_IMAGE_FILENAME}`;
+function assertNoAbruptEllipsis(kind: string, content: string): void {
+  if (hasAbruptEllipsis(content)) {
+    throw new Error(`${kind} text contains abrupt ellipsis clipping`);
   }
-  if (mode === 'prompt-only') {
-    return `Image prompt: ./${distributionDirectory}/linkedin-image-prompt.md`;
+}
+
+function fallbackCopyFor(metadata: SocialMetadata): string {
+  const title = normalizePlatformCopy(metadata.title);
+  const prefix = metadata.contentType === 'project-launch' ? 'Launch notes' : 'Technical notes';
+  return `${prefix} and evidence for ${title}.`;
+}
+
+function fallbackPromptCopyFor(metadata: SocialMetadata): string {
+  const title = normalizePlatformCopy(metadata.title);
+  const prefix = metadata.contentType === 'project-launch' ? 'Launch evidence' : 'Technical evidence';
+  return `${prefix} for ${title}.`;
+}
+
+function sanitizePromptContext(value: string): string {
+  let sanitized = normalizePlatformCopy(value);
+  for (const [pattern, replacement] of PROMPT_CONTEXT_REPLACEMENTS) {
+    sanitized = sanitized.replace(pattern, replacement);
   }
-  return 'Image: none';
+  return sanitized;
+}
+
+function renderLinkedInBody(metadata: SocialMetadata, config: BlogConfig): string {
+  const timing = config.social.timing_recommendations
+    ? 'Best posting times: Tuesday-Thursday, 8-10am local time.'
+    : '';
+  const values = (body: string): Record<string, string> => ({
+    hook: metadata.title,
+    body,
+    canonical_url: sanitizePromptContext(metadata.canonicalUrl),
+    hashtags: hashtags(metadata.tags),
+    timing,
+  });
+  const fullBody = normalizePlatformCopy(metadata.description);
+  const template = [
+    '{{hook}}',
+    '',
+    '{{body}}',
+    '',
+    'Read the full post: {{canonical_url}}',
+    '',
+    '{{hashtags}}',
+    '',
+    '{{timing}}',
+  ].join('\n');
+  const fullContent = fillTemplate(template, values(fullBody));
+  if (fullContent.length <= LINKEDIN_POST_MAX_CHARS && !hasAbruptEllipsis(fullBody)) return fullBody;
+  return fitNaturalCopy(
+    fullBody,
+    LINKEDIN_BODY_MAX_CHARS,
+    'LinkedIn body',
+    fallbackCopyFor(metadata),
+  );
 }
 
 export function renderLinkedInText(
   template: string,
   metadata: SocialMetadata,
   config: BlogConfig,
-  imageMode: LinkedInImageMode,
+  _imageMode: LinkedInImageMode,
 ): string {
-  const description = extractLeadSentence(metadata.description, 220);
-  const updateLine = metadata.updateCycle
-    ? `Update cycle ${metadata.updateCycle.cycleNumber}: ${metadata.updateCycle.summary ?? '(no update summary provided)'}`
-    : 'Built as a durable distribution kit for launch review and reuse.';
+  const body = renderLinkedInBody(metadata, config);
+  const timing = config.social.timing_recommendations
+    ? 'Best posting times: Tuesday-Thursday, 8-10am local time.'
+    : '';
   const content = fillTemplate(template, {
-    title: metadata.title,
-    description,
-    shipped_summary: updateLine,
+    hook: metadata.title,
+    body,
     canonical_url: metadata.canonicalUrl,
-    image_reference: imageReferenceFor(
-      imageMode,
-      distributionDirectory(config),
-    ),
-    alt_text:
-      `${metadata.title} visual for ${metadata.project ?? 'a local technical publishing workflow'} in a real workspace.`,
     hashtags: hashtags(metadata.tags),
-    takeaway: description,
-    timing: config.social.timing_recommendations
-      ? 'Best posting times: Tuesday-Thursday, 8-10am local time.'
-      : '',
+    timing,
   });
   assertCleanRenderedText('LinkedIn', content);
-  if (content.includes('Key takeaway: m0lz.')) {
-    throw new Error('LinkedIn text contains broken product-ID sentence fragment');
+  assertNoAbruptEllipsis('LinkedIn', content);
+  for (const internal of ['Image prompt:', 'Alt text:', './distribution/', './assets/', 'durable distribution kit']) {
+    if (content.includes(internal)) {
+      throw new Error(`LinkedIn text contains internal artifact label: ${internal}`);
+    }
+  }
+  if (content.length > LINKEDIN_POST_MAX_CHARS) {
+    throw new Error(`LinkedIn text exceeds ${LINKEDIN_POST_MAX_CHARS} characters`);
   }
   return content;
 }
@@ -414,8 +489,14 @@ export function renderHackerNewsText(template: string, metadata: SocialMetadata,
   const updateContext = metadata.updateCycle
     ? `Update: ${metadata.updateCycle.summary ?? '(no update summary provided)'}`
     : '';
+  const description = fitNaturalCopy(
+    metadata.description,
+    260,
+    'Hacker News first comment',
+    fallbackCopyFor(metadata),
+  );
   const firstComment = [
-    extractLeadSentence(metadata.description, 260),
+    description,
     updateContext,
     companionLine,
   ].filter((line) => line.trim().length > 0).join('\n\n');
@@ -439,17 +520,26 @@ export function renderHackerNewsText(template: string, metadata: SocialMetadata,
   if (titleMatch && titleMatch[1].length > 80) {
     throw new Error('Hacker News title exceeds 80 characters');
   }
+  if (description.endsWith('...')) {
+    throw new Error('Hacker News first comment contains abrupt description ellipsis');
+  }
   return content;
 }
 
 function renderPrompt(template: string, metadata: SocialMetadata, config: BlogConfig): string {
-  const content = fillTemplate(template, {
-    title: metadata.title,
-    description: extractLeadSentence(metadata.description, 220),
-    canonical_url: metadata.canonicalUrl,
-    project: metadata.project ?? 'local publishing system',
-    size: config.social.linkedin_image.size,
-  });
+  const description = fitNaturalCopy(
+    metadata.description,
+    220,
+    'LinkedIn image prompt context',
+    fallbackPromptCopyFor(metadata),
+  );
+	const content = fillTemplate(template, {
+		title: sanitizePromptContext(metadata.title),
+		description: sanitizePromptContext(description),
+		canonical_url: sanitizePromptContext(metadata.canonicalUrl),
+		project: sanitizePromptContext(metadata.project ?? 'local publishing system'),
+		size: config.social.linkedin_image.size,
+	});
   const lower = content.toLowerCase();
   for (const term of REQUIRED_PROMPT_TERMS) {
     if (!lower.includes(term.toLowerCase())) {
@@ -494,6 +584,26 @@ function artifactMatches(baseDir: string, entry: ArtifactManifestEntry | null | 
   if (!existsSync(path)) return false;
   const stat = lstatSync(path);
   return !stat.isSymbolicLink() && stat.isFile() && sha256(readFileSync(path)) === entry.sha256;
+}
+
+function entryMatchesExpectedHash(
+  entry: ArtifactManifestEntry | null | undefined,
+  expectedHash: string | null | undefined,
+): boolean {
+  if (expectedHash === undefined) return true;
+  if (expectedHash === null) return entry === null || entry === undefined;
+  return entry?.sha256 === expectedHash;
+}
+
+interface ExpectedArtifactHashes {
+  linkedin: string | null;
+  hackernews: string | null;
+  medium: string | null;
+  mediumUploadChecklist: string | null;
+  substack: string | null;
+  substackUploadChecklist: string | null;
+  prompt: string | null;
+  image?: string | null;
 }
 
 function assertSafeTextManifestPath(
@@ -569,6 +679,7 @@ function manifestStillValid(
   manifest: DistributionKitManifest,
   inputHash: string,
   kitDir: string,
+  expected: ExpectedArtifactHashes,
 ): boolean {
   if (manifest.input_hash !== inputHash) return false;
   if (manifest.text.medium === undefined || manifest.text.substack === undefined) return false;
@@ -605,6 +716,14 @@ function manifestStillValid(
       return false;
     }
   }
+  if (!entryMatchesExpectedHash(manifest.text.linkedin, expected.linkedin)) return false;
+  if (!entryMatchesExpectedHash(manifest.text.hackernews, expected.hackernews)) return false;
+  if (!entryMatchesExpectedHash(manifest.text.medium, expected.medium)) return false;
+  if (!entryMatchesExpectedHash(manifest.text.medium_upload_checklist, expected.mediumUploadChecklist)) return false;
+  if (!entryMatchesExpectedHash(manifest.text.substack, expected.substack)) return false;
+  if (!entryMatchesExpectedHash(manifest.text.substack_upload_checklist, expected.substackUploadChecklist)) return false;
+  if (!entryMatchesExpectedHash(manifest.prompt, expected.prompt)) return false;
+  if (!entryMatchesExpectedHash(manifest.image, expected.image)) return false;
   if (!artifactMatches(kitDir, manifest.text.linkedin)) return false;
   if (!artifactMatches(kitDir, manifest.text.hackernews)) return false;
   if (!artifactMatches(kitDir, manifest.text.medium)) return false;
@@ -671,11 +790,52 @@ function mergeTables(...sets: PortableTableSource[][]): { tables: PortableTableS
 }
 
 function assertImagePreflight(imageConfig: LinkedInImageConfig, provider: ImageProvider | undefined): void {
-  if (imageConfig.mode === 'off' || imageConfig.mode === 'prompt-only') return;
+  if (
+    imageConfig.mode === 'off' ||
+    imageConfig.mode === 'prompt-only' ||
+    imageConfig.mode === 'local-card'
+  ) return;
   if (provider) return;
   if (!process.env.OPENAI_API_KEY || process.env.OPENAI_API_KEY.trim().length === 0) {
     throw new Error('OPENAI_API_KEY is required for LinkedIn image generation');
   }
+}
+
+async function writeLocalCardImage(
+  config: BlogConfig,
+  metadata: SocialMetadata,
+  outputPath: string,
+  imageBytes?: Buffer,
+): Promise<ImageManifestEntry> {
+  mkdirSync(dirname(outputPath), { recursive: true });
+  await writeLinkedInLocalCardImage(localCardInput(config, metadata), outputPath, imageBytes);
+  const bytes = readFileSync(outputPath);
+  const imageMetadata = await sharp(bytes).metadata();
+  const stats = statSync(outputPath);
+  return {
+    path: `assets/${LINKEDIN_IMAGE_FILENAME}`,
+    sha256: sha256(bytes),
+    width: imageMetadata.width ?? 0,
+    height: imageMetadata.height ?? 0,
+    bytes: stats.size,
+  };
+}
+
+function localCardInput(config: BlogConfig, metadata: SocialMetadata) {
+  return {
+    title: metadata.title,
+    project: metadata.project,
+    tags: metadata.tags,
+    baseUrl: config.site.base_url,
+  };
+}
+
+function imageConfigForInputHash(imageConfig: LinkedInImageConfig): LinkedInImageConfig {
+  if (imageConfig.mode !== 'required') return imageConfig;
+  return {
+    ...imageConfig,
+    mode: 'generate',
+  };
 }
 
 async function writeGeneratedImage(
@@ -721,9 +881,6 @@ export async function generateDistributionKit(
   const includeMedium = mediumEnabled(config);
   const includeSubstack = substackEnabled(config);
   const imageConfig = imageConfigWithOverride(config, options.imageMode);
-  if (includeSocial) {
-    assertImagePreflight(imageConfig, options.provider);
-  }
 
   const kitDir = join(paths.socialDir, slug);
   const tableAssetsDir = join(kitDir, 'assets');
@@ -733,9 +890,12 @@ export async function generateDistributionKit(
   const mediumUploadChecklistPath = includeMedium ? join(kitDir, 'medium-upload-checklist.md') : null;
   const substackPath = includeSubstack ? join(kitDir, 'substack-paste.md') : null;
   const substackUploadChecklistPath = includeSubstack ? join(kitDir, 'substack-upload-checklist.md') : null;
-  const promptPath = includeSocial && imageConfig.mode !== 'off' ? join(kitDir, 'linkedin-image-prompt.md') : null;
+  const promptPath =
+    includeSocial && (imageConfig.mode === 'prompt-only' || imageConfig.mode === 'generate' || imageConfig.mode === 'required')
+      ? join(kitDir, 'linkedin-image-prompt.md')
+      : null;
   const imagePath =
-    includeSocial && (imageConfig.mode === 'generate' || imageConfig.mode === 'required')
+    includeSocial && (imageConfig.mode === 'local-card' || imageConfig.mode === 'generate' || imageConfig.mode === 'required')
       ? join(tableAssetsDir, LINKEDIN_IMAGE_FILENAME)
       : null;
   const manifestPath = join(kitDir, 'manifest.json');
@@ -755,6 +915,25 @@ export async function generateDistributionKit(
   const promptTemplatePath = join(paths.templatesDir, 'social', 'linkedin-image-prompt.md');
   const promptTemplate = promptPath ? readFileSync(promptTemplatePath, 'utf-8') : '';
   const prompt = promptPath ? renderPrompt(promptTemplate, metadata, config) : null;
+  const linkedin = includeSocial
+    ? renderLinkedInText(linkedinTemplate, metadata, config, imageConfig.mode)
+    : null;
+  const hackerNews = includeSocial
+    ? renderHackerNewsText(hackerNewsTemplate, metadata, config)
+    : null;
+  const localCardBytes = includeSocial && imageConfig.mode === 'local-card'
+    ? await renderLinkedInLocalCardImageBuffer(localCardInput(config, metadata))
+    : null;
+  const expectedArtifactHashes: ExpectedArtifactHashes = {
+    linkedin: linkedin ? sha256(linkedin) : null,
+    hackernews: hackerNews ? sha256(hackerNews) : null,
+    medium: medium ? sha256(medium.content) : null,
+    mediumUploadChecklist: medium ? sha256(medium.uploadChecklist) : null,
+    substack: substack ? sha256(substack.content) : null,
+    substackUploadChecklist: substack ? sha256(substack.uploadChecklist) : null,
+    prompt: prompt ? sha256(prompt) : null,
+    image: imageConfig.mode === 'local-card' && localCardBytes ? sha256(localCardBytes) : undefined,
+  };
   const inputHash = computeInputHash({
     metadata,
     sourcePath: source.path,
@@ -768,16 +947,19 @@ export async function generateDistributionKit(
     substackPasteHash: substack ? sha256(substack.content) : null,
     substackUploadChecklistHash: substack ? sha256(substack.uploadChecklist) : null,
     tableSourceHashes: mergedTables.hashes,
+    localCardTemplateVersion: imageConfig.mode === 'local-card'
+      ? LINKEDIN_LOCAL_CARD_TEMPLATE_VERSION
+      : null,
     publish: {
       medium: includeMedium,
       substack: includeSubstack,
     },
     socialDistributionEnabled: includeSocial,
-    imageConfig,
+    imageConfig: imageConfigForInputHash(imageConfig),
   });
 
   const existing = readManifest(manifestPath);
-  if (!options.force && existing && manifestStillValid(slug, existing, inputHash, kitDir)) {
+  if (!options.force && existing && manifestStillValid(slug, existing, inputHash, kitDir, expectedArtifactHashes)) {
     return {
       slug,
       directory: kitDir,
@@ -796,18 +978,18 @@ export async function generateDistributionKit(
     };
   }
 
+  if (includeSocial) {
+    assertImagePreflight(imageConfig, options.provider);
+  }
+
   mkdirSync(kitDir, { recursive: true });
   if (imagePath) {
     mkdirSync(tableAssetsDir, { recursive: true });
   }
 
-  let linkedin: string | null = null;
-  let hackerNews: string | null = null;
   if (includeSocial) {
-    linkedin = renderLinkedInText(linkedinTemplate, metadata, config, imageConfig.mode);
-    hackerNews = renderHackerNewsText(hackerNewsTemplate, metadata, config);
-    writeFileSync(linkedinPath, linkedin, 'utf-8');
-    writeFileSync(hackerNewsPath, hackerNews, 'utf-8');
+    writeFileSync(linkedinPath, linkedin!, 'utf-8');
+    writeFileSync(hackerNewsPath, hackerNews!, 'utf-8');
   }
   if (medium && mediumPath) {
     writeMediumPaste(slug, medium.content, { socialDir: paths.socialDir });
@@ -824,10 +1006,15 @@ export async function generateDistributionKit(
   if (promptPath && prompt) {
     writeFileSync(promptPath, prompt, 'utf-8');
   }
+  if (!promptPath && existsSync(join(kitDir, 'linkedin-image-prompt.md'))) {
+    rmSync(join(kitDir, 'linkedin-image-prompt.md'), { force: true });
+  }
   const tableAssets = await writePortableTableAssets({ tables: mergedTables.tables }, tableAssetsDir);
 
   let image: ImageManifestEntry | null = null;
-  if (imagePath && prompt) {
+  if (imagePath && imageConfig.mode === 'local-card') {
+    image = await writeLocalCardImage(config, metadata, imagePath, localCardBytes ?? undefined);
+  } else if (imagePath && prompt) {
     image = await writeGeneratedImage(imageConfig, prompt, imagePath, options.provider);
   }
 
@@ -894,10 +1081,19 @@ export async function generateDistributionKit(
       row_count: table.row_count,
       column_count: table.column_count,
     })),
-    image_provider: 'openai',
-    image_model: imageConfig.model,
-    image_size: imageConfig.size,
-    image_quality: imageConfig.quality,
+    image_provider:
+      imageConfig.mode === 'local-card'
+        ? 'local-card'
+        : imageConfig.mode === 'generate' || imageConfig.mode === 'required'
+          ? 'openai'
+          : null,
+    image_model: imageConfig.mode === 'local-card'
+      ? `local-card-v${LINKEDIN_LOCAL_CARD_TEMPLATE_VERSION}`
+      : imageConfig.model,
+    image_size: imageConfig.mode === 'local-card' && image
+      ? `${image.width}x${image.height}`
+      : imageConfig.size,
+    image_quality: imageConfig.mode === 'local-card' ? 'deterministic' : imageConfig.quality,
     image_format: LINKEDIN_IMAGE_FORMAT,
     image_mode: imageConfig.mode,
     reused: false,

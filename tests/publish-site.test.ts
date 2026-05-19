@@ -73,7 +73,7 @@ function makeConfig(siteRepoPath: string): BlogConfig {
       timing_recommendations: true,
       distribution_kit: { enabled: true, persist_to_site: true, directory: 'distribution' },
       linkedin_image: {
-        mode: 'prompt-only',
+        mode: 'local-card',
         model: 'gpt-image-2-2026-04-21',
         size: '1200x1200',
         quality: 'high',
@@ -283,6 +283,8 @@ describe('createSitePR — happy path', () => {
     expect(existsSync(join(f.siteRepoPath, 'content/posts/alpha/distribution/substack-paste.md'))).toBe(true);
     expect(existsSync(join(f.siteRepoPath, 'content/posts/alpha/distribution/substack-upload-checklist.md'))).toBe(true);
     expect(existsSync(join(f.siteRepoPath, 'content/posts/alpha/distribution/manifest.json'))).toBe(true);
+    expect(existsSync(join(f.siteRepoPath, 'content/posts/alpha/assets/linkedin-feed.png'))).toBe(true);
+    expect(existsSync(join(f.siteRepoPath, 'content/posts/alpha/distribution/linkedin-image-prompt.md'))).toBe(false);
     expect(readFileSync(join(f.draftsDir, 'alpha', 'index.mdx'), 'utf-8')).toMatch(/published:\s*false/);
   });
 
@@ -710,8 +712,8 @@ describe('createSitePR — dirty-state guardrail (Codex Pass 4 regression)', () 
       'content/posts/scoped/distribution/medium-upload-checklist.md',
       'content/posts/scoped/distribution/substack-paste.md',
       'content/posts/scoped/distribution/substack-upload-checklist.md',
-      'content/posts/scoped/distribution/linkedin-image-prompt.md',
       'content/posts/scoped/distribution/manifest.json',
+      'content/posts/scoped/assets/linkedin-feed.png',
     ]);
     expect(addCalls.length).toBeGreaterThan(0);
     for (const call of addCalls) {

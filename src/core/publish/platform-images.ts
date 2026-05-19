@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { basename, dirname, join, resolve } from 'node:path';
 
 import sharp from 'sharp';
 
@@ -124,6 +124,14 @@ type PlatformReferenceMap = Map<PlatformImageSpec['field'], ResolvedAssetReferen
 
 const FRONTMATTER_SPLIT_RE = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n)?/;
 const PLATFORM_IMAGE_TEMPLATE_VERSION = 2;
+export const LINKEDIN_LOCAL_CARD_TEMPLATE_VERSION = 1;
+
+export interface LinkedInLocalCardInput {
+  title: string;
+  project: string | null;
+  tags: string[];
+  baseUrl: string;
+}
 
 interface PlatformImagesReceipt {
   timestamp: string;
@@ -246,13 +254,28 @@ function escapeXml(value: string): string {
     .replace(/"/g, '&quot;');
 }
 
+function splitLongToken(token: string, maxChars: number): string[] {
+  const chunks: string[] = [];
+  for (let i = 0; i < token.length; i += maxChars) {
+    chunks.push(token.slice(i, i + maxChars));
+  }
+  return chunks;
+}
+
+function boundedText(value: string, maxChars: number, fallback = 'site'): string {
+  const normalized = value.trim().replace(/\s+/g, ' ') || fallback;
+  return normalized.length <= maxChars ? normalized : normalized.slice(0, maxChars);
+}
+
 function wrapTitle(title: string, maxChars: number, maxLines = 3): string[] {
-  const words = title.trim().split(/\s+/).filter(Boolean);
+  const words = title.trim().split(/\s+/).filter(Boolean).flatMap((word) =>
+    word.length > maxChars ? splitLongToken(word, maxChars) : [word],
+  );
   const lines: string[] = [];
   let current = '';
   for (const word of words) {
     const candidate = current.length === 0 ? word : `${current} ${word}`;
-    if (candidate.length <= maxChars || current.length === 0) {
+    if (candidate.length <= maxChars) {
       current = candidate;
     } else {
       lines.push(current);
@@ -271,6 +294,87 @@ function displayHost(baseUrl: string): string {
     return new URL(baseUrl).host;
   } catch {
     return cleanBaseUrl(baseUrl).replace(/^https?:\/\//i, '') || 'site';
+  }
+}
+
+function wrapText(value: string, maxChars: number, maxLines: number): string[] {
+  return wrapTitle(value, maxChars, maxLines);
+}
+
+export function renderLinkedInLocalCardSvg(input: LinkedInLocalCardInput): string {
+  const width = 1200;
+  const height = 1200;
+  const host = displayHost(input.baseUrl);
+  const project = boundedText(input.project ?? host, 34);
+  const tagLine = boundedText(input.tags.slice(0, 3).join(' / ') || 'technical publishing', 48);
+  const titleLines = wrapText(input.title, 22, 3);
+  const bandLabels = ['Research', 'Draft', 'Evaluate', 'Publish'];
+  const titleText = titleLines
+    .map((line, index) =>
+      `<text x="120" y="${286 + index * 82}" textLength="620" lengthAdjust="spacingAndGlyphs" fill="#f7f3e8" font-family="Inter, Arial, sans-serif" font-size="68" font-weight="760">${escapeXml(line)}</text>`,
+    )
+    .join('\n');
+  const bands = bandLabels
+    .map((label, index) => {
+      const y = 700 + index * 86;
+      const fill = index % 2 === 0 ? '#ece3d1' : '#151515';
+      const text = index % 2 === 0 ? '#121212' : '#ece3d1';
+      const stroke = index % 2 === 0 ? '#ece3d1' : '#3a3a3a';
+      return `<rect x="120" y="${y}" width="660" height="54" rx="8" fill="${fill}" stroke="${stroke}" stroke-width="2"/>
+<text x="152" y="${y + 36}" fill="${text}" font-family="Inter, Arial, sans-serif" font-size="26" font-weight="700">${label}</text>`;
+    })
+    .join('\n');
+
+  return `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" fill="none" xmlns="http://www.w3.org/2000/svg">
+<rect width="${width}" height="${height}" fill="#0b0b0b"/>
+<rect x="64" y="64" width="1072" height="1072" rx="28" fill="#111111" stroke="#2f2f2a" stroke-width="2"/>
+<text x="120" y="162" textLength="460" lengthAdjust="spacingAndGlyphs" fill="#b9b09f" font-family="Inter, Arial, sans-serif" font-size="30" font-weight="700">${escapeXml(project)}</text>
+<text x="120" y="204" textLength="360" lengthAdjust="spacingAndGlyphs" fill="#7f796e" font-family="Inter, Arial, sans-serif" font-size="22" font-weight="600">${escapeXml(host)}</text>
+${titleText}
+<path d="M826 724 C 980 724, 980 1004, 826 1004" stroke="#e4c562" stroke-width="10" stroke-linecap="round" fill="none"/>
+<path d="M826 1004 L 858 972 M826 1004 L858 1036" stroke="#e4c562" stroke-width="10" stroke-linecap="round" fill="none"/>
+${bands}
+<rect x="120" y="1018" width="420" height="48" rx="24" fill="#e4c562"/>
+<text x="148" y="1050" fill="#111111" font-family="Inter, Arial, sans-serif" font-size="22" font-weight="760">layered contracts / review gates</text>
+<text x="120" y="1102" textLength="520" lengthAdjust="spacingAndGlyphs" fill="#8c887f" font-family="Inter, Arial, sans-serif" font-size="21" font-weight="600">${escapeXml(tagLine)}</text>
+</svg>`;
+}
+
+function assertNotSymlinkPath(path: string): void {
+  if (existsSync(path) && lstatSync(path).isSymbolicLink()) {
+    throw new Error(`Refusing to write LinkedIn local-card image through symlink path: ${path}`);
+  }
+}
+
+export async function renderLinkedInLocalCardImageBuffer(
+  input: LinkedInLocalCardInput,
+): Promise<Buffer> {
+  return sharp(Buffer.from(renderLinkedInLocalCardSvg(input)))
+    .png()
+    .toBuffer();
+}
+
+export async function writeLinkedInLocalCardImage(
+  input: LinkedInLocalCardInput,
+  outputPath: string,
+  imageBytes?: Buffer,
+): Promise<void> {
+  const absoluteOutputPath = resolve(outputPath);
+  const outputDir = dirname(absoluteOutputPath);
+  mkdirSync(outputDir, { recursive: true });
+  assertNotSymlinkPath(outputDir);
+  assertNotSymlinkPath(absoluteOutputPath);
+
+  const tempPath = join(
+    outputDir,
+    `.${basename(outputPath)}.${process.pid}.${Date.now()}.tmp`,
+  );
+  try {
+    writeFileSync(tempPath, imageBytes ?? await renderLinkedInLocalCardImageBuffer(input));
+    assertNotSymlinkPath(absoluteOutputPath);
+    renameSync(tempPath, absoluteOutputPath);
+  } finally {
+    rmSync(tempPath, { force: true });
   }
 }
 

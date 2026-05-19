@@ -724,10 +724,10 @@ describe('generateSubstackPaste', () => {
     expect(content).toContain('```ts');
   });
 
-  it('truncates the subtitle so long descriptions fit Substack', () => {
+  it('fits the subtitle naturally so long descriptions fit Substack', () => {
     const longDescription = [
-      'Stack Loops keeps infrastructure, deployment, and observability contracts in review even when the code diff looks like application work.',
-      'This second sentence should stay out of the Substack subtitle.',
+      'Stack Loops keeps contract review active.',
+      `${'This second sentence should stay out of the Substack subtitle. '.repeat(4)}`,
     ].join(' ');
     const f = setup('long-subtitle', mdxWithDescription(longDescription));
     generateSubstackPaste('long-subtitle', makeConfig(), {
@@ -738,8 +738,37 @@ describe('generateSubstackPaste', () => {
     const content = readFileSync(join(f.socialDir, 'long-subtitle', 'substack-paste.md'), 'utf-8');
     const subtitle = content.match(/^## (.+)$/m)?.[1] ?? '';
     expect(subtitle.length).toBeLessThanOrEqual(120);
-    expect(subtitle).toMatch(/\.\.\.$/);
+    expect(subtitle).toBe('Stack Loops keeps contract review active.');
+    expect(subtitle).not.toMatch(/\.\.\.$/);
     expect(subtitle).not.toContain('second sentence');
+  });
+
+  it('does not preserve an already-clipped Substack description', () => {
+    const f = setup('clipped-subtitle', mdxWithDescription('This description was already clipped...'));
+    generateSubstackPaste('clipped-subtitle', makeConfig(), {
+      draftsDir: f.draftsDir,
+      socialDir: f.socialDir,
+    });
+
+    const content = readFileSync(join(f.socialDir, 'clipped-subtitle', 'substack-paste.md'), 'utf-8');
+    const subtitle = content.match(/^## (.+)$/m)?.[1] ?? '';
+    expect(subtitle).toBe('Technical notes and evidence for Sample Post.');
+    expect(subtitle).not.toMatch(/\.\.\.$/);
+  });
+
+  it('throws instead of clipping when a subtitle has no safe fit', () => {
+    const longTitle = 'T'.repeat(140);
+    const mdx = mdxWithDescription(`${'A'.repeat(140)} without a sentence boundary`).replace(
+      'title: "Sample Post"',
+      `title: "${longTitle}"`,
+    );
+    const f = setup('bad-subtitle', mdx);
+
+    expect(() => generateSubstackPaste('bad-subtitle', makeConfig(), {
+      draftsDir: f.draftsDir,
+      socialDir: f.socialDir,
+    })).toThrow(/Substack subtitle could not be fit within 120 characters without clipping/);
+    expect(existsSync(join(f.socialDir, 'bad-subtitle', 'substack-paste.md'))).toBe(false);
   });
 
   it('keeps image-backed MDX charts copyable as Markdown image links', () => {

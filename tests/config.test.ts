@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -77,7 +77,7 @@ author:
       directory: 'distribution',
     });
     expect(config.social.linkedin_image).toEqual({
-      mode: 'prompt-only',
+      mode: 'local-card',
       model: 'gpt-image-2-2026-04-21',
       size: '1200x1200',
       quality: 'high',
@@ -157,6 +157,24 @@ author:
     expect(config.social.linkedin_image.model).toBe('gpt-image-2-2026-04-21');
     expect(config.social.linkedin_image.size).toBe('1536x1024');
     expect(config.social.linkedin_image.quality).toBe('high');
+  });
+
+  it('honors explicit prompt-only compatibility mode', () => {
+    const config = validateConfig({
+      site: { repo_path: '../m0lz.00', base_url: 'https://m0lz.dev' },
+      author: { name: 'Test', github: 'test' },
+      social: {
+        linkedin_image: { mode: 'prompt-only' },
+      },
+    });
+
+    expect(config.social.linkedin_image.mode).toBe('prompt-only');
+  });
+
+  it('documents local-card as the example default', () => {
+    const example = readFileSync(join(__dirname, '../.blogrc.example.yaml'), 'utf-8');
+    expect(example).toContain('mode: "local-card"');
+    expect(example).toContain('off | local-card | prompt-only | generate | required');
   });
 
   it('rejects invalid LinkedIn image mode', () => {

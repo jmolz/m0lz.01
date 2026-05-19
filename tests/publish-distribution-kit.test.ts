@@ -1,4 +1,5 @@
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
+import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -83,7 +84,7 @@ function makeConfig(siteRepoPath: string): BlogConfig {
       timing_recommendations: true,
       distribution_kit: { enabled: true, persist_to_site: true, directory: 'distribution' },
       linkedin_image: {
-        mode: 'prompt-only',
+        mode: 'local-card',
         model: 'gpt-image-2-2026-04-21',
         size: '1200x1200',
         quality: 'high',
@@ -247,8 +248,10 @@ function mockSiteArtifactGit(options: {
 
 function expectedDistributionSitePaths(
   slug: string,
-  opts: { image?: boolean; tables?: string[]; extraDistributionPaths?: string[] } = {},
+  opts: { image?: boolean; prompt?: boolean; tables?: string[]; extraDistributionPaths?: string[] } = {},
 ): string[] {
+  const includeImage = opts.image ?? true;
+  const includePrompt = opts.prompt ?? false;
   return [
     `content/posts/${slug}/distribution/linkedin.md`,
     `content/posts/${slug}/distribution/hackernews.md`,
@@ -256,10 +259,10 @@ function expectedDistributionSitePaths(
     `content/posts/${slug}/distribution/medium-upload-checklist.md`,
     `content/posts/${slug}/distribution/substack-paste.md`,
     `content/posts/${slug}/distribution/substack-upload-checklist.md`,
-    `content/posts/${slug}/distribution/linkedin-image-prompt.md`,
+    ...(includePrompt ? [`content/posts/${slug}/distribution/linkedin-image-prompt.md`] : []),
     ...(opts.extraDistributionPaths ?? []),
     `content/posts/${slug}/distribution/manifest.json`,
-    ...(opts.image ? [`content/posts/${slug}/assets/linkedin-feed.png`] : []),
+    ...(includeImage ? [`content/posts/${slug}/assets/linkedin-feed.png`] : []),
     ...(opts.tables ?? []).map((table) => `content/posts/${slug}/${table}`),
   ];
 }
@@ -299,7 +302,7 @@ social:
     persist_to_site: true
     directory: "distribution"
   linkedin_image:
-    mode: "prompt-only"
+    mode: "local-card"
     model: "gpt-image-2-2026-04-21"
     size: "1200x1200"
     quality: "high"
@@ -353,6 +356,39 @@ describe('createSitePR distribution-kit preflight', () => {
     expect(calls.some((args) => args.includes('push'))).toBe(false);
     expect(calls.some((args) => args.includes('pr create'))).toBe(false);
   });
+
+  it('Substack subtitle fit failure happens before site checkout, copy, commit, push, or PR creation', async () => {
+    const f = setup();
+    seedPost(f, 'subtitle-fail');
+    writeFileSync(join(f.draftsDir, 'subtitle-fail', 'index.mdx'), `---
+title: "${'T'.repeat(140)}"
+description: "${'A'.repeat(140)} without a sentence boundary"
+date: "2026-05-14"
+tags:
+  - TypeScript
+published: false
+canonical: "https://m0lz.dev/writing/subtitle-fail"
+project: "m0lz.01"
+---
+
+Body
+`, 'utf-8');
+    mockExec.mockImplementation((cmd: string, args: string[]) => {
+      throw new Error(`Unexpected exec before subtitle failure: ${cmd} ${args.join(' ')}`);
+    });
+
+    await expect(createSitePR('subtitle-fail', f.config, {
+      draftsDir: f.draftsDir,
+      researchPagesDir: f.researchPagesDir,
+      publishDir: f.publishDir,
+      configPath: f.configPath,
+      socialDir: f.socialDir,
+      templatesDir: f.templatesDir,
+    }, f.db)).rejects.toThrow(/Substack subtitle could not be fit within 120 characters/);
+
+    expect(mockExec).not.toHaveBeenCalled();
+    expect(existsSync(join(f.siteRepoPath, 'content/posts/subtitle-fail'))).toBe(false);
+  });
 });
 
 describe('PIPELINE_STEPS social-text distribution-kit persistence', () => {
@@ -381,12 +417,43 @@ describe('PIPELINE_STEPS social-text distribution-kit persistence', () => {
     expect(result.outcome).toBe('completed');
     expect(provider.calls.length).toBe(1);
     expect(fetchSpy).not.toHaveBeenCalled();
-    expect(calls.addCalls).toEqual(expectedDistributionSitePaths('pipeline-kit', { image: true }));
+    expect(calls.addCalls).toEqual(expectedDistributionSitePaths('pipeline-kit', {
+      image: true,
+      prompt: true,
+    }));
     expect(existsSync(join(f.siteRepoPath, 'content/posts/pipeline-kit/distribution/linkedin.md'))).toBe(true);
     expect(existsSync(join(f.siteRepoPath, 'content/posts/pipeline-kit/distribution/hackernews.md'))).toBe(true);
     expect(existsSync(join(f.siteRepoPath, 'content/posts/pipeline-kit/distribution/linkedin-image-prompt.md'))).toBe(true);
     expect(existsSync(join(f.siteRepoPath, 'content/posts/pipeline-kit/distribution/manifest.json'))).toBe(true);
     expect(existsSync(join(f.siteRepoPath, 'content/posts/pipeline-kit/assets/linkedin-feed.png'))).toBe(true);
+  });
+
+  it('regenerates self-referential tampered text before site persistence', async () => {
+    const f = setup();
+    seedPost(f, 'pipeline-tamper');
+    seedSitePost(f, 'pipeline-tamper');
+    const kit = await generateDistributionKit('pipeline-tamper', f.config, f, f.db, {
+      sourceMode: 'publish',
+    });
+    const originalLinkedIn = readFileSync(kit.linkedinPath!, 'utf-8');
+    const tamperedLinkedIn = 'tampered linkedin copy with a matching manifest hash\n';
+    writeFileSync(kit.linkedinPath!, tamperedLinkedIn, 'utf-8');
+    const manifest = JSON.parse(readFileSync(kit.manifestPath, 'utf-8'));
+    manifest.text.linkedin.sha256 = createHash('sha256').update(tamperedLinkedIn).digest('hex');
+    writeFileSync(kit.manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf-8');
+
+    mockSiteArtifactGit();
+    const step = PIPELINE_STEPS.find((candidate) => candidate.name === 'social-text');
+    if (!step) throw new Error('social-text step missing');
+
+    const result = await step.execute(makePipelineContext(f, 'pipeline-tamper'));
+
+    expect(result.outcome).toBe('completed');
+    expect(readFileSync(kit.linkedinPath!, 'utf-8')).toBe(originalLinkedIn);
+    expect(readFileSync(join(
+      f.siteRepoPath,
+      'content/posts/pipeline-tamper/distribution/linkedin.md',
+    ), 'utf-8')).toBe(originalLinkedIn);
   });
 });
 
@@ -564,7 +631,10 @@ describe('persistDistributionKitToSite', () => {
     const f = setup();
     seedPost(f, 'stale-linkedin-image');
     seedSitePost(f, 'stale-linkedin-image');
-    const kit = await generateDistributionKit('stale-linkedin-image', f.config, f, f.db, { sourceMode: 'publish' });
+    const kit = await generateDistributionKit('stale-linkedin-image', f.config, f, f.db, {
+      sourceMode: 'publish',
+      imageMode: 'prompt-only',
+    });
     const staleImagePath = 'content/posts/stale-linkedin-image/assets/linkedin-feed.png';
     mkdirSync(join(f.siteRepoPath, 'content/posts/stale-linkedin-image/assets'), { recursive: true });
     writeFileSync(join(f.siteRepoPath, staleImagePath), 'stale linkedin image bytes');
@@ -599,9 +669,9 @@ describe('persistDistributionKitToSite', () => {
       'content/posts/medium-off/distribution/hackernews.md',
       'content/posts/medium-off/distribution/substack-paste.md',
       'content/posts/medium-off/distribution/substack-upload-checklist.md',
-      'content/posts/medium-off/distribution/linkedin-image-prompt.md',
       staleMediumPath,
       'content/posts/medium-off/distribution/manifest.json',
+      'content/posts/medium-off/assets/linkedin-feed.png',
     ]);
     expect(existsSync(join(f.siteRepoPath, staleMediumPath))).toBe(false);
     expect(existsSync(join(f.siteRepoPath, 'content/posts/medium-off/distribution/substack-paste.md'))).toBe(true);
@@ -752,13 +822,13 @@ describe('persistDistributionKitToSite', () => {
     const kit = await generateDistributionKit('replay', f.config, f, f.db, { sourceMode: 'publish' });
     const expectedFiles = [
       'content/posts/replay/distribution/hackernews.md',
-      'content/posts/replay/distribution/linkedin-image-prompt.md',
       'content/posts/replay/distribution/linkedin.md',
       'content/posts/replay/distribution/manifest.json',
       'content/posts/replay/distribution/medium-paste.md',
       'content/posts/replay/distribution/medium-upload-checklist.md',
       'content/posts/replay/distribution/substack-paste.md',
       'content/posts/replay/distribution/substack-upload-checklist.md',
+      'content/posts/replay/assets/linkedin-feed.png',
     ].join('\n');
     const calls = mockSiteArtifactGit({
       cachedHasChanges: false,
@@ -783,12 +853,12 @@ describe('persistDistributionKitToSite', () => {
     const staleMediumPath = 'content/posts/medium-replay/distribution/medium-paste.md';
     const replayFiles = [
       'content/posts/medium-replay/distribution/hackernews.md',
-      'content/posts/medium-replay/distribution/linkedin-image-prompt.md',
       'content/posts/medium-replay/distribution/linkedin.md',
       'content/posts/medium-replay/distribution/manifest.json',
       staleMediumPath,
       'content/posts/medium-replay/distribution/substack-paste.md',
       'content/posts/medium-replay/distribution/substack-upload-checklist.md',
+      'content/posts/medium-replay/assets/linkedin-feed.png',
     ].join('\n');
     const calls = mockSiteArtifactGit({
       cachedHasChanges: false,
@@ -809,10 +879,13 @@ describe('persistDistributionKitToSite', () => {
     const f = setup();
     seedPost(f, 'image-replay');
     seedSitePost(f, 'image-replay');
-    const kit = await generateDistributionKit('image-replay', f.config, f, f.db, { sourceMode: 'publish' });
+    const kit = await generateDistributionKit('image-replay', f.config, f, f.db, {
+      sourceMode: 'publish',
+      imageMode: 'prompt-only',
+    });
     const staleImagePath = 'content/posts/image-replay/assets/linkedin-feed.png';
     const replayFiles = [
-      ...expectedDistributionSitePaths('image-replay'),
+      ...expectedDistributionSitePaths('image-replay', { image: false, prompt: true }),
       staleImagePath,
     ].join('\n');
     const calls = mockSiteArtifactGit({
@@ -912,6 +985,8 @@ project: "m0lz.01"
     expect(exitCodeAfter).toBe(0);
     expect(manifest.tables).toHaveLength(1);
     expect(calls.addCalls).toEqual(expectedDistributionSitePaths('cli-kit', {
+      image: false,
+      prompt: true,
       tables: [manifest.tables[0].path],
     }));
     expect(calls.commits).toEqual(['chore(distribution): cli-kit']);

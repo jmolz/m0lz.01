@@ -9,6 +9,7 @@ import {
   SUBSTACK_PREVIEW_IMAGE,
   resolvePlatformImageUrl,
 } from './platform-images.js';
+import { fitNaturalCopy, SUBSTACK_SUBTITLE_MAX_CHARS } from './platform-copy.js';
 import { derivePortableTables, PortableTableSource } from './table-assets.js';
 
 // Step 7 of the publish pipeline: generate a paste-ready Markdown file for
@@ -33,8 +34,6 @@ export interface RenderSubstackPasteResult {
   uploadChecklist: string;
   tables: PortableTableSource[];
 }
-
-const SUBSTACK_SUBTITLE_MAX_CHARS = 120;
 
 function displayBaseUrl(baseUrl: string): string {
   return baseUrl.replace(/^[a-z][a-z0-9+.-]*:\/\//i, '').replace(/\/+$/, '');
@@ -108,22 +107,8 @@ export function renderSubstackUploadChecklist(
   return `${lines.join('\n').trimEnd()}\n`;
 }
 
-function truncateDescription(value: string, maxChars: number): string {
-  const normalized = value.replace(/\s+/g, ' ').trim();
-  if (normalized.length <= maxChars) return normalized;
-
-  const sentenceEnd = normalized.match(/^(.+?[.!?])(?:\s|$)/);
-  if (sentenceEnd && sentenceEnd[1].length <= maxChars) {
-    return sentenceEnd[1];
-  }
-
-  const limit = Math.max(0, maxChars - 3);
-  const clipped = normalized.slice(0, limit);
-  const lastSpace = clipped.lastIndexOf(' ');
-  const base = lastSpace >= Math.floor(limit * 0.7)
-    ? clipped.slice(0, lastSpace)
-    : clipped;
-  return `${base.trimEnd()}...`;
+function subtitleFallback(title: string): string {
+  return `Technical notes and evidence for ${title}.`;
 }
 
 export function generateSubstackPaste(
@@ -172,7 +157,12 @@ export function renderSubstackPaste(
   const paste = [
     `# ${fm.title}`,
     '',
-    `## ${truncateDescription(fm.description, SUBSTACK_SUBTITLE_MAX_CHARS)}`,
+    `## ${fitNaturalCopy(
+      fm.description,
+      SUBSTACK_SUBTITLE_MAX_CHARS,
+      'Substack subtitle',
+      subtitleFallback(fm.title),
+    )}`,
     '',
     `![${imageAlt(fm.title, substackImage.spec.altSuffix)}](${imageUrl})`,
     '',

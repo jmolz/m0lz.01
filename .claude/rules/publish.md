@@ -47,19 +47,19 @@ Medium and Substack paste files are the copy surface. Do not rely on browser pre
 
 Markdown pipe tables outside fenced code must be replaced in Medium/Substack paste output with manifest-tracked generated table artifacts. Do not rewrite canonical MDX to satisfy paste portability. The canonical hub MDX stays semantic; Medium/Substack get local upload placeholders plus `medium-upload-checklist.md` / `substack-upload-checklist.md` with local PNG paths, alt text, captions, canonical-source guidance, and public URLs labeled reference-only. Do not make table success depend on arbitrary public `portable-table-*.png` URL embeds. Fenced code, blockquotes, lists, and malformed tables stay textual.
 
-Substack subtitles are platform-specific. Generate a short paste subtitle from `description` instead of copying long frontmatter descriptions verbatim.
+Substack subtitles are platform-specific. Fit a short paste subtitle naturally from `description` instead of copying long frontmatter descriptions verbatim or hard-clipping with ellipses. If no full description, complete first sentence, or title-aware fallback fits the local limit, fail before site checkout/copy/commit.
 
 Forensic anchors:
 - `src/core/publish/convert.ts` preserves image-backed JSX components before `removeJsxComponents`.
 - `src/core/publish/table-assets.ts` derives and renders portable Markdown table images for paste output and platform-specific table reference policies.
-- `src/core/publish/substack.ts` truncates long subtitles for Substack paste output.
+- `src/core/publish/substack.ts` naturally fits long subtitles for Substack paste output and fails when no safe fit exists.
 - `tests/publish-convert.test.ts` covers portable image-backed chart conversion.
 - `tests/publish-table-assets.test.ts` covers table detection, fenced-table preservation, readable row-card table-image rendering, snake_case preservation, deterministic PNG writes, and stale generated cleanup.
-- `tests/publish-crosspost.test.ts` covers Medium/Substack chart copyability, generated table upload/checklist handoff, and Substack subtitle truncation.
+- `tests/publish-crosspost.test.ts` covers Medium/Substack chart copyability, generated table upload/checklist handoff, natural Substack subtitle fitting, and no-safe-fit failure.
 
 ## Complete publication bundle is reviewed before preview
 
-`site-pr` and `site-update` must copy the whole publication bundle into `content/posts/{slug}/` before preview: evaluated MDX, draft assets, social text, Medium/Substack paste files, Medium/Substack upload checklists, manifest provenance, optional LinkedIn image, and generated portable table assets. Post-preview paste steps are read/verify-only and must load manifest-tracked artifacts instead of regenerating from preview content.
+`site-pr` and `site-update` must copy the whole publication bundle into `content/posts/{slug}/` before preview: evaluated MDX, draft assets, public-only LinkedIn/Hacker News copy, Medium/Substack paste files, Medium/Substack upload checklists, manifest provenance, the default deterministic LinkedIn local-card image, and generated portable table assets. `linkedin-image-prompt.md` is an operator artifact only for `prompt-only`, `generate`, and `required` image modes. Post-preview paste steps are read/verify-only and must load manifest-tracked artifacts instead of regenerating from preview content.
 
 Bundle persistence is fail-closed. `persistDistributionKitToSite` must reject path escapes, hash mismatches, conflicting reviewed site artifacts, unrelated dirty state, and unexpected ahead commits before staging.
 
@@ -75,13 +75,16 @@ Forensic anchors:
 
 ## Image generation must be deterministic and config-derived
 
-Publish must not call remote image APIs, browser automation, or platform upload APIs to create assets. Local Sharp transforms and fallback SVG rendering are acceptable because they run offline and produce stable filenames.
+The default LinkedIn feed image mode is `local-card`: publish writes `assets/linkedin-feed.png` with local Sharp rendering and does not call OpenAI. `prompt-only` is explicit compatibility mode and writes a prompt file without an image. `generate` and `required` are OpenAI-backed and fail before site checkout/copy/commit when credentials or generation are unavailable.
+
+Publish must not call remote image APIs, browser automation, or platform upload APIs to create deterministic local assets. Local Sharp transforms and fallback SVG rendering are acceptable because they run offline and produce stable filenames.
 
 The fallback SVG may display site/author labels, but those labels must come from `config.site.base_url`, `config.author.github`, or draft frontmatter such as `project`. Do not hardcode `m0lz.01`, `m0lz.dev`, or a GitHub owner in publish helpers.
 
 Forensic anchors:
 - `tests/platform-images.test.ts` verifies fallback labels are config-derived.
-- `src/core/publish/platform-images.ts` renders Dev.to, Medium, and Substack from the same fallback SVG article-card framework with platform-specific dimensions.
+- `tests/distribution-kit.test.ts` verifies local-card output, prompt-only compatibility, prompt quality guards, and nonblank bounded LinkedIn card rendering.
+- `src/core/publish/platform-images.ts` renders Dev.to, Medium, Substack, and LinkedIn local-card images from the same fallback SVG article-card framework and local SVG-to-PNG paths with config-derived labels.
 
 ## Direct-push helpers inspect ahead state before mutation
 

@@ -1,13 +1,8 @@
-{{title}}
+{{hook}}
 
-{{description}}
-
-Shipped: {{shipped_summary}}
+{{body}}
 
 Read the full post: {{canonical_url}}
-
-{{image_reference}}
-Alt text: {{alt_text}}
 
 {{hashtags}}
 

@@ -63,7 +63,7 @@ social:
     persist_to_site: true          # Commit distribution files to the hub repo after preview gate
     directory: "distribution"      # Directory under content/posts/<slug>/
   linkedin_image:
-    mode: "prompt-only"            # off | prompt-only | generate | required
+    mode: "local-card"             # off | local-card | prompt-only | generate | required
     model: "gpt-image-2-2026-04-21"
     size: "1200x1200"              # Fixed PNG artifact: assets/linkedin-feed.png
     quality: "high"                # Requires OPENAI_API_KEY only for generate/required

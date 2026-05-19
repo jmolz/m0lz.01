@@ -77,7 +77,7 @@ export function generateLinkedIn(
     template,
     metadataFromPost(post, config, tags),
     config,
-    config.social.linkedin_image?.mode ?? 'prompt-only',
+    config.social.linkedin_image?.mode ?? 'local-card',
   );
 
   if (containsEmoji(content)) {

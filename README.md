@@ -483,12 +483,12 @@ blog evaluate complete <slug>                   # → publish phase
 blog evaluate reject <slug>                     # → draft phase
 
 # Publish phase (11-step resumable pipeline)
-blog publish start <slug> [--image-mode off|prompt-only|generate|required]
+blog publish start <slug> [--image-mode off|local-card|prompt-only|generate|required]
 blog publish show <slug>                        # per-step status table
 blog publish reopen-draft <slug> --reason "..." # repair pre-site-pr draft defects
 blog publish platform-images <slug> [--commit-site]
 blog publish distribution-kit <slug> \
-  [--commit-site] [--image-mode off|prompt-only|generate|required] [--force]
+  [--commit-site] [--image-mode off|local-card|prompt-only|generate|required] [--force]
 
 # Update an already-published post
 blog update start <slug> --summary "what changed"
@@ -546,8 +546,11 @@ hand-authored research pages.
 publication bundle before the site repo is mutated. Local artifacts land in
 `.blog-agent/social/<slug>/`: `linkedin.md`, `hackernews.md`,
 `medium-paste.md`, `medium-upload-checklist.md`, `substack-paste.md`,
-`substack-upload-checklist.md`, `linkedin-image-prompt.md`, and `manifest.json`;
-generated LinkedIn feed images use the fixed PNG path
+`substack-upload-checklist.md`, and `manifest.json`. `linkedin.md` and
+`hackernews.md` are public posting copy only; operator prompts and upload
+checklists live in separate artifacts. `linkedin-image-prompt.md` is written
+only for `prompt-only`, `generate`, and `required` image modes. The default
+LinkedIn feed image is a deterministic local card at the fixed PNG path
 `.blog-agent/social/<slug>/assets/linkedin-feed.png`. Medium/Substack paste
 rendering also converts Markdown pipe tables outside fenced code into stable PNG
 assets at `.blog-agent/social/<slug>/assets/portable-table-<hash>.png`. The
@@ -573,22 +576,26 @@ content/posts/<slug>/
     medium-upload-checklist.md
     substack-paste.md
     substack-upload-checklist.md
-    linkedin-image-prompt.md
+    linkedin-image-prompt.md # only for prompt-only/generate/required
     manifest.json
 ```
 
-The `social-text` pipeline step is persist-only: after the preview gate and
-URL/README updates, it loads and hash-verifies the already-generated manifest
-before copying the same artifacts to the site repo. The paste steps load the
-manifest files rather than regenerating from post-preview content.
+The `social-text` pipeline step revalidates the local bundle before site
+persistence. A valid generated-image manifest is reused without a provider call,
+but deterministic text, paste files, prompts, checklists, and local-card images
+are compared against freshly rendered expected hashes so a self-referential
+manifest edit cannot be copied forward. The paste steps load the manifest files
+rather than regenerating from post-preview content.
 
 Medium and Substack paste files are generated from the same evaluated MDX, but
 with platform-specific copy constraints. Medium table handoff recommends
 importing the canonical URL first, then uploading local generated table PNGs
 when import or manual paste loses table fidelity. Substack receives local
 upload/drag-drop table guidance because the post editor is not a durable
-Markdown-table or custom-HTML target. Substack also receives a shortened subtitle
-derived from `description` instead of the full SEO description. Image-backed MDX
+Markdown-table or custom-HTML target. Substack subtitles are fit naturally from
+`description` or fail before site checkout/copy/commit; they are not hard-clipped
+with ellipses. Hacker News first-comment descriptions use the same no-hard-
+ellipsis fitter. Image-backed MDX
 visual components, such as chart or figure components with
 `src="./assets/<file>"`, are converted to public Markdown image links before JSX
 is stripped so the visual remains copyable into Medium and Substack. Data-only
@@ -603,15 +610,17 @@ social:
     persist_to_site: true
     directory: "distribution"
   linkedin_image:
-    mode: "prompt-only" # off | prompt-only | generate | required
+    mode: "local-card" # off | local-card | prompt-only | generate | required
     model: "gpt-image-2-2026-04-21"
     size: "1200x1200"
     quality: "high"
 ```
 
-`prompt-only` is the default and never calls OpenAI. Pass
+`local-card` is the default and writes `assets/linkedin-feed.png` without
+calling OpenAI. `prompt-only` is explicit compatibility mode: it writes
+`linkedin-image-prompt.md` and no feed image. Pass
 `blog publish start <slug> --image-mode generate` or `--image-mode required`
-when the initial publish must include the generated LinkedIn PNG. Both modes use
+when the initial publish must use an OpenAI-backed LinkedIn PNG. Both modes use
 `OPENAI_API_KEY` with GPT Image 2 and fail before site checkout/copy/commit if
 image generation is unavailable. Use
 `blog publish distribution-kit <slug> --image-mode generate --force --commit-site`

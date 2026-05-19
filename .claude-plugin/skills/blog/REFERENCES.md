@@ -76,6 +76,19 @@ v0.3 dogfood-hardening command. Rewrites the frontmatter block of `.blog-agent/d
 
 Generates deterministic local distribution images under `.blog-agent/drafts/<slug>/assets/`: `devto-cover.png` (`1000x420`), `medium-featured.png` (`1200x675`), and `substack-preview.png` (`1200x630`). The command updates draft frontmatter with `devto_main_image: ./assets/devto-cover.png`, `medium_featured_image: ./assets/medium-featured.png`, and `substack_preview_image: ./assets/substack-preview.png`, then writes `.blog-agent/drafts/<slug>/.platform-images.json`. The receipt records an input hash for the current title/project/site/template dimensions and SHA256 hashes for generator-owned files, so `draft complete` and `publish site-pr` reject stale images after a title/frontmatter edit. It uses local assets only: explicit platform-image fields when valid, legacy `assets/devto-cover.webp`, then a deterministic fallback SVG rendered through `sharp`.
 
+## Publication bundle copy and image modes
+
+`blog publish start` and `blog publish distribution-kit` generate `.blog-agent/social/<slug>/` artifacts before site mutation. `linkedin.md` and `hackernews.md` are audience-facing copy only: no image prompt paths, alt-text labels, or upload checklist instructions. Medium/Substack table upload guidance stays in `medium-upload-checklist.md` and `substack-upload-checklist.md`.
+
+Substack subtitles and Hacker News first-comment descriptions use natural fitting: full text if it fits, first complete sentence if it fits, deterministic fallback if it fits, otherwise fail before site checkout/copy/commit. They are not hard-clipped with ellipses.
+
+LinkedIn image modes:
+
+- `local-card` — default. Writes deterministic `assets/linkedin-feed.png` locally and records it in `manifest.json`; no prompt file and no OpenAI call.
+- `prompt-only` — compatibility mode. Writes `linkedin-image-prompt.md`, records no image, and does not call OpenAI.
+- `generate` / `required` — OpenAI-backed image modes using the same prompt artifact. These fail before site checkout/copy/commit if image generation is unavailable.
+- `off` — no prompt and no image.
+
 ## Publish artifact guard (`blog publish start <slug>`)
 
 The first publish step re-checks the latest passed evaluation manifest,
@@ -118,7 +131,7 @@ completion.
 Two categories, one flat field. The `venues` array is declarative intent metadata — it records what the operator asked for and flows through the hash gate, but the 11-step publish pipeline runs the same steps regardless of its contents. Step gating happens at the step level (e.g., `devto-crosspost` skips when `DEVTO_API_KEY` is unset), not the venue level.
 
 - **API-automated** (`hub`, `devto`) — pipeline step opens a PR (site), or calls an HTTP API with probe-before-mutate (Dev.to Forem). Step fails loudly on network/auth errors; the receipt records the failure.
-- **Paste-ready** (`linkedin`, `medium`, `substack`, `hn`) — pipeline step writes a text file under `.blog-agent/social/<slug>/` (Medium/Substack at steps 6/7, LinkedIn + HN at step 11). The operator copies these into each platform manually. The pipeline never blocks on these venues' network state.
+- **Paste-ready** (`linkedin`, `medium`, `substack`, `hn`) — pipeline step writes audience-facing text under `.blog-agent/social/<slug>/` (Medium/Substack at steps 6/7, LinkedIn + HN at step 11). The operator copies these into each platform manually. Prompt files and upload checklists are separate operator artifacts. The pipeline never blocks on these venues' network state.
 
 ### Hash derivation
 

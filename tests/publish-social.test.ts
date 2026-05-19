@@ -43,7 +43,17 @@ function makeConfig(timing = true): BlogConfig {
     },
     benchmark: { capture_environment: true, methodology_template: true, preserve_raw_data: true, multiple_runs: 3 },
     publish: { devto: true, medium: true, substack: true, github_repos: true, social_drafts: true, research_pages: true },
-    social: { platforms: ['linkedin', 'hackernews'], timing_recommendations: timing },
+    social: {
+      platforms: ['linkedin', 'hackernews'],
+      timing_recommendations: timing,
+      distribution_kit: { enabled: true, persist_to_site: true, directory: 'distribution' },
+      linkedin_image: {
+        mode: 'local-card',
+        model: 'gpt-image-2-2026-04-21',
+        size: '1200x1200',
+        quality: 'high',
+      },
+    },
     evaluation: {
       require_pass: true, min_sources: 3, max_reading_level: 12, three_reviewer_panel: true,
       consensus_must_fix: true, majority_should_fix: true, single_advisory: true,
@@ -137,10 +147,44 @@ describe('generateLinkedIn', () => {
       post, makeConfig(), f.socialDir, f.templatesDir, ['typescript', 'benchmark'],
     );
     const content = readFileSync(outPath, 'utf-8');
-    expect(content).toContain('LinkedIn Post');
+    const lines = content.trimEnd().split('\n');
+    expect(lines[0]).toBe('LinkedIn Post');
+    expect(lines[1]).toBe('');
+    expect(lines[3]).toBe('');
+    expect(lines[4]).toBe('Read the full post: https://m0lz.dev/writing/li-happy');
     expect(content).toContain('https://m0lz.dev/writing/li-happy');
     expect(content).toContain('#typescript');
     expect(content).toContain('#benchmark');
+    expect(content).not.toContain('Image prompt:');
+    expect(content).not.toContain('Alt text:');
+    expect(content).not.toContain('./distribution/');
+    expect(content.length).toBeLessThanOrEqual(3000);
+  });
+
+  it('does not hard-clip long LinkedIn descriptions with ellipses', () => {
+    const f = setup();
+    const post = seedPost(f.db, 'li-natural-fit', {
+      title: 'Natural Fit',
+      topic: `${'A'.repeat(1800)} without a sentence boundary ${'B'.repeat(1800)}`,
+    });
+    const outPath = generateLinkedIn(post, makeConfig(false), f.socialDir, f.templatesDir, ['typescript']);
+    const content = readFileSync(outPath, 'utf-8');
+    expect(content).not.toMatch(/\.\.\.$/m);
+    expect(content).toContain('Technical notes and evidence for Natural Fit.');
+  });
+
+  it('replaces already-clipped short LinkedIn descriptions with safe fallback copy', () => {
+    const f = setup();
+    const post = seedPost(f.db, 'li-preclipped', {
+      title: 'Preclipped Copy',
+      topic: 'Already clipped...',
+    });
+    const outPath = generateLinkedIn(post, makeConfig(false), f.socialDir, f.templatesDir, ['typescript']);
+    const content = readFileSync(outPath, 'utf-8');
+
+    expect(content).not.toContain('Already clipped...');
+    expect(content).not.toMatch(/\.\.\.$/m);
+    expect(content).toContain('Technical notes and evidence for Preclipped Copy.');
   });
 
   it('includes timing line when config.social.timing_recommendations=true', () => {
@@ -165,7 +209,7 @@ describe('generateLinkedIn', () => {
     const localTemplates = join(f.tempDir, 'templates-emoji');
     writeLocalSocialTemplates(
       localTemplates,
-      `${'\u{1F600}'} {{title}}\n\n{{canonical_url}}\n{{hashtags}}\n{{timing}}\n`,
+      `${'\u{1F600}'} {{hook}}\n\n{{body}}\n\n{{canonical_url}}\n{{hashtags}}\n{{timing}}\n`,
       'Title: {{title}}\nURL: {{canonical_url}}\n',
     );
     const post = seedPost(f.db, 'li-emoji');
@@ -235,6 +279,18 @@ describe('generateHackerNews', () => {
     const content = readFileSync(outPath, 'utf-8');
     expect(content).toContain('A description here');
     expect(content).toContain('https://github.com/jmolz/hn-repo');
+  });
+
+  it('fits Hacker News first-comment descriptions without abrupt ellipses', () => {
+    const f = setup();
+    const post = seedPost(f.db, 'hn-natural-fit', {
+      title: 'HN Natural Fit',
+      topic: `${'A'.repeat(280)} without a complete sentence ${'B'.repeat(120)}`,
+    });
+    const outPath = generateHackerNews(post, makeConfig(), f.socialDir, f.templatesDir, undefined);
+    const content = readFileSync(outPath, 'utf-8');
+    expect(content).not.toContain('...');
+    expect(content).toContain('Technical notes and evidence for HN Natural Fit.');
   });
 
   it('throws when template expansion produces emoji', () => {

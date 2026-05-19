@@ -726,11 +726,11 @@ export function registerPublish(program: Command): void {
     )
     .option(
       '--image-mode <mode>',
-      'One-run LinkedIn image mode override for the distribution kit: off, prompt-only, generate, required',
+      'One-run LinkedIn image mode override for the distribution kit: off, local-card, prompt-only, generate, required',
     )
     .action(async (slug: string, opts: { allowMainAhead?: boolean; imageMode?: string }) => {
       const imageMode = opts.imageMode as LinkedInImageMode | undefined;
-      if (imageMode && !['off', 'prompt-only', 'generate', 'required'].includes(imageMode)) {
+      if (imageMode && !['off', 'local-card', 'prompt-only', 'generate', 'required'].includes(imageMode)) {
         console.error(`Invalid --image-mode: ${imageMode}`);
         process.exitCode = 1;
         return;
@@ -761,14 +761,14 @@ export function registerPublish(program: Command): void {
     .command('distribution-kit <slug>')
     .description('Generate or backfill durable distribution-kit artifacts for a post')
     .option('--commit-site', 'Commit generated artifacts to the configured site repo')
-    .option('--image-mode <mode>', 'Override LinkedIn image mode: off, prompt-only, generate, required')
+    .option('--image-mode <mode>', 'Override LinkedIn image mode: off, local-card, prompt-only, generate, required')
     .option('--force', 'Regenerate artifacts even when the manifest input hash matches')
     .action(async (
       slug: string,
       opts: { commitSite?: boolean; imageMode?: string; force?: boolean },
     ) => {
       const imageMode = opts.imageMode as LinkedInImageMode | undefined;
-      if (imageMode && !['off', 'prompt-only', 'generate', 'required'].includes(imageMode)) {
+      if (imageMode && !['off', 'local-card', 'prompt-only', 'generate', 'required'].includes(imageMode)) {
         console.error(`Invalid --image-mode: ${imageMode}`);
         process.exitCode = 1;
         return;

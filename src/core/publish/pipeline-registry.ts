@@ -6,7 +6,7 @@ import { crosspostToDevTo, updateDevToArticle } from './devto.js';
 import { pushCompanionRepo } from './repo.js';
 import { updateFrontmatter } from './frontmatter.js';
 import { updateProjectReadme } from './readme.js';
-import { loadDistributionKit, shouldGeneratePublicationBundle } from './distribution-kit.js';
+import { generateDistributionKit, loadDistributionKit, shouldGeneratePublicationBundle } from './distribution-kit.js';
 import { persistDistributionKitToSite } from './site-artifacts.js';
 import { getOpenUpdateCycle } from '../update/cycles.js';
 import { assertLatestEvaluationArtifactsCurrent } from '../evaluate/state.js';
@@ -380,20 +380,25 @@ export const PIPELINE_STEPS: StepDefinition[] = [
     },
   },
 
-  // Step 11: social-text — persist the already-generated distribution kit.
+  // Step 11: social-text — revalidate/regenerate, then persist the distribution kit.
   {
     number: 11,
     name: 'social-text',
-    execute: (ctx: PipelineContext): StepResult => {
+    execute: async (ctx: PipelineContext): Promise<StepResult> => {
       if (!shouldGeneratePublicationBundle(ctx.config)) {
         return {
           outcome: 'skipped',
           message: 'Publication bundle disabled in config',
         };
       }
-      const kit = loadDistributionKit(ctx.slug, {
+      const kit = await generateDistributionKit(ctx.slug, ctx.config, {
         socialDir: ctx.paths.socialDir,
         draftsDir: ctx.paths.draftsDir,
+        templatesDir: ctx.paths.templatesDir,
+        configPath: ctx.paths.configPath,
+      }, ctx.db, {
+        sourceMode: ctx.publishMode === 'update' ? 'update' : 'publish',
+        imageMode: ctx.distributionImageMode,
       });
       if (ctx.config.social.distribution_kit?.persist_to_site === false) {
         return {

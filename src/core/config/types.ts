@@ -73,7 +73,7 @@ export interface SocialDistributionKitConfig {
   directory: string;
 }
 
-export type LinkedInImageMode = 'off' | 'prompt-only' | 'generate' | 'required';
+export type LinkedInImageMode = 'off' | 'local-card' | 'prompt-only' | 'generate' | 'required';
 
 export interface LinkedInImageConfig {
   mode: LinkedInImageMode;
