@@ -34,11 +34,29 @@ changes with no broader lesson.
 ## Step 1: Identify Source Material
 
 If `$ARGUMENTS` is provided, use it as the plan file path or feature name.
-If not provided, default to the most recently modified plan across Claude and
-Codex plan folders:
+If not provided, default to the most recently modified source plan across
+Claude and Codex plan folders. Prefer a plan with a `## Contract` section,
+because proof/evidence notes can also live under `plans/` and are not the
+source material for a retrospective.
 
 ```bash
-ls -t .claude/plans/*.md .codex/plans/*.md 2>/dev/null | head -1
+PLAN_FILE=""
+for f in $(ls -t .claude/plans/*.md .codex/plans/*.md 2>/dev/null); do
+  if rg -q '^## Contract$' "$f"; then
+    PLAN_FILE="$f"
+    break
+  fi
+done
+if [ -z "$PLAN_FILE" ]; then
+  for f in $(ls -t .claude/plans/*.md .codex/plans/*.md 2>/dev/null); do
+    case "$f" in
+      *proof*.md|*evidence*.md) continue ;;
+    esac
+    PLAN_FILE="$f"
+    break
+  done
+fi
+printf '%s\n' "$PLAN_FILE"
 ```
 
 Read the source plan in full. Pay attention to:

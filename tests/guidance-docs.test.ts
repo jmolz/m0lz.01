@@ -22,6 +22,11 @@ const EXTERNAL_EVALUATOR_DOCS = [
   '.agents/skills/source-command-plan-feature/SKILL.md',
 ] as const;
 
+const SELF_HEAL_DOCS = [
+  '.claude/commands/self-heal.md',
+  '.agents/skills/source-command-self-heal/SKILL.md',
+] as const;
+
 function postFrontmatterContractLine(markdown: string): string {
   const line = markdown
     .split(/\r?\n/)
@@ -49,6 +54,15 @@ describe('guidance docs', () => {
       expect(body, rel).toContain('policy-blocked');
       expect(body, rel).toMatch(/do not attempt the OpenAI Responses API fallback/i);
       expect(body, rel).toMatch(/data[- ]exfiltration/i);
+    }
+  });
+
+  it('self-heal docs select source plans before proof artifacts', () => {
+    for (const rel of SELF_HEAL_DOCS) {
+      const body = read(rel);
+      expect(body, rel).toMatch(/Prefer a plan with a `## Contract`\s+section/);
+      expect(body, rel).toContain("rg -q '^## Contract$'");
+      expect(body, rel).toContain('*proof*.md|*evidence*.md');
     }
   });
 
